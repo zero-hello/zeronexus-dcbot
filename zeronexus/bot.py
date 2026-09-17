@@ -689,7 +689,7 @@ class ZeroNexusBot(commands.Bot):
         scheduler.add_interval_job("official_version_check", version_check_task, seconds=3600.0)
 
     async def _check_version_and_notify_safe(self) -> None:
-        """非同步檢查官方最新版本，若有更新則發送控制台高亮與 Discord 通知。"""
+        """非同步檢查官方最新版本，若有更新則純粹於控制台日誌中發布通知。"""
         try:
             from zeronexus.core.updater import check_for_updates_async
             has_new, local_ver, remote_ver = await check_for_updates_async()
@@ -701,42 +701,11 @@ class ZeroNexusBot(commands.Bot):
                 return
             self._last_notified_update_version = remote_ver
 
-            # 1. 控制台高亮醒目通知
+            # 純粹於日誌中輸出醒目更新通知
             log.warning(
-                f"▲ [ZeroNexus 更新通知] 偵測到官方發布新版本：\033[1;38;5;220m{remote_ver}\033[0m（當前運行: {local_ver}）"
+                f"▲ [版本更新通知] 官方已發布新版本：\033[1;38;5;220m{remote_ver}\033[0m（當前運行: {local_ver}）"
                 f" ➔ 請在終端機執行 \033[1;38;5;51mpython3 update.py\033[0m 進行安全更新！"
             )
-
-            # 2. Discord Embed 通知卡片
-            embed = discord.Embed(
-                title="🚀 ZeroNexus 發現新版本發布！",
-                description=(
-                    f"**目前運行版本**：`{local_ver}`\n"
-                    f"**官方最新版本**：`{remote_ver}`\n\n"
-                    f"💡 **更新操作指引**：\n"
-                    f"系統已準備就緒，請在主機終端機執行單向安全更新器：\n"
-                    f"```bash\npython3 update.py\n```"
-                ),
-                color=discord.Color.gold(),
-            )
-            embed.set_footer(text="ZeroNexus 安全更新通知 • 單向拉取無風險")
-
-            # 2.1 發送到管理頻道（若有配置）
-            if config.discord.secret_channel_id:
-                ch = self.get_channel(config.discord.secret_channel_id)
-                if ch and hasattr(ch, "send"):
-                    try:
-                        await ch.send(embed=embed)
-                    except Exception as ch_err:
-                        log.debug(f"無法發送更新通知至管理頻道: {ch_err}")
-
-            # 2.2 發送給 Bot Owner / 開發者
-            try:
-                app_info = await self.application_info()
-                if app_info and app_info.owner and hasattr(app_info.owner, "send"):
-                    await app_info.owner.send(embed=embed)
-            except Exception as owner_err:
-                log.debug(f"無法發送更新通知至 Bot 擁有者: {owner_err}")
 
         except asyncio.CancelledError:
             raise
