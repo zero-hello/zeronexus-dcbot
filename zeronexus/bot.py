@@ -105,6 +105,7 @@ class ZeroNexusBot(commands.Bot):
         self._in_flight_message_ids: set[int] = set()
         self._in_flight_users: set[int] = set()
         self._last_user_prompts: dict[int, tuple[str, float]] = {}
+        self._last_notified_update_version: Optional[str] = None
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -681,6 +682,67 @@ class ZeroNexusBot(commands.Bot):
 
         scheduler.add_daily_job("daily_midnight_maintenance", daily_midnight_task, hour=0, minute=0)
 
+        # 5. Periodic Official Version Check & Auto Notification (Every 3600s / 1 Hour)
+        async def version_check_task() -> None:
+            await self._check_version_and_notify_safe()
+
+        scheduler.add_interval_job("official_version_check", version_check_task, seconds=3600.0)
+
+    async def _check_version_and_notify_safe(self) -> None:
+        """非同步檢查官方最新版本，若有更新則發送控制台高亮與 Discord 通知。"""
+        try:
+            from zeronexus.core.updater import check_for_updates_async
+            has_new, local_ver, remote_ver = await check_for_updates_async()
+            if not has_new or not remote_ver:
+                return
+
+            # 若此版本已通知過，避免重複刷屏
+            if remote_ver == getattr(self, "_last_notified_update_version", None):
+                return
+            self._last_notified_update_version = remote_ver
+
+            # 1. 控制台高亮醒目通知
+            log.warning(
+                f"▲ [ZeroNexus 更新通知] 偵測到官方發布新版本：\033[1;38;5;220m{remote_ver}\033[0m（當前運行: {local_ver}）"
+                f" ➔ 請在終端機執行 \033[1;38;5;51mpython3 update.py\033[0m 進行安全更新！"
+            )
+
+            # 2. Discord Embed 通知卡片
+            embed = discord.Embed(
+                title="🚀 ZeroNexus 發現新版本發布！",
+                description=(
+                    f"**目前運行版本**：`{local_ver}`\n"
+                    f"**官方最新版本**：`{remote_ver}`\n\n"
+                    f"💡 **更新操作指引**：\n"
+                    f"系統已準備就緒，請在主機終端機執行單向安全更新器：\n"
+                    f"```bash\npython3 update.py\n```"
+                ),
+                color=discord.Color.gold(),
+            )
+            embed.set_footer(text="ZeroNexus 安全更新通知 • 單向拉取無風險")
+
+            # 2.1 發送到管理頻道（若有配置）
+            if config.discord.secret_channel_id:
+                ch = self.get_channel(config.discord.secret_channel_id)
+                if ch and hasattr(ch, "send"):
+                    try:
+                        await ch.send(embed=embed)
+                    except Exception as ch_err:
+                        log.debug(f"無法發送更新通知至管理頻道: {ch_err}")
+
+            # 2.2 發送給 Bot Owner / 開發者
+            try:
+                app_info = await self.application_info()
+                if app_info and app_info.owner and hasattr(app_info.owner, "send"):
+                    await app_info.owner.send(embed=embed)
+            except Exception as owner_err:
+                log.debug(f"無法發送更新通知至 Bot 擁有者: {owner_err}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug(f"背景版本檢查略過: {e}")
+
     async def _broadcast_earthquake(self, eq: dict[str, Any]) -> None:
         """Broadcasts significant earthquake to all configured guild channels."""
         from sqlalchemy import select
@@ -819,6 +881,8 @@ class ZeroNexusBot(commands.Bot):
             log.info(f"✨ 機器人登入成功：{self.user.name} ({self.user.id})")
             log.info(f"🌐 網路拓撲就緒：連線伺服器 {len(self.guilds)} 個 | 服務使用者 {len(self.users)} 位 | 狀態：在線運行中")
             await event_bus.emit("ready", self)
+            # 登入就緒後在背景自動執行一次版本檢查
+            asyncio.create_task(self._check_version_and_notify_safe())
 
     async def _trigger_typing_safe(self, channel: discord.abc.Messageable) -> None:
         """Triggers channel typing indicator safely without breaking execution on Discord API error."""

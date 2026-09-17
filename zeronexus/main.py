@@ -55,6 +55,23 @@ async def startup_self_check() -> bool:
     # 4. 外部 API 與環境
     cwa_status = "連線啟用" if config.external.cwa_api_key else "免金鑰降級支援"
     log.info(f"✔ 即時氣象：台灣中央氣象署 CWA ({cwa_status})")
+
+    # 5. 官方版本與自動更新檢查
+    try:
+        from zeronexus.core.updater import check_for_updates_async
+        has_new, local_v, remote_v = await check_for_updates_async()
+        if has_new:
+            log.warning(
+                f"▲ 發現新版本發布：\033[1;38;5;220m{remote_v}\033[0m（當前運行: {local_v}）"
+                f" ➔ 請在終端機執行 \033[1;38;5;51mpython3 update.py\033[0m 進行安全更新！"
+            )
+        elif remote_v:
+            log.info(f"✔ 版本狀態：{local_v} (已是官方最新版本)")
+        else:
+            log.info(f"✔ 系統版本：{local_v}")
+    except Exception as e:
+        log.debug(f"版本檢查略過: {e}")
+
     log.info("✔ 核心啟動：Zero Intelligence 運行時智慧層初始化完畢\n")
     return True
 
