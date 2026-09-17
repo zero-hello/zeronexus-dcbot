@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  zeronexus:
+    build: .
+    container_name: zeronexus_platform
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    ports:
+      - "48199:48199"
+
+  # Optional PostgreSQL service (uncomment to activate high-concurrency DB)
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: zeronexus_postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: zeronexus
+  #     POSTGRES_PASSWORD: secretpassword
+  #     POSTGRES_DB: zeronexus_db
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+
+  # Optional Redis cache service (uncomment to activate distributed Redis cache)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: zeronexus_redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+
+# volumes:
+#   postgres_data:

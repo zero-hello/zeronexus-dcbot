@@ -1,0 +1,63 @@
+# Environment & Secrets
+.env
+*.env
+*.env.local
+env.txt
+
+# Virtual Environment
+venv/
+.venv/
+znenv/
+env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Database & Runtime Local Data
+*.sqlite
+*.sqlite3
+*.db
+data/
+logs/
+*.log
+
+# Archives & Backups
+*.zip
+exports/*.zip
+AudioStream/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db

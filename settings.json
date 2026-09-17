@@ -1,0 +1,48 @@
+{
+  "platform_name": "ZeroNexus",
+  "codename": "ZN",
+  "version": "1.0.0",
+  "default_prefix": "zn!",
+  "default_locale": "zh-TW",
+  "default_timezone": "Asia/Taipei",
+  "ai": {
+    "daily_limit_per_user": 80,
+    "short_term_memory_limit": 400,
+    "default_persona": "01_cat",
+    "request_timeout_seconds": 60,
+    "max_tokens": 4096,
+    "temperature": 0.7,
+    "show_thinking": true
+  },
+  "music": {
+    "default_volume": 80,
+    "max_queue_size": 500,
+    "auto_leave_seconds": 180,
+    "reconnect_retries": 5
+  },
+  "cache": {
+    "default_ttl_seconds": 300,
+    "max_memory_items": 5000
+  },
+  "rate_limits": {
+    "default_command_cooldown_seconds": 2.0,
+    "ai_cooldown_seconds": 5.0,
+    "max_global_requests_per_second": 30
+  },
+  "presence": {
+    "rotation_interval_seconds": 60,
+    "activities": [
+      "正在遊玩：研究人類行為",
+      "正在遊玩：等待下一個問題",
+      "正在遊玩：偷偷整理伺服器",
+      "正在遊玩：檢查伺服器有沒有爆炸",
+      "正在遊玩：喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵喵！",
+      "正在遊玩：維護這個世界",
+      "正在遊玩：不知道自己在忙什麼",
+      "正在遊玩：等待下一個指令"
+    ]
+  },
+  "diagnostics": {
+    "self_check_on_startup": true
+  }
+}

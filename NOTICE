@@ -1,0 +1,31 @@
+ZeroNexus
+Copyright 2026 Zero
+
+ZeroNexus is an open-source Discord bot created and maintained by Zero.
+
+ZeroNexus is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the complete license text.
+
+If you use, modify, or create a derivative work based on ZeroNexus, please
+retain the applicable copyright, license, and attribution notices required
+by the Apache License 2.0.
+
+Derivative works based on ZeroNexus should clearly identify their origin.
+The following attribution is recommended:
+
+"This project is based on ZeroNexus by Zero."
+
+Original project:
+https://github.com/zero-hello/zeronexus-dcbot
+
+If substantial modifications have been made, clearly indicate that the work
+has been modified from the original ZeroNexus project.
+
+This attribution does not imply endorsement by Zero or the official
+ZeroNexus project.
+
+The ZeroNexus name, logo, and branding are not automatically granted for
+use as trademarks or for implying official affiliation or endorsement.
+
+Third-party dependencies and other third-party materials included in or
+used by ZeroNexus may be subject to their own licenses and terms.
