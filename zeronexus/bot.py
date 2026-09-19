@@ -1339,23 +1339,39 @@ class ZeroNexusBot(commands.Bot):
             # Process attachments (multimodal: images, docs, code/text, audio, general)
             images, image_thumbnail, attachment_tool_results, attachment_notes = await self._ingest_attachments(message.attachments)
 
-            # 4.9 Check for Deep Thinking Natural Language Control Intent
-            thinking_intent = deep_thinking_controller.parse_intent(user_prompt)
-            if thinking_intent != ThinkingIntent.NONE:
-                context_key = str(message.channel.id)
-                reply_text = deep_thinking_controller.handle_intent(thinking_intent, context_key)
-                if reply_text:
-                    pill = ZNStatusPill.SUCCESS if thinking_intent == ThinkingIntent.ENABLE else ZNStatusPill.INFO
-                    card = ZNCard(
-                        title="🧠 Zero Intelligence 深度思考",
-                        description=reply_text,
-                        status_pill=pill,
-                        color=ZNColor.CYAN if thinking_intent == ThinkingIntent.ENABLE else ZNColor.PRIMARY,
-                    )
-                    await self._safe_edit_status_message(status_msg, message.channel, card=card)
-                    if reservation:
-                        await quota_service.release_quota(reservation)
-                    return
+            # 4.9 Check for Deep Thinking Natural Language Control Intent (人話語意控制 + AI 動態親口回應)
+            thinking_intent, extracted_query = deep_thinking_controller.parse_intent_and_extract_query(user_prompt)
+            context_key = str(message.channel.id)
+
+            # 若為複合提問（例如：動動腦，幫我分析這題...），立刻啟用深度思考並繼續以新問題向下解答
+            if thinking_intent == ThinkingIntent.ENABLE and extracted_query:
+                deep_thinking_controller.set_active(context_key, True)
+                user_prompt = extracted_query
+            elif thinking_intent != ThinkingIntent.NONE:
+                # 純指令切換：由 AI 模型自身親口組織語言回應，杜絕寫死字串
+                if thinking_intent == ThinkingIntent.ENABLE:
+                    deep_thinking_controller.set_active(context_key, True)
+                elif thinking_intent == ThinkingIntent.DISABLE:
+                    deep_thinking_controller.set_active(context_key, False)
+
+                reply_text = await deep_thinking_controller.generate_intent_reply(
+                    intent=thinking_intent,
+                    user_prompt=user_prompt,
+                    ai_gateway=ai_gateway,
+                    persona=persona,
+                    active_model=active_model,
+                )
+                pill = ZNStatusPill.SUCCESS if thinking_intent == ThinkingIntent.ENABLE else ZNStatusPill.INFO
+                card = ZNCard(
+                    title="🧠 Zero Intelligence 深度思考",
+                    description=reply_text,
+                    status_pill=pill,
+                    color=ZNColor.PRIMARY if thinking_intent != ThinkingIntent.ENABLE else ZNColor.AI,
+                )
+                await self._safe_edit_status_message(status_msg, message.channel, card=card)
+                if reservation:
+                    await quota_service.release_quota(reservation)
+                return
 
             # 5. Check for Natural Language Model Switching Intent
             t_m0 = time.perf_counter()
@@ -2052,11 +2068,12 @@ class ZeroNexusBot(commands.Bot):
                 except Exception as ye:
                     log.warning(f"YouTube auto-router error in AI channel: {ye}")
 
-            # Check if Deep Thinking Mode is active
+            # Check if Deep Thinking Mode is active (支援人話意圖或頻道常態啟用狀態)
             channel_key = str(message.channel.id)
-            is_deep_thinking_active = deep_thinking_controller.is_enabled(channel_key) or any(
-                kw in user_prompt.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析"]
+            user_has_deep_intent = (deep_thinking_controller.parse_intent(user_prompt) == ThinkingIntent.ENABLE) or any(
+                kw in user_prompt.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析", "動動腦", "認真想", "學霸模式", "超頻思考"]
             )
+            is_deep_thinking_active = deep_thinking_controller.is_enabled(channel_key) or user_has_deep_intent
             deep_thinking_ctx = None
             if is_deep_thinking_active:
                 await report_progress(
