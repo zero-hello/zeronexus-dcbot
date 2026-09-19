@@ -64,7 +64,8 @@ class DeepThinkingContext:
             sub_header = "> 模型內部認知決策、推論驗證與思維鏈推導（100% 由神經網路原生運算生成）"
 
         if self.model_native_thought and self.model_native_thought.strip():
-            clean_thought = self.model_native_thought.strip()
+            from zeronexus.core.taiwan_translator import taiwan_translator
+            clean_thought = taiwan_translator.sanitize_thinking_process(self.model_native_thought.strip())
             # 支援超過 2500 字元的分段或呈現，完整展現 DeepSeek / Gemini 大模型原生思維推導
             if len(clean_thought) > 3500:
                 clean_thought = clean_thought[:3400] + "\n\n...（長篇思考歷程已節錄核心推導精華）"

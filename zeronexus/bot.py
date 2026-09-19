@@ -2206,38 +2206,28 @@ class ZeroNexusBot(commands.Bot):
                 except Exception as ye:
                     log.warning(f"YouTube auto-router error in AI channel: {ye}")
 
-            # Check if Deep Thinking Mode is active (支援人話意圖、頻道常態啟用狀態、以及 Zero Intelligence 自主元認知審查)
+            # Check if Deep Thinking Mode is active (由使用者主動指令或頻道常態設定決定，未要求時絕不擅自強開)
             channel_key = str(message.channel.id)
             user_has_deep_intent = (deep_thinking_controller.parse_intent(user_prompt) == ThinkingIntent.ENABLE) or any(
                 kw in user_prompt.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析", "動動腦", "認真想", "學霸模式", "超頻思考"]
             )
             is_channel_enabled = deep_thinking_controller.is_enabled(channel_key)
 
-            # Zero Intelligence 自主元認知審查 (Autonomous Meta-Cognitive Deliberation)
-            auto_activate, auto_reason, auto_domain = deep_thinking_controller.evaluate_autonomous_deep_thinking(user_prompt)
-
-            is_deep_thinking_active = is_channel_enabled or user_has_deep_intent or auto_activate
-            is_autonomous = auto_activate and not is_channel_enabled and not user_has_deep_intent
+            # 嚴格實體動作分離：若使用者未明確要求開啟深度思考且頻道未開啟，絕對不私自強行啟用！
+            is_deep_thinking_active = is_channel_enabled or user_has_deep_intent
             deep_thinking_ctx = None
             if is_deep_thinking_active:
-                if is_autonomous:
-                    await report_progress(
-                        1, 3, "Zero Intelligence 自主元認知審查",
-                        f"偵測到高階命題【{auto_domain}：{auto_reason}】，AI 自主決定啟用深度思維推演超頻！",
-                        icon="⚡"
-                    )
-                else:
-                    await report_progress(
-                        1, 3, "深度思維鏈 (Chain-of-Thought) 展開",
-                        "正在像 DeepSeek-R1 般深層剖析問題本質、探討底層定義與邊界假設...",
-                        icon="🧠"
-                    )
+                await report_progress(
+                    1, 3, "深度思維鏈 (Chain-of-Thought) 展開",
+                    "正在以大模型深層思維剖析問題本質、探討底層定義與邊界假設...",
+                    icon="🧠"
+                )
                 try:
                     deep_thinking_ctx = deep_thinking_controller.execute_deep_pipeline(
                         query=user_prompt,
-                        is_autonomously_triggered=is_autonomous,
-                        autonomous_reason=auto_reason,
-                        autonomous_domain=auto_domain,
+                        is_autonomously_triggered=False,
+                        autonomous_reason="",
+                        autonomous_domain="",
                     )
                     await asyncio.sleep(0.4)
                     await report_progress(
@@ -2246,8 +2236,7 @@ class ZeroNexusBot(commands.Bot):
                         icon="✨"
                     )
                     deep_instruction = (
-                        f"\n\n【Zero Intelligence 深度思考模式已全面啟用 (Deep Thinking Mode Activated)】\n"
-                        f"{'（⚡ 系統自主元認知審查判定本題屬高階深層命題，已自主啟動思維超頻）\n' if is_autonomous else ''}"
+                        "\n\n【Zero Intelligence 深度思考模式已全面啟用 (Deep Thinking Mode Activated)】\n"
                         "請模仿 DeepSeek-R1 進行極致深入的逐步邏輯推導（Chain-of-Thought）。\n"
                         "拆解核心定義、探討底層原理、排查潛在邊界反例，給出嚴謹深刻且洞察本質的完整解答！"
                     )

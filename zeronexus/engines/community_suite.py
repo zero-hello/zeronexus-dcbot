@@ -905,7 +905,9 @@ class SmartActionView(discord.ui.View):
 
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
 
-        thinking_text = self.thinking_process or "本次對話模型無輸出額外思維鏈內容。"
+        raw_thinking = self.thinking_process or "本次對話模型無輸出額外思維鏈內容。"
+        from zeronexus.core.taiwan_translator import taiwan_translator
+        thinking_text = taiwan_translator.sanitize_thinking_process(raw_thinking)
         chunks = chunk_text_for_components(thinking_text, max_chunk_size=3600)
 
         is_tool_trace = "## ⚙️ 工具調用" in thinking_text and "## 💭 AI 思維推演" not in thinking_text

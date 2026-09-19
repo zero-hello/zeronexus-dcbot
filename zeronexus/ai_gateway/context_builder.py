@@ -401,59 +401,31 @@ TAIWAN_MAPPING_PAIRS = [
 
 
 def enforce_taiwan_localization(text: str) -> str:
-    """以確定性正則與詞組替換，徹底杜絕任何漏網之大陸用語與簡體機翻。"""
+    """以全域臺灣在地化引擎，徹底杜絕任何漏網之大陸用語與簡體字。"""
     if not text:
         return ""
-
-    # 分割 Markdown 程式碼區塊以保護程式碼內部變數名，僅替換自然語言描述
-    segments = re.split(r"(```[\s\S]*?```)", text)
-    result_segments = []
-
-    for seg in segments:
-        if seg.startswith("```"):
-            # 程式碼區塊內僅替換註解與文字，保留關鍵字
-            result_segments.append(seg)
-        else:
-            s = seg
-            for cn_word, tw_word in TAIWAN_MAPPING_PAIRS:
-                s = s.replace(cn_word, tw_word)
-            result_segments.append(s)
-
-    return "".join(result_segments)
+    try:
+        from zeronexus.core.taiwan_translator import taiwan_translator
+        return taiwan_translator.to_taiwan_traditional(text)
+    except Exception as e:
+        log.warning(f"Failed to use taiwan_translator: {e}")
+        # 降級備用
+        s = text
+        for cn_word, tw_word in TAIWAN_MAPPING_PAIRS:
+            s = s.replace(cn_word, tw_word)
+        return s
 
 
 def sanitize_thinking_process(thinking: str) -> str:
-    """全面淨化模型原生思維推演歷程，將英文思維模板轉換為道地臺灣繁體中文並強制在地化。"""
+    """全面淨化模型原生思維推演歷程，將英文思維模板與簡體字 100% 轉換為道地臺灣繁體中文。"""
     if not thinking or not thinking.strip():
         return ""
-
-    s = thinking.strip()
-
-    # 常見大模型英文思維慣用開場與結構標題轉換表
-    english_thought_replacements = [
-        (r"(?i)\bthinking\s+process\s*[:：]", "## 🧠 思維推演歷程："),
-        (r"(?i)\bmy\s+thoughts\s+on\s+([^\n:]+)", r"關於「\1」的深層推演"),
-        (r"(?i)\b(?:1\.|step\s*1[:：]?)\s*(?:understand|analy[zs]e)\s+(?:the\s+)?(?:user(?:'s)?\s+)?(?:prompt|query|intent|question)[:：]?", "1. 解析使用者核心意圖："),
-        (r"(?i)\b(?:2\.|step\s*2[:：]?)\s*(?:retrieve|check|analy[zs]e)\s+(?:context|memory|history|background)[:：]?", "2. 檢索歷史脈絡與情感記憶："),
-        (r"(?i)\b(?:3\.|step\s*3[:：]?)\s*(?:consider|evaluate)\s+(?:empathy|emotion|tone|feelings?)[:：]?", "3. 評估使用者情緒狀態與同理心深度："),
-        (r"(?i)\b(?:4\.|step\s*4[:：]?)\s*(?:formulate|plan|draft)\s+(?:the\s+)?(?:response|answer|reply)[:：]?", "4. 組織深刻共鳴與具體建設性之解答："),
-        (r"(?i)\b(?:5\.|step\s*5[:：]?)\s*(?:verify|review|final\s+check)[:：]?", "5. 審查繁體中文標準與高情商語氣："),
-        (r"(?i)\buser\s+prompt\s*[:：]", "使用者提問："),
-        (r"(?i)\buser\s+emotion\s*[:：]", "使用者情緒狀態："),
-        (r"(?i)\bcore\s+intent\s*[:：]", "核心提問焦點："),
-        (r"(?i)\bcontext\s+analysis\s*[:：]", "情境與脈絡分析："),
-        (r"(?i)\breasoning\s*[:：]", "因果邏輯推理："),
-        (r"(?i)\bconclusion\s*[:：]", "推演結論："),
-        (r"(?i)\bfinal\s+output\s*[:：]", "最終輸出規劃："),
-        (r"(?i)\bresponse\s+strategy\s*[:：]", "應對陪伴策略："),
-    ]
-
-    for pat, repl in english_thought_replacements:
-        s = re.sub(pat, repl, s)
-
-    # 執行確定性繁體中文在地化替換
-    s = enforce_taiwan_localization(s)
-    return s
+    try:
+        from zeronexus.core.taiwan_translator import taiwan_translator
+        return taiwan_translator.sanitize_thinking_process(thinking)
+    except Exception as e:
+        log.warning(f"Failed to sanitize thinking process with taiwan_translator: {e}")
+        return enforce_taiwan_localization(thinking.strip())
 
 
 def _clean_stored_turn(content: str, role: str) -> str:
