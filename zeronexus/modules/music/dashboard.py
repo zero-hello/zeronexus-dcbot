@@ -68,7 +68,13 @@ def build_now_playing_card(player: wavelink.Player, volume: int) -> ZNCard:
     bar = build_progress_bar(pos, dur)
 
     queue_count = len(player.queue) if hasattr(player, "queue") else 0
-    loop_text = "開啟" if getattr(player.queue, "mode", None) else "關閉"
+    mode = getattr(player.queue, "mode", wavelink.QueueMode.normal)
+    if mode == wavelink.QueueMode.loop:
+        loop_text = "單曲循環 🔂"
+    elif mode == wavelink.QueueMode.loop_all:
+        loop_text = "隊列循環 🔁"
+    else:
+        loop_text = "關閉"
 
     desc = (
         f"🎶 標題：**[{title}]({uri})**\n"
@@ -160,12 +166,14 @@ class NowPlayingView(discord.ui.View):
         volume: int,
         guild_id: int,
         message: Optional[discord.Message] = None,
+        on_add_song: Optional[Callable[[discord.Interaction, str], Coroutine[Any, Any, None]]] = None,
     ) -> None:
         super().__init__(timeout=None)
         self.player = player
         self.volume = volume
         self.guild_id = guild_id
         self.message = message
+        self.on_add_song = on_add_song
         self._sync_buttons()
 
     def _sync_buttons(self) -> None:
@@ -173,6 +181,17 @@ class NowPlayingView(discord.ui.View):
         is_paused = getattr(self.player, "paused", False)
         self.btn_pause_resume.label = "▶️ 繼續" if is_paused else "⏸️ 暫停"
         self.btn_pause_resume.style = discord.ButtonStyle.success if is_paused else discord.ButtonStyle.primary
+
+        mode = getattr(self.player.queue, "mode", wavelink.QueueMode.normal)
+        if mode == wavelink.QueueMode.loop:
+            self.btn_loop.label = "🔂 單曲循環"
+            self.btn_loop.style = discord.ButtonStyle.primary
+        elif mode == wavelink.QueueMode.loop_all:
+            self.btn_loop.label = "🔁 隊列循環"
+            self.btn_loop.style = discord.ButtonStyle.success
+        else:
+            self.btn_loop.label = "🔁 循環：關閉"
+            self.btn_loop.style = discord.ButtonStyle.secondary
 
     async def refresh_dashboard(self) -> None:
         """更新控制面板卡片與按鈕。"""
@@ -230,6 +249,29 @@ class NowPlayingView(discord.ui.View):
     async def btn_volume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         modal = VolumeModal(self.player, self.volume, self.refresh_dashboard)
         await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="🔁 循環：關閉", style=discord.ButtonStyle.secondary, row=1)
+    async def btn_loop(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        current_mode = getattr(self.player.queue, "mode", wavelink.QueueMode.normal)
+        if current_mode == wavelink.QueueMode.normal:
+            self.player.queue.mode = wavelink.QueueMode.loop
+        elif current_mode == wavelink.QueueMode.loop:
+            self.player.queue.mode = wavelink.QueueMode.loop_all
+        else:
+            self.player.queue.mode = wavelink.QueueMode.normal
+        await self.refresh_dashboard()
+
+    @discord.ui.button(label="➕ 添加歌曲", style=discord.ButtonStyle.success, row=1)
+    async def btn_add_song(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.on_add_song:
+            modal = AddSongModal(self.on_add_song)
+            await interaction.response.send_modal(modal)
+        else:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send("❌ 添加歌曲功能未設定回呼函式。", ephemeral=True)
 
 
 class TrackSelect(discord.ui.Select):

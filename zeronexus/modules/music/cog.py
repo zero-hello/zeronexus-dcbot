@@ -117,6 +117,64 @@ class MusicCog(commands.Cog):
         return player
 
     # --------------------------------------------------------------------------
+    # 輔助函式：多節點容錯安全搜尋 (防禦 Cloudflare 524 與逾時)
+    # --------------------------------------------------------------------------
+    async def _safe_search_tracks(
+        self,
+        query: str,
+        preferred_node: Optional[wavelink.Node] = None,
+    ) -> Any:
+        """安全搜尋歌曲，支援自動節點容錯重試以抵禦 Cloudflare 524 與逾時異常。"""
+        all_nodes: list[wavelink.Node] = []
+        if preferred_node and preferred_node.status is wavelink.NodeStatus.CONNECTED:
+            all_nodes.append(preferred_node)
+
+        # 優先排入具備 yt-sosor 或 serenetia 之優質節點
+        for n in getattr(wavelink.Pool, "nodes", {}).values():
+            if n.status is wavelink.NodeStatus.CONNECTED and n not in all_nodes:
+                ident_low = n.identifier.lower()
+                uri_low = str(getattr(n, "uri", "")).lower()
+                if "serenetia" in ident_low or "serenetia" in uri_low:
+                    all_nodes.insert(0 if not preferred_node else 1, n)
+                else:
+                    all_nodes.append(n)
+
+        for n in all_nodes:
+            try:
+                res = await wavelink.Playable.search(query, node=n)
+                if res:
+                    return res
+            except Exception as ex:
+                log.warning(f"[MusicCog] 節點 {n.identifier} 搜尋異常 ({ex})，正在自動切換至備援節點重試...")
+
+        # 若指定節點皆未成功，最後以全域預設 Pool 搜尋一次
+        try:
+            return await wavelink.Playable.search(query)
+        except Exception as ex:
+            log.error(f"[MusicCog] 所有節點搜尋均失敗: {ex}")
+            return None
+
+    def _create_on_add_song(self, player: wavelink.Player):
+        """為控制面板建構添加歌曲之非同步回呼函式。"""
+        async def _on_add(inter: discord.Interaction, query: str) -> None:
+            clean_q = query.strip()
+            search_q = clean_q if clean_q.startswith(("http://", "https://")) else f"ytsearch:{clean_q}"
+            res = await self._safe_search_tracks(search_q, preferred_node=player.node)
+            if not res:
+                await inter.followup.send("❌ 找不到該歌曲，請嘗試其他關鍵字或有效網址。", ephemeral=True)
+                return
+
+            track = res[0] if isinstance(res, list) else res
+            await self._play_or_enqueue(inter, player, track)
+            dur = format_ms_to_clock(track.length) if hasattr(track, "length") else "未知"
+            await inter.followup.send(
+                f"🎶 已成功加入待播隊列：**[{track.title}]({getattr(track, 'uri', '')})** (`{dur}`)",
+                ephemeral=True,
+            )
+
+        return _on_add
+
+    # --------------------------------------------------------------------------
     # 輔助函式：播放或加入待播隊列
     # --------------------------------------------------------------------------
     async def _play_or_enqueue(
@@ -134,7 +192,12 @@ class MusicCog(commands.Cog):
             await player.set_volume(volume)
             await player.play(track, volume=volume)
 
-            dashboard = NowPlayingView(player, volume, guild_id)
+            dashboard = NowPlayingView(
+                player=player,
+                volume=volume,
+                guild_id=guild_id,
+                on_add_song=self._create_on_add_song(player),
+            )
             self._dashboards[guild_id] = dashboard
 
             card = build_now_playing_card(player, volume)
@@ -180,7 +243,7 @@ class MusicCog(commands.Cog):
 
         # 1. 檢查是否包含 YouTube list 播放清單參數
         if PLAYLIST_REGEX.search(query):
-            search_res = await wavelink.Playable.search(query)
+            search_res = await self._safe_search_tracks(query, preferred_node=player.node)
 
             if isinstance(search_res, wavelink.Playlist):
                 playlist = search_res
@@ -201,7 +264,12 @@ class MusicCog(commands.Cog):
                             for t in tracks_to_add[1:]:
                                 await player.queue.put_wait(t)
 
-                            dashboard = NowPlayingView(player, vol, inter.guild_id or 0)
+                            dashboard = NowPlayingView(
+                                player=player,
+                                volume=vol,
+                                guild_id=inter.guild_id or 0,
+                                on_add_song=self._create_on_add_song(player),
+                            )
                             self._dashboards[inter.guild_id or 0] = dashboard
                             card = build_now_playing_card(player, vol)
                             msg = await InteractionResponder.safe_send(inter, card=card, view=dashboard)
@@ -240,7 +308,7 @@ class MusicCog(commands.Cog):
         # 2. 一般搜尋或單曲連結
         if not query.startswith(("http://", "https://")):
             # 關鍵字搜尋：抓取前 10 首
-            search_res = await wavelink.Playable.search(f"ytsearch:{query}")
+            search_res = await self._safe_search_tracks(f"ytsearch:{query}", preferred_node=player.node)
 
             if not search_res:
                 await interaction.followup.send("❌ 找不到符合條件的歌曲，請嘗試其他關鍵字。")
@@ -266,9 +334,9 @@ class MusicCog(commands.Cog):
             await self._play_or_enqueue(interaction, player, track)
         else:
             # 直接 URL
-            search_res = await wavelink.Playable.search(query)
+            search_res = await self._safe_search_tracks(query, preferred_node=player.node)
             if not search_res:
-                await interaction.followup.send("❌ 無法解析該音樂網址，請確認連結有效性。")
+                await interaction.followup.send("❌ 無法解析該音樂網址，請確認連結有效性或稍後再試。")
                 return
 
             track = search_res[0] if isinstance(search_res, list) else search_res
@@ -593,7 +661,9 @@ class MusicCog(commands.Cog):
 
         async def _on_modal_add(inter: discord.Interaction, q: str) -> None:
             await inter.response.defer()
-            res = await wavelink.Playable.search(q if q.startswith("http") else f"ytsearch:{q}")
+            search_query = q.strip()
+            target_q = search_query if search_query.startswith(("http://", "https://")) else f"ytsearch:{search_query}"
+            res = await self._safe_search_tracks(target_q, preferred_node=player.node)
             if res:
                 t = res[0] if isinstance(res, list) else res
                 await self._play_or_enqueue(inter, player, t)
