@@ -13,7 +13,6 @@ import wavelink
 from zeronexus.core.config import config
 from zeronexus.lavalink.node_pool import NodePoolManager
 from zeronexus.ui.card import ZNCard
-from zeronexus.ui.responder import InteractionResponder
 from zeronexus.ui.theme import ZNColor, ZNStatusPill
 
 
@@ -109,11 +108,13 @@ class VolumeModal(discord.ui.Modal, title="🔊 調整音樂播放音量"):
         self.add_item(self.volume_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         val_str = self.volume_input.value.strip()
         try:
             val = int(val_str)
         except ValueError:
-            await InteractionResponder.safe_send(interaction, "❌ 音量必須為純整數數字。", ephemeral=True)
+            await interaction.followup.send("❌ 音量必須為純整數數字。", ephemeral=True)
             return
 
         max_v = config.music.max_volume
@@ -125,7 +126,7 @@ class VolumeModal(discord.ui.Modal, title="🔊 調整音樂播放音量"):
             NodePoolManager.get_instance().set_guild_volume(interaction.guild.id, clamped)
 
         await self.on_refresh()
-        await InteractionResponder.safe_send(interaction, f"🔊 音量已成功設定為 **{clamped}%**！", ephemeral=True)
+        await interaction.followup.send(f"🔊 音量已成功設定為 **{clamped}%**！", ephemeral=True)
 
 
 class AddSongModal(discord.ui.Modal, title="➕ 添加點播新歌曲"):
@@ -144,6 +145,8 @@ class AddSongModal(discord.ui.Modal, title="➕ 添加點播新歌曲"):
         self.add_item(self.query_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         query = self.query_input.value.strip()
         await self.on_add_song(interaction, query)
 
@@ -186,14 +189,16 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(label="⏸️ 暫停", style=discord.ButtonStyle.primary, row=0)
     async def btn_pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         is_paused = getattr(self.player, "paused", False)
         await self.player.pause(not is_paused)
         await self.refresh_dashboard()
-        act_text = "繼續播放" if is_paused else "暫停播放"
-        await InteractionResponder.safe_send(interaction, f"已{act_text}。", ephemeral=True)
 
     @discord.ui.button(label="⏹️ 停止", style=discord.ButtonStyle.danger, row=0)
     async def btn_stop(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         self.player.queue.clear()
         await self.player.stop()
         card = ZNCard(
@@ -207,19 +212,19 @@ class NowPlayingView(discord.ui.View):
                 await self.message.edit(embed=card.to_embed(), view=None)
             except Exception:
                 pass
-        await InteractionResponder.safe_send(interaction, "⏹️ 已停止播放並清空隊列。", ephemeral=True)
 
     @discord.ui.button(label="⏮️ 上一首", style=discord.ButtonStyle.secondary, row=0)
     async def btn_prev(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        # 重頭播放當前歌曲
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         await self.player.seek(0)
         await self.refresh_dashboard()
-        await InteractionResponder.safe_send(interaction, "⏮️ 已重頭播放當前曲目。", ephemeral=True)
 
     @discord.ui.button(label="⏭️ 下一首", style=discord.ButtonStyle.primary, row=0)
     async def btn_next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         await self.player.skip(force=True)
-        await InteractionResponder.safe_send(interaction, "⏭️ 已切換至下一首歌曲。", ephemeral=True)
 
     @discord.ui.button(label="🔊 音量", style=discord.ButtonStyle.secondary, row=0)
     async def btn_volume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -245,6 +250,8 @@ class TrackSelect(discord.ui.Select):
         super().__init__(placeholder="🎵 請挑選你想播放的曲目...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         idx = int(self.values[0])
         chosen = self.tracks[idx]
         await self.on_select(interaction, chosen)
@@ -274,15 +281,25 @@ class PlaylistPromptView(discord.ui.View):
 
     @discord.ui.button(label="📋 載入整張清單", style=discord.ButtonStyle.success)
     async def btn_load_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         await self.on_choose(interaction, True)
 
     @discord.ui.button(label="🎵 僅播放當前單曲", style=discord.ButtonStyle.primary)
     async def btn_load_single(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         await self.on_choose(interaction, False)
 
     @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary)
     async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await InteractionResponder.safe_send(interaction, "已取消點播。", ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        if interaction.message:
+            try:
+                await interaction.message.delete()
+            except Exception:
+                pass
 
 
 class TrackEndedView(discord.ui.View):

@@ -101,8 +101,8 @@ class NodePoolManager:
             probe_results = await NodeProbe.probe_multiple(candidate_nodes, concurrency=10, timeout_seconds=4.0)
 
             valid_probes = [p for p in probe_results if p.is_online and p.is_v4]
-            # 優先以「支援 YouTube」與「延遲最低」排序
-            valid_probes.sort(key=lambda p: (not p.supports_youtube, p.latency_ms))
+            # 優先排序準則：1. SSL 安全通道 (保證 UDP 語音封包暢通無阻) 2. 支援 YouTube 3. 延遲最低
+            valid_probes.sort(key=lambda p: (not p.secure, not p.supports_youtube, p.latency_ms))
 
             if not valid_probes:
                 log.warning("[NodePoolManager] 探測無可用公共節點，回退至預設靜態配置。")
@@ -118,18 +118,28 @@ class NodePoolManager:
                 ]
                 valid_probes = await asyncio.gather(*valid_probes)
 
-            selected = [p for p in valid_probes if p.is_online][:4]
-            if not selected and valid_probes:
-                selected = valid_probes[:2]
+            # 端點去重：相同 host:port 只保留一筆最低延遲紀錄
+            unique_probes = []
+            seen_cand_ep = set()
+            for p in valid_probes:
+                cand_ep = (p.host.lower().strip(), p.port)
+                if cand_ep not in seen_cand_ep:
+                    seen_cand_ep.add(cand_ep)
+                    unique_probes.append(p)
 
-            seen_identifiers = set()
-            seen_endpoints = set()
+            # 嚴格篩選策略：若存在優質 SSL 節點，則嚴格淘汰容易阻擋 UDP 音訊的 NoSSL 劣質個人節點
+            ssl_yt_nodes = [p for p in unique_probes if p.is_online and p.secure and p.supports_youtube]
+            if ssl_yt_nodes:
+                selected = ssl_yt_nodes[:4]
+            else:
+                # 無 SSL+YouTube 節點時，退回在線節點中支援 YouTube 的節點
+                yt_nodes = [p for p in unique_probes if p.is_online and p.supports_youtube]
+                selected = yt_nodes[:4] if yt_nodes else unique_probes[:4]
+
+            existing_pool_nodes = set(getattr(wavelink.Pool, "nodes", {}).keys())
+            seen_identifiers = set(existing_pool_nodes)
             wavelink_nodes: List[wavelink.Node] = []
             for sp in selected:
-                ep = (sp.host.lower(), sp.port)
-                if ep in seen_endpoints:
-                    continue
-                seen_endpoints.add(ep)
 
                 base_ident = sp.identifier or f"{sp.host}:{sp.port}"
                 ident = base_ident
@@ -149,7 +159,8 @@ class NodePoolManager:
                 )
                 wavelink_nodes.append(node)
                 yt_tag = " [YouTube ✅]" if sp.supports_youtube else " [YouTube ❌]"
-                log.info(f"[NodePoolManager] 裝載節點: {node.identifier} ({node.uri}) 延遲: {sp.latency_ms}ms{yt_tag}")
+                ssl_tag = " [SSL 🔒]" if sp.secure else " [NoSSL ⚠️]"
+                log.info(f"[NodePoolManager] 裝載節點: {node.identifier} ({node.uri}) 延遲: {sp.latency_ms}ms{yt_tag}{ssl_tag}")
 
             if wavelink_nodes:
                 try:

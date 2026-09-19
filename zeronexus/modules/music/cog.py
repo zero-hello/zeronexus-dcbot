@@ -17,6 +17,7 @@ from discord.ext import commands
 import wavelink
 
 from zeronexus.core.config import config
+from zeronexus.core.logger import log
 from zeronexus.lavalink.node_pool import NodePoolManager
 from zeronexus.modules.base import BaseModule, CommandMetadata, ModuleState
 from zeronexus.modules.music.dashboard import (
@@ -108,7 +109,7 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player or not isinstance(player, wavelink.Player):
             try:
-                player = await user_voice.channel.connect(cls=wavelink.Player)
+                player = await user_voice.channel.connect(cls=wavelink.Player, self_deaf=True, self_mute=False)
             except Exception as ex:
                 await InteractionResponder.safe_send(interaction, f"❌ 無法加入語音頻道：`{ex}`", ephemeral=True)
                 return None
@@ -129,9 +130,9 @@ class MusicCog(commands.Cog):
         volume = self.node_manager.get_guild_volume(guild_id)
 
         if not player.playing:
-            # 當前未播歌，直接開播
+            # 當前未播歌，直接開播並帶上持久化音量
             await player.set_volume(volume)
-            await player.play(track)
+            await player.play(track, volume=volume)
 
             dashboard = NowPlayingView(player, volume, guild_id)
             self._dashboards[guild_id] = dashboard
@@ -195,7 +196,7 @@ class MusicCog(commands.Cog):
                         if not player.playing:
                             vol = self.node_manager.get_guild_volume(inter.guild_id or 0)
                             await player.set_volume(vol)
-                            await player.play(first_track)
+                            await player.play(first_track, volume=vol)
 
                             for t in tracks_to_add[1:]:
                                 await player.queue.put_wait(t)
@@ -475,6 +476,36 @@ class MusicCog(commands.Cog):
             color=ZNColor.PRIMARY,
         )
         await InteractionResponder.safe_send(interaction, card=card)
+
+    # --------------------------------------------------------------------------
+    # 事件監聽：歌曲播放開始 (Track Start)
+    # --------------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
+        """監聽歌曲開始播放事件，自動同步刷新控制面板。"""
+        player = payload.player
+        if not player or not player.guild:
+            return
+        guild_id = player.guild.id
+        dashboard = self._dashboards.get(guild_id)
+        if dashboard:
+            await dashboard.refresh_dashboard()
+
+    # --------------------------------------------------------------------------
+    # 事件監聽：歌曲播放異常 (Track Exception)
+    # --------------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload) -> None:
+        """監聽歌曲播放異常，記錄日誌。"""
+        log.error(f"[MusicCog] 歌曲播放異常: {payload.exception} (Track: {getattr(payload.track, 'title', 'Unknown')})")
+
+    # --------------------------------------------------------------------------
+    # 事件監聽：語音 WebSocket 關閉 (Websocket Closed)
+    # --------------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_wavelink_websocket_closed(self, payload: wavelink.WebsocketClosedEventPayload) -> None:
+        """監聽語音 WebSocket 關閉事件。"""
+        log.warning(f"[MusicCog] 語音 WebSocket 連線關閉: code={payload.code}, reason={payload.reason}")
 
     # --------------------------------------------------------------------------
     # 事件監聽：歌曲播放完畢 (Track End)
