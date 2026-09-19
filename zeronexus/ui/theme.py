@@ -12,13 +12,24 @@ import pytz
 from zeronexus.core.config import config
 
 
-class ZNColor:
+class _ZNColorMeta(type):
+    """防禦性元類別，當請求未定義之顏色常數時安全回傳 PRIMARY，徹底杜絕 AttributeError。"""
+    def __getattr__(cls, name: str) -> discord.Color:
+        return cls.PRIMARY
+
+
+class ZNColor(metaclass=_ZNColorMeta):
     """Standardized color palette for ZeroNexus Components V2 cards."""
     PRIMARY = discord.Color.from_rgb(88, 101, 242)      # ZeroNexus Blurple
     SUCCESS = discord.Color.from_rgb(46, 204, 113)      # Emerald Green
     WARNING = discord.Color.from_rgb(241, 196, 15)      # Amber Gold
     ERROR = discord.Color.from_rgb(237, 66, 69)         # Crimson Red
     INFO = discord.Color.from_rgb(52, 152, 219)         # Ocean Cyan
+    CYAN = discord.Color.from_rgb(0, 206, 209)          # Cyber Cyan
+    BLUE = discord.Color.from_rgb(52, 152, 219)         # Ocean Blue
+    GREEN = discord.Color.from_rgb(46, 204, 113)        # Emerald Green
+    RED = discord.Color.from_rgb(237, 66, 69)           # Crimson Red
+    GOLD = discord.Color.from_rgb(241, 196, 15)         # Amber Gold
     DARK = discord.Color.from_rgb(43, 45, 49)           # Discord Charcoal
     AI = discord.Color.from_rgb(155, 89, 182)           # Mystic Purple
     PURPLE = discord.Color.from_rgb(155, 89, 182)       # Secret Egg Purple
