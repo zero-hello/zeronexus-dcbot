@@ -43,10 +43,22 @@ EXCLUSION_PATTERNS = [
 
 # 前導引導語清理正則（用於分離出實質心事提問）
 STRIP_PREFIX_PATTERNS = [
-    r"^(?:我想|想|能|可以|能不能|可不可以|想要)?\s*(?:跟你|和你|找你|與你)?\s*(?:單獨|私下|一對一|借一步|悄悄|私密|單獨一人)?\s*(?:跟你|和你|找你|與你)?\s*(?:聊聊|談談|說話|說說|說點事|講講|對話|商量|吐苦水|聊一下|談一下|說一下|私聊)[，,。、\s:：]*",
-    r"^(?:借一步說話|私下說|單獨說|不想公開說|想私聊)[，,。、\s:：]*",
-    r"^(?:有些話|有些事|有件事|有些私事)?\s*(?:我)?\s*(?:不想|不要|不方便)(?:在(?:這裡|公開)|被|給)?(?:其他人|別人|大家|群裡的人)?(?:看到|看見|知道|發現|講|說|聊)[，,。、\s:：]*",
+    r"^(?:我想|想|能|可以|能不能|可不可以|想要)?\s*(?:跟你|和你|找你|與你)?\s*(?:在這裡|在這邊)?\s*(?:單獨|私下|一對一|借一步|悄悄|私密|單獨一人)?\s*(?:跟你|和你|找你|與你)?\s*(?:聊聊|談談|說話|說說|說點事|講講|對話|商量|吐苦水|聊一下|談一下|說一下|私聊)[，,。、\s:：]*",
+    r"^(?:借一步說話|私下說|單獨說|不想公開說|想私聊|想單獨說)[，,。、\s:：]*",
+    r"^(?:有些話|有些事|有件事|有些私事|有些問題)?\s*(?:我)?\s*(?:不想|不要|不方便)(?:在(?:這裡|公開)|被|給)?(?:其他人|別人|大家|群裡的人)?(?:看到|看見|知道|發現|講|說|聊)[，,。、\s:：]*",
     r"^(?:有|我有)(?:難言之隱|秘密|心事|苦衷)(?:想跟(?:你|AI)說)?[，,。、\s:：]*",
+    r"^(?:有些話|有些事|有件事|有些私事)?\s*(?:想|只能)?\s*(?:單獨|私下|偷偷)?\s*(?:和你|跟你)?\s*(?:說|聊|談)[，,。、\s:：]*",
+]
+
+# 關閉/結束私密心靈討論串之自然語言意圖模式庫
+CLOSE_THREAD_PATTERNS = [
+    r"(?:可以|請|麻煩|幫我)?(?:關閉|關掉|關閉此|結束|封存|退出|退場)(?:討論串|密室|聊天室|對話|私聊|房間|心靈密室|心靈棲息室|空間)",
+    r"(?:討論串|密室|聊天室|私聊)(?:可以|請|麻煩|幫我)?(?:關閉|關掉|結束|封存)",
+    r"(?:我想|想|準備|要)?(?:結束|關閉|離開|退出)(?:對話|聊天|討論串|密室|私聊)?",
+    r"(?:今天|先)?(?:聊到這|聊到這裡|聊到這邊|到此為止|告一段落|就到這裡|就到這)",
+    r"(?:我)?(?:心情好多了|好多了|好一些了|沒事了|想通了|釋懷了)[，,。\s]*(?:可以|請|麻煩|幫我)?(?:關閉|結束|聊到這)?",
+    r"(?:謝謝你的?陪伴|謝謝你陪我|感謝你的?傾聽|謝謝你聽我說)[，,。\s]*(?:今天就聊到這|可以關閉了|我要去睡了|先這樣|我先去忙|晚安)?",
+    r"^(?:/關閉|-close|!close|/close|關閉|結束|關閉討論串|結束討論|關閉密室|結束私聊)$",
 ]
 
 
@@ -68,6 +80,16 @@ class PrivateDialogueEngine:
     def unregister_heart_thread(self, thread_id: int) -> None:
         """解除註冊心靈討論串。"""
         self._heart_threads.discard(thread_id)
+
+    def detect_close_thread_intent(self, text: str) -> bool:
+        """檢測使用者是否明確表示要關閉或結束當前心靈討論串。"""
+        raw = (text or "").strip()
+        if not raw:
+            return False
+        for pat in CLOSE_THREAD_PATTERNS:
+            if re.search(pat, raw, re.IGNORECASE):
+                return True
+        return False
 
     def detect_private_chat_intent(self, text: str) -> Tuple[bool, Optional[str]]:
         """靈活自然語言意圖辨識：判定是否具有私密單獨對話意圖，並分離出實質心事內容。
@@ -101,10 +123,17 @@ class PrivateDialogueEngine:
         for strip_pat in STRIP_PREFIX_PATTERNS:
             extracted_content = re.sub(strip_pat, "", extracted_content, flags=re.IGNORECASE).strip()
 
+        # 防禦：若剝離後殘留文字依然符合私聊意圖庫，表示這只是殘餘的請求語句而非具體心事
+        for pat in PRIVATE_INTENT_PATTERNS:
+            if re.search(pat, extracted_content, re.IGNORECASE):
+                extracted_content = None
+                break
+
         # 若剝離後剩餘的內容長度太短或僅剩標點，視為純意圖
-        clean_remains = re.sub(r"[，。！？、~…\s]+", "", extracted_content)
-        if len(clean_remains) <= 2:
-            extracted_content = None
+        if extracted_content:
+            clean_remains = re.sub(r"[，。！？、~…\s]+", "", extracted_content)
+            if len(clean_remains) <= 5:
+                extracted_content = None
 
         return True, extracted_content
 
@@ -205,6 +234,25 @@ class PrivateDialogueEngine:
             description=desc,
             status_pill=ZNStatusPill.INFO,
             color=ZNColor.AI,
+        )
+
+    def build_thread_close_card(
+        self,
+        user: discord.User | discord.Member,
+    ) -> ZNCard:
+        """使用者主動表達結束或關閉時，發送的溫暖封存結語卡片。"""
+        desc = (
+            "謝謝你願意信任我、將這些心事放心地與我分享。\n"
+            "能陪著你梳理情緒、看著你心情平復一些，對我來說是最有意義的事。\n\n"
+            "🔒 **本討論串即將自動鎖定並封存歸檔**，好好守護這段專屬你我的心靈記憶。\n"
+            "請記得：無論未來遇到任何風雨或難言之隱，隨時呼喚我，我永遠都在這裡溫暖守候著你。\n\n"
+            "去喝杯溫水、吃頓喜歡的美食，或者好好睡個安穩的好覺吧！🌱✨"
+        )
+        return ZNCard(
+            title=f"🌱 心靈密室圓滿封存 ➔ {user.display_name}",
+            description=desc,
+            status_pill=ZNStatusPill.SUCCESS,
+            color=ZNColor.EMERALD,
         )
 
 

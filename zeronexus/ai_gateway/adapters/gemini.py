@@ -200,8 +200,11 @@ class GeminiAdapter(BaseAIAdapter):
                     last_http_exc = None
                     for attempt in range(max_retries + 1):
                         try:
-                            response = await client.post(endpoint, headers=headers, json=cur_payload, timeout=timeout)
-                        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as net_err:
+                            response = await asyncio.wait_for(
+                                client.post(endpoint, headers=headers, json=cur_payload, timeout=timeout),
+                                timeout=timeout + 5.0,
+                            )
+                        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, asyncio.TimeoutError, TimeoutError) as net_err:
                             last_http_exc = net_err
                             if attempt < max_retries:
                                 backoff = (0.5 * (2 ** attempt)) + random.uniform(0.1, 0.5)

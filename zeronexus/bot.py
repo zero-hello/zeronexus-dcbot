@@ -1011,6 +1011,44 @@ class ZeroNexusBot(commands.Bot):
                 private_dialogue_engine.is_heart_thread(message.channel.id)
                 or channel_name.startswith("🌿・心靈")
             )
+
+            # 心靈私密討論串內：優先檢測使用者是否明確表達要結束或關閉討論串
+            if is_heart_thread and isinstance(message.channel, discord.Thread):
+                if private_dialogue_engine.detect_close_thread_intent(raw_content):
+                    close_card = private_dialogue_engine.build_thread_close_card(message.author)
+                    try:
+                        await message.reply(embed=close_card.to_embed(), mention_author=False)
+                    except Exception:
+                        try:
+                            await message.channel.send(embed=close_card.to_embed())
+                        except Exception:
+                            pass
+
+                    # 隱性深化心靈傾訴圓滿羈絆
+                    asyncio.create_task(affinity_engine.record_interaction(
+                        user_id=message.author.id,
+                        user_text=raw_content,
+                        is_private_thread=True,
+                        has_deep_emotion=True,
+                    ))
+
+                    # 優雅延遲 2.5 秒，確保使用者能清晰閱讀結語卡片後自動鎖定並封存歸檔
+                    async def _delayed_archive_thread(target_thread: discord.Thread, user_name: str) -> None:
+                        await asyncio.sleep(2.5)
+                        try:
+                            private_dialogue_engine.unregister_heart_thread(target_thread.id)
+                            await target_thread.edit(
+                                archived=True,
+                                locked=True,
+                                reason=f"使用者 {user_name} 主動結束心靈私密對話",
+                            )
+                            log.info(f"Successfully archived and locked heart thread {target_thread.id} for user {message.author.id}")
+                        except Exception as arch_err:
+                            log.warning(f"Failed to auto-archive heart thread {target_thread.id}: {arch_err}")
+
+                    asyncio.create_task(_delayed_archive_thread(message.channel, message.author.display_name))
+                    return
+
             is_ai_channel = bool(settings and settings.ai_channel_id == message.channel.id) or is_heart_thread
 
             if is_ai_channel or is_mentioned:
@@ -1179,30 +1217,21 @@ class ZeroNexusBot(commands.Bot):
                         has_deep_emotion=True,
                     ))
 
-                    if not extracted_topic:
-                        # 純意圖觸發，在討論串內發送嚴肅穩重、認真傾聽的開場詢問
-                        welcome_card = private_dialogue_engine.build_thread_welcome_card(message.author)
-                        await thread.send(embed=welcome_card.to_embed())
-                        return
-                    else:
-                        # 複合心事提問（例如：「我想單獨跟你聊聊，其實我今天被裁員了...」）
-                        welcome_card = private_dialogue_engine.build_thread_welcome_card(message.author)
-                        await thread.send(embed=welcome_card.to_embed())
-                        deep_prompt = f"【使用者在專屬私密討論串向你吐露心事，請嚴肅、穩重、極致高情商同理，剖析問題本質，絕不使用空泛雞湯口號】：\n{extracted_topic}"
-                        sub_task = asyncio.create_task(
-                            self._handle_ai_channel_message(
-                                message,
-                                settings=settings,
-                                prompt_override=deep_prompt,
-                                is_shared_ai_channel=False,
-                                is_secret_easter_egg=False,
-                                channel_override=thread,
-                            ),
-                            name=f"heart_thread_sub_{message.id}",
-                        )
-                        self._background_tasks.add(sub_task)
-                        sub_task.add_done_callback(self._on_background_task_done)
-                        return
+                    # 在討論串內發送嚴肅、溫暖、專注傾聽的心靈棲息室歡迎卡片
+                    welcome_card = private_dialogue_engine.build_thread_welcome_card(message.author)
+                    await thread.send(embed=welcome_card.to_embed())
+
+                    # 若發起句子中附帶具體心事，保存至該討論串的專屬記憶，供使用者進入後直接延續聊
+                    if extracted_topic:
+                        asyncio.create_task(context_builder.save_interaction_memories(
+                            user=message.author,
+                            channel=thread,
+                            guild=message.guild,
+                            user_content=extracted_topic,
+                            assistant_content="我已在心靈棲息室做好傾聽準備，無論你遇到什麼事，我都安靜在這裡陪伴著你。",
+                            is_shared_ai_channel=False,
+                        ))
+                    return
 
         # 2. Quota Check & Reservation (atomic 3-phase)
         if is_secret_easter_egg:
@@ -1604,7 +1633,7 @@ class ZeroNexusBot(commands.Bot):
                         status_pill=ZNStatusPill.PROCESSING,
                         color=ZNColor.AI,
                     )
-                    res = await self._safe_edit_status_message(status_msg, message.channel, card=card)
+                    res = await self._safe_edit_status_message(status_msg, effective_channel, card=card)
                     if res is not None:
                         status_msg = res
                     else:
@@ -2252,15 +2281,19 @@ class ZeroNexusBot(commands.Bot):
             if draw_intent and (generated_image_url or generated_image_bytes):
                 allow_tools_for_query = False
 
-            # Generate response from AI Gateway with autonomous function calling enabled
+            # Generate response from AI Gateway with autonomous function calling enabled & strict timeout defense
             t_prov0 = time.perf_counter()
-            ai_res, fallback = await ai_gateway.generate_response(
-                system_instruction=system_instruction,
-                messages=messages,
-                override_model=active_model,
-                images=images if images else None,
-                allow_tools=allow_tools_for_query,
-                tool_executor=dynamic_tool_executor,
+            call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
+            ai_res, fallback = await asyncio.wait_for(
+                ai_gateway.generate_response(
+                    system_instruction=system_instruction,
+                    messages=messages,
+                    override_model=active_model,
+                    images=images if images else None,
+                    allow_tools=allow_tools_for_query,
+                    tool_executor=dynamic_tool_executor,
+                ),
+                timeout=call_timeout,
             )
             pipeline_metrics.provider_request_ms = (time.perf_counter() - t_prov0) * 1000.0
             pipeline_metrics.model_total_ms = pipeline_metrics.provider_request_ms
@@ -2446,11 +2479,11 @@ class ZeroNexusBot(commands.Bot):
                 color=ZNColor.DARK,
             )
             try:
-                await self._safe_edit_status_message(status_msg, message.channel, card=cancel_card)
+                await self._safe_edit_status_message(status_msg, effective_channel, card=cancel_card)
             except Exception:
                 pass
             raise
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             log.warning("AI response generation timed out.")
             if reservation:
                 await quota_service.release_quota(reservation)
@@ -2461,7 +2494,7 @@ class ZeroNexusBot(commands.Bot):
                 color=ZNColor.ERROR,
             )
             try:
-                await self._safe_edit_status_message(status_msg, message.channel, card=timeout_card)
+                await self._safe_edit_status_message(status_msg, effective_channel, card=timeout_card)
             except Exception:
                 pass
         except Exception as e:
@@ -2475,7 +2508,7 @@ class ZeroNexusBot(commands.Bot):
                 color=ZNColor.ERROR,
             )
             try:
-                await self._safe_edit_status_message(status_msg, message.channel, card=err_card)
+                await self._safe_edit_status_message(status_msg, effective_channel, card=err_card)
             except Exception:
                 pass
 
