@@ -482,22 +482,84 @@ class MusicCog(commands.Cog):
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
-        """監聽歌曲開始播放事件，自動同步刷新控制面板。"""
+        """監聽歌曲開始播放事件，自動同步刷新控制面板並重設容錯計數。"""
         player = payload.player
         if not player or not player.guild:
             return
+        setattr(player, "_failover_count", 0)
         guild_id = player.guild.id
         dashboard = self._dashboards.get(guild_id)
         if dashboard:
             await dashboard.refresh_dashboard()
 
     # --------------------------------------------------------------------------
-    # 事件監聽：歌曲播放異常 (Track Exception)
+    # 事件監聽：歌曲播放異常 (Track Exception) 與自動容錯遷移 (Failover)
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload) -> None:
-        """監聽歌曲播放異常，記錄日誌。"""
-        log.error(f"[MusicCog] 歌曲播放異常: {payload.exception} (Track: {getattr(payload.track, 'title', 'Unknown')})")
+        """監聽歌曲播放異常，自動遷移至備援節點重新播放。"""
+        player = payload.player
+        track = payload.track
+        track_title = getattr(track, "title", "未知曲目")
+        current_node = player.node if player else None
+        current_ident = current_node.identifier if current_node else "Unknown"
+
+        log.error(f"[MusicCog] 節點 {current_ident} 歌曲播放異常: {payload.exception} (曲目: {track_title})")
+
+        if not player:
+            return
+
+        # 尋找池中狀態為 CONNECTED 且非當前節點之備援節點
+        connected_nodes = [
+            n for n in getattr(wavelink.Pool, "nodes", {}).values()
+            if n.status is wavelink.NodeStatus.CONNECTED and n.identifier != current_ident
+        ]
+
+        failover_count = getattr(player, "_failover_count", 0)
+        if connected_nodes and failover_count < len(connected_nodes):
+            backup_node = connected_nodes[failover_count % len(connected_nodes)]
+            setattr(player, "_failover_count", failover_count + 1)
+
+            log.warning(f"[MusicCog] 正在將播放器自 {current_ident} 容錯遷移至 {backup_node.identifier} 繼續播放...")
+            try:
+                await player.switch_node(backup_node)
+                channel = player.channel
+                if channel and isinstance(channel, discord.TextChannel):
+                    card = ZNCard(
+                        title="🔄 自動節點容錯轉移",
+                        description=(
+                            f"曲目 **[{track_title}]({getattr(track, 'uri', '')})** 因音訊來源限制播放受阻，\n"
+                            f"系統已自動為您無縫轉移至備援節點 **`{backup_node.identifier}`** 繼續播放！"
+                        ),
+                        status_pill=ZNStatusPill.WARNING,
+                        color=ZNColor.WARNING,
+                    )
+                    await channel.send(embed=card.to_embed())
+                return
+            except Exception as ex:
+                log.error(f"[MusicCog] 容錯切換節點失敗: {ex}")
+
+        # 若已無可用備援節點或全部節點均解碼失敗
+        setattr(player, "_failover_count", 0)
+        channel = player.channel
+        if channel and isinstance(channel, discord.TextChannel):
+            card = ZNCard(
+                title="⚠️ 歌曲播放受限",
+                description=(
+                    f"曲目 **{track_title}** 目前受到 YouTube 存取限制（要求登入驗證或非公開保護），所有節點均暫時無法取得音訊串流。\n"
+                    f"建議您點播官方正式 MV 或其他搜尋關鍵字版本唷！"
+                ),
+                status_pill=ZNStatusPill.ERROR,
+                color=ZNColor.ERROR,
+            )
+            try:
+                await channel.send(embed=card.to_embed())
+            except Exception:
+                pass
+
+        # 若待播隊列中還有歌曲，自動推進播放下一首
+        if len(player.queue) > 0:
+            await player.skip(force=True)
 
     # --------------------------------------------------------------------------
     # 事件監聽：語音 WebSocket 關閉 (Websocket Closed)

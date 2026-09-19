@@ -101,8 +101,8 @@ class NodePoolManager:
             probe_results = await NodeProbe.probe_multiple(candidate_nodes, concurrency=10, timeout_seconds=4.0)
 
             valid_probes = [p for p in probe_results if p.is_online and p.is_v4]
-            # 優先排序準則：1. SSL 安全通道 (保證 UDP 語音封包暢通無阻) 2. 支援 YouTube 3. 延遲最低
-            valid_probes.sort(key=lambda p: (not p.secure, not p.supports_youtube, p.latency_ms))
+            # 優先排序準則：1. SSL 安全通道 (保證 UDP 語音封包暢通無阻) 2. 具備 yt-sosor 抗封鎖插件 3. 支援 YouTube 4. 延遲最低
+            valid_probes.sort(key=lambda p: (not p.secure, not getattr(p, "has_yt_sosor", False), not p.supports_youtube, p.latency_ms))
 
             if not valid_probes:
                 log.warning("[NodePoolManager] 探測無可用公共節點，回退至預設靜態配置。")

@@ -28,6 +28,7 @@ class ProbeResult:
     is_v4: bool = False
     plugins: List[str] = field(default_factory=list)
     supports_youtube: bool = False
+    has_yt_sosor: bool = False
     error_message: Optional[str] = None
 
 
@@ -85,11 +86,13 @@ class NodeProbe:
                         plugin_names = [p.get("name", "") for p in raw_plugins if isinstance(p, dict)]
                         result.plugins = plugin_names
 
-                        # 檢查插件清單是否包含 YouTube 相關插件
+                        # 檢查插件清單是否包含 YouTube 相關插件與 yt-sosor
                         for p_name in plugin_names:
-                            if any(k in p_name.lower() for k in cls.YOUTUBE_PLUGIN_KEYWORDS):
+                            low = p_name.lower()
+                            if "yt-sosor" in low:
+                                result.has_yt_sosor = True
+                            if any(k in low for k in cls.YOUTUBE_PLUGIN_KEYWORDS):
                                 result.supports_youtube = True
-                                break
 
                         # 額外發送一次極輕量載入探測驗證 YouTube 實質支援
                         if result.supports_youtube:
