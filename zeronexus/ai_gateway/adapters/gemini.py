@@ -154,9 +154,9 @@ class GeminiAdapter(BaseAIAdapter):
                 payload["tools"] = [{"function_declarations": formatted_declarations}]
 
         primary_model = model or "gemini-3.1-flash-lite"
-        # 自動校正已退役之舊版模型名稱至官方現役推薦
-        if primary_model in ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro"):
-            primary_model = "gemini-3.1-flash-lite"
+        # 自動校正已退役之舊版模型名稱至官方現役穩定版
+        if primary_model in ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"):
+            primary_model = "gemini-2.5-flash"
 
         if not allow_fallback:
             candidate_models = [primary_model]
@@ -164,7 +164,9 @@ class GeminiAdapter(BaseAIAdapter):
             candidate_models = [primary_model]
             for bm in [
                 "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
                 "gemini-3.5-flash-lite",
+                "gemini-flash-latest",
             ]:
                 if bm not in candidate_models:
                     candidate_models.append(bm)

@@ -713,20 +713,84 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
     # =========================================================================
 
     @commands.command(name="aimodels")
-    async def cmd_aimodels(self, ctx: commands.Context) -> None:
-        """列出 AI Gateway 當前載入的所有可用模型、優先序與狀態。"""
+    async def cmd_aimodels(self, ctx: commands.Context, filter_vendor: Optional[str] = None) -> None:
+        """列出 AI Gateway 當前載入的所有可用模型、優先序與狀態 (可選: gemini / deepseek / qwen)。"""
         from zeronexus.ai_gateway.model_registry import model_registry
-        active_models = model_registry.list_available_models()
         default_model = model_registry.get_active_default_model()
 
-        lines = [f"**當前預設模型**：`{default_model}`\n", "**可用模型登錄清單**："]
-        for idx, m in enumerate(active_models[:12], 1):
-            star = "⭐ (預設)" if m == default_model else ""
-            lines.append(f"{idx}. `{m}` {star}")
+        if filter_vendor:
+            f_norm = filter_vendor.strip().lower()
+            if f_norm in ("gemini", "google"):
+                target_vendor = "google"
+                v_title = "🌟 Google Gemini 家族模型清單"
+            elif f_norm in ("deepseek", "ds"):
+                target_vendor = "deepseek"
+                v_title = "🔮 DeepSeek 家族模型清單"
+            elif f_norm in ("qwen", "ali"):
+                target_vendor = "qwen"
+                v_title = "⚡ Qwen 通義千問家族模型清單"
+            else:
+                target_vendor = f_norm
+                v_title = f"🤖 {filter_vendor} 篩選模型清單"
+
+            models = model_registry.list_active_models(vendor=target_vendor)
+            if not models:
+                card = ZNCard(
+                    title="⚠️ 未找到相符的模型",
+                    description=f"找不到符合廠商 `{filter_vendor}` 的活躍模型。\n可選廠商：`gemini`, `deepseek`, `qwen`。",
+                    status_pill=ZNStatusPill.WARNING,
+                    color=ZNColor.WARNING,
+                )
+                await ctx.send(embed=card.to_embed())
+                return
+
+            lines = [f"**當前預設模型**：`{default_model}`\n", f"**{v_title} (共 {len(models)} 款現役模型)**："]
+            for idx, m in enumerate(models, 1):
+                star = "⭐ (全域預設)" if m.model_id == default_model else ""
+                prov_tag = f"[{m.provider}]"
+                ctx_k = f"{m.context_window // 1024}K" if m.context_window >= 1024 else f"{m.context_window}"
+                lines.append(f"{idx}. `{m.model_id}` {prov_tag} {star}\n   └ *{m.display_name}* · 上下文: `{ctx_k}`")
+
+            card = ZNCard(
+                title=v_title,
+                description="\n".join(lines),
+                status_pill=ZNStatusPill.SUCCESS,
+                color=ZNColor.AI,
+            )
+            await ctx.send(embed=card.to_embed())
+            return
+
+        # 預設全覽模式：依三大支援廠商結構化分類展示
+        all_models = model_registry.list_active_models()
+        gemini_models = [m for m in all_models if m.vendor.lower() in ("google", "gemini")]
+        deepseek_models = [m for m in all_models if m.vendor.lower() == "deepseek"]
+        qwen_models = [m for m in all_models if m.vendor.lower() == "qwen"]
+
+        desc_lines = [
+            f"**當前預設模型**：`{default_model}` ⭐\n",
+            f"### 🌟 Google Gemini 系列 (共 {len(gemini_models)} 款)",
+        ]
+        for m in gemini_models[:8]:
+            star = " ⭐" if m.model_id == default_model else ""
+            desc_lines.append(f"- `{m.model_id}` [{m.provider}]{star}")
+        if len(gemini_models) > 8:
+            desc_lines.append(f"- *...其餘 {len(gemini_models) - 8} 款請輸入 `!zn aimodels gemini` 檢視完整清單*")
+
+        desc_lines.append(f"\n### 🔮 DeepSeek 系列 (共 {len(deepseek_models)} 款)")
+        for m in deepseek_models[:6]:
+            desc_lines.append(f"- `{m.model_id}` [{m.provider}]")
+        if len(deepseek_models) > 6:
+            desc_lines.append(f"- *...其餘 {len(deepseek_models) - 6} 款請輸入 `!zn aimodels deepseek` 檢視*")
+
+        desc_lines.append(f"\n### ⚡ Qwen 通義千問系列 (共 {len(qwen_models)} 款)")
+        for m in qwen_models[:5]:
+            desc_lines.append(f"- `{m.model_id}` [{m.provider}]")
+
+        desc_lines.append("\n-# 💡 輸入 `!zn aimodels gemini` 可單獨查看 Gemini 家族所有規格、上下文與功能。")
 
         card = ZNCard(
-            title="🧠 AI Gateway 模型登錄清單",
-            description="\n".join(lines),
+            title=f"🧠 AI Gateway 模型登錄清單 (總計 {len(all_models)} 款可用)",
+            description="\n".join(desc_lines),
             status_pill=ZNStatusPill.SUCCESS,
             color=ZNColor.AI,
         )
