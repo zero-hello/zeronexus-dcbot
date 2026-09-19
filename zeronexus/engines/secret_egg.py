@@ -41,12 +41,15 @@ def ensure_secret_egg_prompt_file() -> Path:
 def get_secret_egg_prompt() -> str:
     """Loads the secret Easter egg system prompt from the vault file with safe fallback."""
     ensure_secret_egg_prompt_file()
+    from zeronexus.engines.prompt_engine import prompt_engine
+    lexicon = prompt_engine.get_taiwan_lexicon_directive()
+    egg_prompt = DEFAULT_SECRET_EGG_PROMPT.strip()
     try:
         if DEFAULT_PROMPT_FILE.exists():
             content = DEFAULT_PROMPT_FILE.read_text(encoding="utf-8").strip()
             if content:
-                return content
+                egg_prompt = content
     except Exception as e:
         log.warning(f"Error reading secret Easter egg prompt file: {e}")
-    return DEFAULT_SECRET_EGG_PROMPT.strip()
+    return f"{lexicon}\n\n{egg_prompt}" if lexicon else egg_prompt
 

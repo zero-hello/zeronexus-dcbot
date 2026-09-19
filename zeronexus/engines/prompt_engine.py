@@ -205,6 +205,20 @@ class SystemPromptEngine:
     def __init__(self) -> None:
         self._cached_base_prompt: Optional[str] = None
         self._persona_cache: Dict[str, str] = {}
+        self._taiwan_lexicon_cache: Optional[str] = None
+
+    def get_taiwan_lexicon_directive(self) -> str:
+        """載入全域臺灣在地繁體中文高密度詞彙映射字典，確保無論切換何種人格或模型皆強制串接。"""
+        if self._taiwan_lexicon_cache is not None:
+            return self._taiwan_lexicon_cache
+        lex_path = PROMPTS_DIR / "taiwan_localization_lexicon.txt"
+        if lex_path.exists():
+            try:
+                self._taiwan_lexicon_cache = lex_path.read_text(encoding="utf-8").strip()
+                return self._taiwan_lexicon_cache
+            except Exception as e:
+                log.warning(f"Failed to read taiwan_localization_lexicon.txt: {e}")
+        return ""
 
     def compile_compact_prompt(
         self,
@@ -224,7 +238,9 @@ class SystemPromptEngine:
                 f"【反自我吹捧與謙遜約束】：恪守極度謙遜原則，嚴禁主動誇讚自己或吹噓能力，始終保持低調與實事求是。"
             )
 
+        taiwan_lexicon = self.get_taiwan_lexicon_directive()
         compact_prompt = (
+            f"{taiwan_lexicon}\n\n"
             f"{self.BASE_SYSTEM_PROMPT}\n\n"
             f"# 【當前已啟用之人格指令 (Active Persona Directive)】\n"
             f"{persona_block}\n\n"
@@ -295,7 +311,9 @@ class SystemPromptEngine:
 
         # Inject dynamic active persona instruction
         persona_block = self._get_persona_directive(active_persona_key, custom_persona_instructions)
+        taiwan_lexicon = self.get_taiwan_lexicon_directive()
         final_prompt = (
+            f"{taiwan_lexicon}\n\n"
             f"{prompt}\n\n"
             f"# 【當前已啟用之人格指令 (Active Persona Directive)】\n"
             f"{persona_block}\n\n"
