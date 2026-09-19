@@ -534,6 +534,13 @@ class ZNResponse:
                     if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("---")
                 ]
                 th_snippet = meaningful_lines[0][:120].strip() if meaningful_lines else "正在深度推演決策脈絡"
+                # 消除大模型原生英文思維開場標題（例如 My Thoughts on...）
+                if th_snippet.lower().startswith("my thoughts on"):
+                    topic_part = th_snippet[14:].strip().rstrip(". ")
+                    th_snippet = f"關於「{topic_part}」的心靈思維推演"
+                elif re.match(r"^[A-Za-z\s,\.'\?!\-]+$", th_snippet):
+                    th_snippet = "深度因果邏輯與同理認知推演中"
+
                 thinking_quote = f"> 💭 **思維推演歷程**\n> *「{th_snippet}…」*（點擊下方按鈕檢視完整脈絡）\n\n"
             body_display = f"{thinking_quote}{clean_body}"
 
