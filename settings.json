@@ -21,11 +21,36 @@
       "HARM_CATEGORY_CIVIC_INTEGRITY": "BLOCK_ONLY_HIGH"
     }
   },
-  "music": {
-    "default_volume": 80,
+  "lavalink": {
+    "auto_fetch_public_nodes": true,
+    "default_volume": 100,
+    "max_volume": 300,
+    "afk_timeout_seconds": 180,
+    "reconnect_retries": 5,
     "max_queue_size": 500,
-    "auto_leave_seconds": 180,
-    "reconnect_retries": 5
+    "nodes": [
+      {
+        "name": "Serenetia-V4-SSL",
+        "host": "lavalinkv4.serenetia.com",
+        "port": 443,
+        "password": "https://seretia.link/discord",
+        "secure": true
+      },
+      {
+        "name": "MilloHost-V4-SSL",
+        "host": "lava-v4.millohost.my.id",
+        "port": 443,
+        "password": "youshallnotpass",
+        "secure": true
+      },
+      {
+        "name": "TriniumHost-V4-SSL",
+        "host": "lavalink-v4.triniumhost.com",
+        "port": 443,
+        "password": "free",
+        "secure": true
+      }
+    ]
   },
   "cache": {
     "default_ttl_seconds": 300,

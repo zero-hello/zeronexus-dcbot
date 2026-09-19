@@ -85,6 +85,7 @@ EXTENSION_MODULES = [
     "zeronexus.modules.community.cog",
     "zeronexus.modules.tickets.cog",
     "zeronexus.modules.developer.cog",
+    "zeronexus.modules.music.cog",
 ]
 
 

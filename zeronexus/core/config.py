@@ -251,11 +251,13 @@ class MusicConfig:
     audio_node_identifier: str = field(default_factory=lambda: _safe_str(os.getenv("audio_node_identifier"), "local-node"))
     nodes: List[AudioNodeConfig] = field(default_factory=list)
     public_discovery_enabled: bool = True
-    public_discovery_url_ssl: str = "https://AudioNode-list.ajieblogs.eu.org/SSL"
-    public_discovery_url_non_ssl: str = "https://AudioNode-list.ajieblogs.eu.org/NonSSL"
-    default_volume: int = 80
+    auto_fetch_public_nodes: bool = True
+    public_discovery_url_ssl: str = "https://raw.githubusercontent.com/DarrenOfficial/lavalink-list/master/docs/SSL/Lavalink-SSL.md"
+    public_discovery_url_non_ssl: str = "https://raw.githubusercontent.com/DarrenOfficial/lavalink-list/master/docs/NoSSL/Lavalink-NonSSL.md"
+    default_volume: int = 100
+    max_volume: int = 300
     max_queue_size: int = 500
-    auto_leave_seconds: int = 300
+    auto_leave_seconds: int = 180
     reconnect_retries: int = 5
 
     def __post_init__(self) -> None:
@@ -408,16 +410,37 @@ class Config:
                         str(k): str(v) for k, v in ai_settings["gemini_safety_settings"].items()
                     }
 
-            music_settings = data.get("music")
+            music_settings = data.get("lavalink") or data.get("music")
             if isinstance(music_settings, dict):
                 if "default_volume" in music_settings:
-                    self.music.default_volume = _safe_int(music_settings["default_volume"], self.music.default_volume, min_val=0, max_val=200)
+                    self.music.default_volume = _safe_int(music_settings["default_volume"], self.music.default_volume, min_val=0, max_val=300)
+                if "max_volume" in music_settings:
+                    self.music.max_volume = _safe_int(music_settings["max_volume"], self.music.max_volume, min_val=100, max_val=500)
                 if "max_queue_size" in music_settings:
                     self.music.max_queue_size = _safe_int(music_settings["max_queue_size"], self.music.max_queue_size, min_val=1)
                 if "auto_leave_seconds" in music_settings:
                     self.music.auto_leave_seconds = _safe_int(music_settings["auto_leave_seconds"], self.music.auto_leave_seconds, min_val=0)
+                if "afk_timeout_seconds" in music_settings:
+                    self.music.auto_leave_seconds = _safe_int(music_settings["afk_timeout_seconds"], self.music.auto_leave_seconds, min_val=0)
                 if "reconnect_retries" in music_settings:
                     self.music.reconnect_retries = _safe_int(music_settings["reconnect_retries"], self.music.reconnect_retries, min_val=0)
+                if "auto_fetch_public_nodes" in music_settings:
+                    self.music.auto_fetch_public_nodes = _safe_bool(music_settings["auto_fetch_public_nodes"], self.music.auto_fetch_public_nodes)
+                if "nodes" in music_settings and isinstance(music_settings["nodes"], list):
+                    parsed_nodes: List[AudioNodeConfig] = []
+                    for n in music_settings["nodes"]:
+                        if isinstance(n, dict) and "host" in n:
+                            parsed_nodes.append(
+                                AudioNodeConfig(
+                                    host=str(n["host"]).strip(),
+                                    port=_safe_int(n.get("port"), 2333),
+                                    password=str(n.get("password", "youshallnotpass")).strip(),
+                                    secure=_safe_bool(n.get("secure"), False),
+                                    identifier=str(n.get("name") or n.get("identifier") or n["host"]).strip(),
+                                )
+                            )
+                    if parsed_nodes:
+                        self.music.nodes = parsed_nodes
 
             cache_settings = data.get("cache")
             if isinstance(cache_settings, dict):
