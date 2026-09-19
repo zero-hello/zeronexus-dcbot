@@ -516,6 +516,10 @@ class ModelRegistry:
             res.append(m)
         return self._order_with_top_recommended(res)
 
+    def list_available_models(self) -> List[str]:
+        """相容性別名：返回所有活躍可用的模型 ID 清單。"""
+        return [m.model_id for m in self.list_active_models()]
+
     def check_model_availability(
         self,
         model_id: str,

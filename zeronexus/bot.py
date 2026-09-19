@@ -98,7 +98,7 @@ class ZeroNexusBot(commands.Bot):
         intents.members = True
 
         super().__init__(
-            command_prefix=commands.when_mentioned_or("!zn ", "!zn", config.platform.default_prefix),
+            command_prefix=commands.when_mentioned_or("!zn ", "zn! ", "zn!", "!", config.platform.default_prefix),
             intents=intents,
             help_command=None,
         )
@@ -973,7 +973,7 @@ class ZeroNexusBot(commands.Bot):
         # Check if in secret Easter egg channel (in guild or DM)
         if config.is_secret_channel(message.channel.id):
             clean_content = (message.content or "").strip()
-            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith(config.platform.default_prefix):
+            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith("zn!") or clean_content.startswith(config.platform.default_prefix):
                 await self.process_commands(message)
                 return
 
@@ -1058,7 +1058,7 @@ class ZeroNexusBot(commands.Bot):
 
                 # IGNORE PREFIX CHECK:
                 # If actual user content starts with '-', '!zn', or default prefix, DO NOT trigger AI under any circumstances!
-                if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith(config.platform.default_prefix):
+                if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith("zn!") or clean_content.startswith(config.platform.default_prefix):
                     await self.process_commands(message)
                     return
 
@@ -1079,7 +1079,7 @@ class ZeroNexusBot(commands.Bot):
             # Direct Message (DM) private conversation with 100% feature parity
             clean_content = raw_content.strip()
             # If actual user content starts with '-', '!zn', or prefix, process traditional commands
-            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith(config.platform.default_prefix):
+            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith("zn!") or clean_content.startswith(config.platform.default_prefix):
                 await self.process_commands(message)
                 return
 
@@ -1099,6 +1099,39 @@ class ZeroNexusBot(commands.Bot):
 
         # Process traditional prefix commands if any
         await self.process_commands(message)
+
+    async def process_commands(self, message: discord.Message) -> None:
+        """增強型指令處理器：自動支援 !zn 根指令導航與未知子指令友善反饋。"""
+        if message.author.bot:
+            return
+
+        clean_text = (message.content or "").strip()
+        # 針對純 !zn / zn! 快速規範化為 !zn
+        if clean_text in ("!zn", "zn!"):
+            message.content = "!zn"
+
+        ctx = await self.get_context(message)
+        if ctx.command is not None:
+            await self.invoke(ctx)
+        elif ctx.prefix in ("!zn ", "zn! ", "!zn", "zn!") and ctx.command is None:
+            sub_name = clean_text[len(ctx.prefix):].strip() if ctx.prefix else clean_text
+            if sub_name and sub_name not in ("!zn", "zn!"):
+                from zeronexus.ui.card import ZNCard
+                from zeronexus.ui.theme import ZNColor, ZNStatusPill
+                card = ZNCard(
+                    title="⚠️ 未知的開發者指令",
+                    description=f"在系統中找不到開發者指令 `{sub_name}`。\n請輸入 `!zn help` 檢視完整 30 個指令用法指南！",
+                    status_pill=ZNStatusPill.WARNING,
+                    color=ZNColor.WARNING,
+                )
+                try:
+                    await message.channel.send(embed=card.to_embed())
+                except Exception:
+                    pass
+            else:
+                cmd_zn = self.get_command("zn")
+                if cmd_zn:
+                    await ctx.invoke(cmd_zn)
 
     async def _handle_ai_channel_message(
         self,

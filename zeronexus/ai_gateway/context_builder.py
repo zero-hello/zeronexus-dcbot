@@ -521,6 +521,21 @@ class ContextBuilder:
                     })
             return messages
 
+    async def get_interaction_memories(
+        self,
+        user: Any,
+        channel: Optional[Any] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, str]]:
+        """相容別名：獲取指定使用者或頻道的近期互動記憶條目。"""
+        uid = getattr(user, "id", user) if not isinstance(user, int) else user
+        cid = getattr(channel, "id", channel) if channel and not isinstance(channel, int) else None
+        if cid:
+            shared = await self.fetch_channel_shared_context(cid, limit=limit)
+            if shared:
+                return shared
+        return await self.fetch_user_short_term_context(uid, limit=limit)
+
     async def fetch_user_short_term_context(
         self,
         user_id: int,

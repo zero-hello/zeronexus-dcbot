@@ -209,6 +209,22 @@ class StatsTracker:
         tools_cnt = sum(cnt for name, cnt in self.external_api_calls.items() if name != "image_gen")
         return max(tools_cnt, 18)
 
+    def get(self, key: str, default: Any = 0) -> Any:
+        """動態讀取系統計量指標，提供類似字典的彈性讀取介面。"""
+        if key == "ai_requests_total":
+            total_ai = sum(p.total_requests for p in self.ai_providers.values())
+            return total_ai if total_ai > 0 else default
+        elif key == "deep_thinking_count":
+            return self.external_api_calls.get("deep_thinking", default)
+        elif key == "ai_tool_calls_total":
+            return self.tool_calls_count
+        elif key in self.external_api_calls:
+            return self.external_api_calls[key]
+        elif hasattr(self, key):
+            val = getattr(self, key)
+            return val() if callable(val) else val
+        return default
+
     @property
     def uptime_str(self) -> str:
         secs = int(self.uptime_seconds)

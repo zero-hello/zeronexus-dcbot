@@ -93,6 +93,19 @@ class CognitiveNetwork:
         self.max_spread_hops: int = 4
         self._bootstrap_knowledge_base()
 
+    @property
+    def concepts(self) -> Dict[str, CognitiveNode]:
+        """相容別名：獲取所有概念節點字典。"""
+        return self.nodes
+
+    @property
+    def associations(self) -> List[SynapticLink]:
+        """相容別名：獲取所有突觸關聯邊清單。"""
+        edges: List[SynapticLink] = []
+        for targets in self.synapses.values():
+            edges.extend(targets.values())
+        return edges
+
     def register_node(
         self,
         concept_id: str,

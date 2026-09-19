@@ -216,6 +216,10 @@ class CacheManager:
                 s["redis_connected"] = False
         return s
 
+    async def get_stats(self) -> Dict[str, Any]:
+        """相容性別名：獲取快取即時統計數據。"""
+        return await self.stats()
+
     async def clean_expired(self) -> int:
         """Purges expired items from local in-memory store."""
         return await self._memory.clean_expired()

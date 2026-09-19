@@ -170,6 +170,10 @@ class ZNCard:
         self.image_url = image_url
         return self
 
+    def set_thumbnail(self, thumbnail_url: Optional[str]) -> ZNCard:
+        self.thumbnail_url = thumbnail_url
+        return self
+
     def to_layout_view(
         self,
         extra_view: Optional[Union[discord.ui.View, discord.ui.LayoutView]] = None,

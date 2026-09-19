@@ -133,6 +133,75 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
             return False
         return True
 
+    async def cog_command_error(self, ctx: commands.Context, error: Exception) -> None:
+        """處理本 Cog 指令發生的錯誤，在 Discord 上輸出清晰除錯卡片，絕不假死靜默。"""
+        if isinstance(error, commands.CommandNotFound):
+            card = ZNCard(
+                title="⚠️ 未知的開發者指令",
+                description=f"未找到指令 `{ctx.invoked_with}`。\n請輸入 `!zn help` 瀏覽完整 30 個開發者指令清單！",
+                status_pill=ZNStatusPill.WARNING,
+                color=ZNColor.WARNING,
+            )
+            await ctx.send(embed=card.to_embed())
+            return
+        if isinstance(error, commands.CheckFailure):
+            return  # cog_check 已主動發送權限不足提示卡片
+        if isinstance(error, commands.MissingRequiredArgument):
+            card = ZNCard(
+                title="⚠️ 缺少必要參數",
+                description=f"指令用法錯誤：缺少必要參數 `{error.param.name}`。\n請輸入 `!zn help {ctx.command.name}` 檢視參數規格說明。",
+                status_pill=ZNStatusPill.WARNING,
+                color=ZNColor.WARNING,
+            )
+            await ctx.send(embed=card.to_embed())
+            return
+
+        cause = getattr(error, "original", error)
+        log.error(f"開發者指令 !zn {ctx.invoked_with} 執行發生例外：{cause}", exc_info=cause)
+        card = ZNCard(
+            title=f"❌ 指令執行發生錯誤：!zn {ctx.invoked_with}",
+            description=(
+                f"**錯誤類型**：`{type(cause).__name__}`\n"
+                f"**詳細訊息**：\n```py\n{redact_secrets(str(cause))[:500]}\n```\n"
+                f"*(若此錯誤持續發生，請輸入 `!zn logs` 檢視系統日誌排查)*"
+            ),
+            status_pill=ZNStatusPill.ERROR,
+            color=ZNColor.ERROR,
+        )
+        try:
+            await ctx.send(embed=card.to_embed())
+        except Exception:
+            pass
+
+    @commands.command(name="zn")
+    async def cmd_zn_root(self, ctx: commands.Context, *, sub_or_args: Optional[str] = None) -> None:
+        """ZeroNexus 開發者指令根入口，未帶子指令時自動呈現說明手冊。"""
+        if not sub_or_args or not sub_or_args.strip():
+            await self.cmd_help(ctx)
+            return
+
+        parts = sub_or_args.strip().split(maxsplit=1)
+        sub_name = parts[0]
+        sub_arg = parts[1] if len(parts) > 1 else ""
+
+        cmd = self.bot.get_command(sub_name)
+        if cmd:
+            try:
+                if sub_arg:
+                    await ctx.invoke(cmd, sub_arg)
+                else:
+                    await ctx.invoke(cmd)
+            except Exception as e:
+                await self.cog_command_error(ctx, e)
+        else:
+            card = ZNCard(
+                title="⚠️ 未知的開發者子指令",
+                description=f"未找到指令 `{sub_name}`。\n請輸入 `!zn help` 瀏覽完整 30 個開發者指令清單！",
+                status_pill=ZNStatusPill.WARNING,
+                color=ZNColor.WARNING,
+            )
+            await ctx.send(embed=card.to_embed())
+
     # =========================================================================
     # 一、核心運行與熱重載 (Core & Hot Reload - 5 個指令)
     # =========================================================================
@@ -602,14 +671,17 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
     async def cmd_cachestat(self, ctx: commands.Context) -> None:
         """檢視記憶體快取與 Redis 快取命中率、鍵總數與狀態。"""
         stats_data = await cache.get_stats()
+        hit_rate = stats_data.get("hit_rate_pct", stats_data.get("hit_ratio", 0.0))
+        driver_mode = stats_data.get("mode", stats_data.get("driver", "In-Memory LRU"))
         card = ZNCard(
             title="⚡ 快取系統 (Cache) 即時統計",
             description=(
-                f"**快取引擎**：`{stats_data.get('driver', 'Memory')}`\n"
+                f"**快取引擎**：`{driver_mode}`\n"
                 f"**追蹤總鍵數**：`{stats_data.get('keys_count', 0):,}`\n"
+                f"**快取上限容量**：`{stats_data.get('max_items', 5000):,}` 項目\n"
                 f"**快取命中次數**：`{stats_data.get('hits', 0):,}`\n"
                 f"**快取未命中數**：`{stats_data.get('misses', 0):,}`\n"
-                f"**即時命中率**：`{stats_data.get('hit_ratio', 0.0):.2f}%`"
+                f"**即時命中率**：`{hit_rate:.2f}%`"
             ),
             status_pill=ZNStatusPill.INFO,
             color=ZNColor.INFO,
@@ -905,7 +977,16 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
         lines = [f"**已排程任務總數**：`{len(jobs_list)}` 個\n"]
         for j in jobs_list:
             t_type = "週期定時" if getattr(j, "interval_seconds", None) else "每日定時"
-            lines.append(f"- **{j.job_id}** (`{t_type}`)\n  間隔：`{getattr(j, 'interval_seconds', '每日固定時間')}s` | 下次執行：`{getattr(j, 'next_run', '待排程')}`")
+            jname = getattr(j, "name", getattr(j, "job_id", "未知任務"))
+            interval_val = getattr(j, "interval_seconds", None)
+            interval_str = f"{interval_val}s" if interval_val else "每日固定時間"
+            next_run_val = getattr(j, "next_run", None)
+            if next_run_val and isinstance(next_run_val, (int, float)):
+                import datetime
+                next_str = datetime.datetime.fromtimestamp(next_run_val).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                next_str = "待排程"
+            lines.append(f"- **{jname}** (`{t_type}`)\n  間隔：`{interval_str}` | 下次執行：`{next_str}`")
 
         card = ZNCard(
             title="⏰ 系統背景排程任務清單 (Scheduled Jobs)",

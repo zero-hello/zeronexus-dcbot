@@ -42,6 +42,11 @@ class ScheduledJob:
             self._lock = asyncio.Lock()
         return self._lock
 
+    @property
+    def job_id(self) -> str:
+        """相容別名：獲取工作唯一識別名稱。"""
+        return self.name
+
     def calculate_next_run(self, from_time: Optional[float] = None) -> float:
         now_ts = from_time if from_time is not None else time.time()
         try:

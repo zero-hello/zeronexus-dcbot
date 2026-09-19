@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 class SlidingWindowRateLimiter:
@@ -88,18 +88,34 @@ class RateLimiter:
     def __init__(self) -> None:
         self._limiter = SlidingWindowRateLimiter()
         self.quota_service = quota_service
+        self._violations_total: int = 0
 
     def cleanup(self) -> int:
         """Prunes stale in-memory rate limit tracking windows."""
         return self._limiter.cleanup()
 
+    def get_stats(self) -> Dict[str, Any]:
+        """獲取速率限制器即時追蹤指標。"""
+        return {
+            "active_windows": len(self._limiter._windows),
+            "max_keys": self._limiter._max_keys,
+            "blocked_entities": 0,
+            "violations_total": self._violations_total,
+        }
+
     def check_command_cooldown(self, user_id: int, command_name: str, cooldown_seconds: float = 2.0) -> Tuple[bool, float]:
         key = f"cmd:{user_id}:{command_name}"
-        return self._limiter.is_rate_limited(key, max_requests=1, window_seconds=cooldown_seconds)
+        limited, retry_after = self._limiter.is_rate_limited(key, max_requests=1, window_seconds=cooldown_seconds)
+        if limited:
+            self._violations_total += 1
+        return limited, retry_after
 
     def check_ai_burst(self, user_id: int, cooldown_seconds: float = 5.0) -> Tuple[bool, float]:
         key = f"ai_burst:{user_id}"
-        return self._limiter.is_rate_limited(key, max_requests=1, window_seconds=cooldown_seconds)
+        limited, retry_after = self._limiter.is_rate_limited(key, max_requests=1, window_seconds=cooldown_seconds)
+        if limited:
+            self._violations_total += 1
+        return limited, retry_after
 
     async def check_and_consume_ai_quota(self, user_id: int, max_daily_override: int | None = None) -> Tuple[bool, int, int]:
         """Convenience method for command callers to atomically reserve and commit AI quota."""
