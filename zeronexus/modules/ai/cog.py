@@ -28,6 +28,7 @@ from zeronexus.engines.cwa_service import cwa_service
 from zeronexus.engines.image_gen import image_gen_engine
 from zeronexus.engines.prompt_engine import prompt_engine
 from zeronexus.engines.web_client import detect_search_intent, web_client
+from zeronexus.intelligence.deep_thinking_controller import ThinkingIntent, deep_thinking_controller
 from zeronexus.models.guild import GuildSettings
 from zeronexus.models.memory import ConversationMemory
 from zeronexus.models.persona import CustomPersonaModel
@@ -512,7 +513,20 @@ class AICog(commands.Cog):
                 effective_tool_calls = ai_res.tool_calls
                 if not effective_tool_calls and tool_results:
                     effective_tool_calls = [{"name": "tool_execution", "args": {}, "result": r} for r in tool_results]
-                extracted_thinking = combine_thinking_and_tools(extracted_thinking, effective_tool_calls)
+                # 決定是否在前端卡片與操作按鈕中展示思維推演歷程
+                channel_key = str(interaction.channel.id) if interaction.channel else ""
+                is_deep_active = (
+                    deep_thinking_controller.is_enabled(channel_key)
+                    or (deep_thinking_controller.parse_intent(問題) == ThinkingIntent.ENABLE)
+                    or any(kw in 問題.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析", "動動腦", "認真想", "學霸模式", "超頻思考"])
+                )
+                has_real_tools = bool(effective_tool_calls)
+                if is_deep_active:
+                    display_thinking = extracted_thinking
+                elif has_real_tools:
+                    display_thinking = combine_thinking_and_tools(native_thinking=None, tool_calls=effective_tool_calls)
+                else:
+                    display_thinking = None
 
                 resp = ZNResponse.ai(
                     answer=clean_answer,
@@ -521,7 +535,7 @@ class AICog(commands.Cog):
                     persona_name=persona_key,
                     thumbnail_url=image_thumbnail,
                     image_url=generated_image_url,
-                    thinking_process=extracted_thinking,
+                    thinking_process=display_thinking,
                 )
                 file_to_send: Optional[discord.File] = None
                 if generated_image_bytes and resp.card:
@@ -534,7 +548,7 @@ class AICog(commands.Cog):
                 action_view = SmartActionView.evaluate_actions(
                     query=問題,
                     answer=clean_answer,
-                    thinking_process=extracted_thinking,
+                    thinking_process=display_thinking,
                 )
 
                 if file_to_send:

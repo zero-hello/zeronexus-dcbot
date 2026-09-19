@@ -2357,6 +2357,19 @@ class ZeroNexusBot(commands.Bot):
                 reminder_note = f"今日 AI 額度尚餘 {rem} 次（將於 00:00 自動重設）"
                 fallback = f"{fallback}\n↳ {reminder_note}" if fallback else reminder_note
 
+            # 決定是否在前端卡片與操作按鈕中展示思維推演歷程
+            # 規則：只有在「使用者主動開啟/觸發深度思考 (is_deep_thinking_active)」或「具有真實工具調用 (ai_res.tool_calls)」時，才對外展示
+            # 若為常態閒聊且未啟用深度思考，則不渲染推演按鈕與思維引言，保持卡片簡潔自然
+            display_thinking: Optional[str] = None
+            has_real_tools = bool(ai_res.tool_calls)
+
+            if is_deep_thinking_active:
+                display_thinking = extracted_thinking
+            elif has_real_tools:
+                display_thinking = combine_thinking_and_tools(native_thinking=None, tool_calls=ai_res.tool_calls)
+            else:
+                display_thinking = None
+
             resp = ZNResponse.ai(
                 answer=clean_answer,
                 model_name=ai_res.model_name,
@@ -2366,7 +2379,7 @@ class ZeroNexusBot(commands.Bot):
                 thumbnail_url=image_thumbnail,
                 image_url=generated_image_url,
                 image_model=generated_image_model,
-                thinking_process=extracted_thinking,
+                thinking_process=display_thinking,
             )
             gen_image_file: Optional[discord.File] = None
             if cwa_image_file:
@@ -2385,7 +2398,7 @@ class ZeroNexusBot(commands.Bot):
             action_view = SmartActionView.evaluate_actions(
                 query=user_prompt,
                 answer=clean_answer,
-                thinking_process=extracted_thinking,
+                thinking_process=display_thinking,
             )
             await self._trigger_typing_safe(effective_channel)
             t_send = time.perf_counter()

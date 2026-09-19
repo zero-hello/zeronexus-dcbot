@@ -422,6 +422,40 @@ def enforce_taiwan_localization(text: str) -> str:
     return "".join(result_segments)
 
 
+def sanitize_thinking_process(thinking: str) -> str:
+    """全面淨化模型原生思維推演歷程，將英文思維模板轉換為道地臺灣繁體中文並強制在地化。"""
+    if not thinking or not thinking.strip():
+        return ""
+
+    s = thinking.strip()
+
+    # 常見大模型英文思維慣用開場與結構標題轉換表
+    english_thought_replacements = [
+        (r"(?i)\bthinking\s+process\s*[:：]", "## 🧠 思維推演歷程："),
+        (r"(?i)\bmy\s+thoughts\s+on\s+([^\n:]+)", r"關於「\1」的深層推演"),
+        (r"(?i)\b(?:1\.|step\s*1[:：]?)\s*(?:understand|analy[zs]e)\s+(?:the\s+)?(?:user(?:'s)?\s+)?(?:prompt|query|intent|question)[:：]?", "1. 解析使用者核心意圖："),
+        (r"(?i)\b(?:2\.|step\s*2[:：]?)\s*(?:retrieve|check|analy[zs]e)\s+(?:context|memory|history|background)[:：]?", "2. 檢索歷史脈絡與情感記憶："),
+        (r"(?i)\b(?:3\.|step\s*3[:：]?)\s*(?:consider|evaluate)\s+(?:empathy|emotion|tone|feelings?)[:：]?", "3. 評估使用者情緒狀態與同理心深度："),
+        (r"(?i)\b(?:4\.|step\s*4[:：]?)\s*(?:formulate|plan|draft)\s+(?:the\s+)?(?:response|answer|reply)[:：]?", "4. 組織深刻共鳴與具體建設性之解答："),
+        (r"(?i)\b(?:5\.|step\s*5[:：]?)\s*(?:verify|review|final\s+check)[:：]?", "5. 審查繁體中文標準與高情商語氣："),
+        (r"(?i)\buser\s+prompt\s*[:：]", "使用者提問："),
+        (r"(?i)\buser\s+emotion\s*[:：]", "使用者情緒狀態："),
+        (r"(?i)\bcore\s+intent\s*[:：]", "核心提問焦點："),
+        (r"(?i)\bcontext\s+analysis\s*[:：]", "情境與脈絡分析："),
+        (r"(?i)\breasoning\s*[:：]", "因果邏輯推理："),
+        (r"(?i)\bconclusion\s*[:：]", "推演結論："),
+        (r"(?i)\bfinal\s+output\s*[:：]", "最終輸出規劃："),
+        (r"(?i)\bresponse\s+strategy\s*[:：]", "應對陪伴策略："),
+    ]
+
+    for pat, repl in english_thought_replacements:
+        s = re.sub(pat, repl, s)
+
+    # 執行確定性繁體中文在地化替換
+    s = enforce_taiwan_localization(s)
+    return s
+
+
 def _clean_stored_turn(content: str, role: str) -> str:
     """Sanitizes stored conversational turns to avoid few-shot roleplay leakage and tag repetition."""
     cleaned = (content or "").strip()
@@ -1240,7 +1274,9 @@ def combine_thinking_and_tools(
     """Combines model's native reasoning chain and real tool execution traces transparently."""
     sections: List[str] = []
     if native_thinking and native_thinking.strip():
-        sections.append(f"## 💭 AI 思維推演歷程\n{native_thinking.strip()}")
+        sanitized_th = sanitize_thinking_process(native_thinking)
+        if sanitized_th:
+            sections.append(f"## 💭 AI 思維推演歷程\n{sanitized_th}")
 
     if tool_calls:
         trace = format_tool_execution_trace(tool_calls)
