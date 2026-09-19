@@ -823,7 +823,24 @@ class AICog(commands.Cog):
                 if len(choices) >= 25:
                     break
 
-        # 2. Secondary fallback: Search remaining active models from catalog (Strictly filtering out :batch or trash models)
+        # 2. Secondary fallback: Search active models registered in model_registry
+        if len(choices) < 25 and q:
+            from zeronexus.ai_gateway.model_registry import model_registry
+            for reg_m in model_registry.list_active_models():
+                m_id = reg_m.model_id
+                m_name = reg_m.display_name
+                if m_id in added_ids:
+                    continue
+                searchable = f"{m_id} {m_name} {reg_m.description}".lower()
+                if q in searchable:
+                    emoji = "💎" if "gemini" in m_id.lower() else ("💬" if "deepseek" in m_id.lower() else "🇨🇳")
+                    display_name = f"{emoji} {m_name} ({m_id})"
+                    choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
+                    added_ids.add(m_id)
+                    if len(choices) >= 25:
+                        break
+
+        # 3. Tertiary fallback: Search remaining active models from OpenRouter catalog
         if len(choices) < 25 and q:
             for m in model_catalog._all_models:
                 m_id = m.get("id", "")
@@ -835,7 +852,6 @@ class AICog(commands.Cog):
                     continue
 
                 if q in m_id.lower() or q in m_name.lower():
-                    # Format neatly with appropriate emoji
                     emoji = "🌐"
                     if "gemini" in m_id.lower():
                         emoji = "💎"

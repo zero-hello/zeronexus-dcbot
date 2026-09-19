@@ -453,6 +453,18 @@ class ModelRegistry:
                 is_free=True,
                 description="阿里通義千問頂級開源旗艦，具備卓越中文與程式碼能力（Hugging Face 官方路由）。",
             ),
+            # OpenRouter Free Fallback & Smart Rotation
+            ModelMetadata(
+                model_id="openrouter/free",
+                display_name="OpenRouter Free Rotation (智慧輪替)",
+                provider="openrouter",
+                vendor="openrouter",
+                status=ModelStatus.ACTIVE,
+                context_window=131072,
+                capabilities={"text", "tools"},
+                is_free=True,
+                description="OpenRouter 官方免費用戶端智慧容錯輪替模型，提供最高可用性保障。",
+            ),
         ]
 
         for m in defaults:
@@ -894,24 +906,30 @@ class ModelRegistry:
                 message="Gemini 2.0 系列已正式退役 (Retired)。系統已為您推薦最新一代 **Gemini 3.1 Flash Lite**。",
             )
 
+        # Check for free rotation / openrouter free
+        if clean_q in ("free", "openrouter/free", "免費", "自動選模", "智慧輪替") or "openrouter/free" in clean_q:
+            m = self.get("openrouter/free")
+            if m:
+                return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
+
         # Check if user asked for "2.5"
         if re.search(r"^(?:(?:google|gemini)[-_ ]?)?2\.5(?:[-_ ]?(?:flash|pro|lite)(?:[-_ ]?lite)?)?$", clean_q) or clean_q in ("2.5", "2.5 flash", "2.5 pro", "2.5 lite", "gemini 2.5", "gemini 2.5 flash", "gemini 2.5 pro"):
             if "pro" in clean_q:
-                m = self.get("google/gemini-2.5-pro") or self.get("gemini-2.5-pro")
+                m = self.get("gemini-2.5-pro") or self.get("google/gemini-2.5-pro")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if "lite" in clean_q:
-                m = self.get("gemini-2.5-flash-lite")
+                m = self.get("gemini-2.5-flash-lite") or self.get("google/gemini-2.5-flash-lite")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
-            m = self.get("google/gemini-2.5-flash") or self.get("gemini-3.1-flash-lite")
+            m = self.get("gemini-2.5-flash") or self.get("google/gemini-2.5-flash") or self.get("gemini-3.1-flash-lite")
             if m:
                 return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
 
         # Check for DeepSeek variants (v4 flash, v4.1 flash, vision exp, r1, v3)
         if any(k in clean_q for k in ("deepseek", "deepseel", "deepsek", "v4", "4.1", "r1")):
             if re.search(r"\bv4\b|\bv4\.?1\b|\bflash\b", clean_q) and ("v4" in clean_q or "4.1" in clean_q):
-                m = self.get("deepseek/deepseek-v4-flash-vision-exp") or self.get("deepseek/deepseek-v4-flash")
+                m = self.get("deepseek/deepseek-v4-flash-vision-exp") or self.get("deepseek-v4.1-flash") or self.get("deepseek/deepseek-v4-flash")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if re.search(r"^(?:deepseek[-_ ]?)?r1$", clean_q) or clean_q == "r1":
@@ -943,24 +961,44 @@ class ModelRegistry:
 
         # 4. Contextual Gemini Handling
         if "gemini" in q or "谷歌" in q or "google" in q:
+            if any(img_k in q for img_k in ("image", "視覺", "生圖", "繪圖", "畫圖")):
+                m = self.get("gemini-2.5-flash-image") or self.get("google/gemini-2.5-flash-image")
+                if m:
+                    return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
+            if "pro-latest" in q or "pro latest" in q:
+                m = self.get("gemini-pro-latest")
+                if m:
+                    return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
+            if "flash-latest" in q or "flash latest" in q:
+                m = self.get("gemini-flash-latest")
+                if m:
+                    return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if re.search(r"\b3\.8\b", q):
-                m = self.get("gemini-3.8-flash")
+                m = self.get("gemini-3.8-flash") or self.get("google/gemini-3.8-flash")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if re.search(r"\b3\.7\b", q):
-                m = self.get("gemini-3.7-flash")
+                m = self.get("gemini-3.7-flash") or self.get("google/gemini-3.7-flash")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if re.search(r"\b3\.5\b", q) or "3.5" in q:
-                m = self.get("gemini-3.5-flash-lite")
+                m = self.get("gemini-3.5-flash-lite") or self.get("google/gemini-3.5-flash-lite")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if re.search(r"\b3\.1\b", q) or "3.1" in q:
-                m = self.get("gemini-3.1-flash-lite")
+                m = self.get("gemini-3.1-flash-lite") or self.get("google/gemini-3.1-flash-lite")
+                if m:
+                    return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
+            if "pro" in q:
+                m = self.get("gemini-2.5-pro") or self.get("gemini-pro-latest") or self.get("google/gemini-2.5-pro")
+                if m:
+                    return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
+            if "flash" in q and "lite" not in q:
+                m = self.get("gemini-2.5-flash") or self.get("gemini-flash-latest") or self.get("google/gemini-2.5-flash")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             if "lite" in q:
-                m = self.get("gemini-3.1-flash-lite")
+                m = self.get("gemini-3.1-flash-lite") or self.get("gemini-2.5-flash-lite")
                 if m:
                     return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
             m = self.get("gemini-3.1-flash-lite")

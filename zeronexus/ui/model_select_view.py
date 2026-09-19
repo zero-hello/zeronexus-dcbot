@@ -36,12 +36,60 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "tag": "阿里通義千問・繁中特化最強旗艦",
     },
 
-    # Google Gemini Series (Official Active)
+    # Google Gemini Series (Official Active Flagships)
+    {
+        "id": "gemini-2.5-flash",
+        "label": "Google Gemini 2.5 Flash (主力極速多模態・百萬上下文)",
+        "emoji": "⚡",
+        "tag": "百萬級超長上下文・兼具高智慧與極致回應速度",
+    },
+    {
+        "id": "gemini-2.5-pro",
+        "label": "Google Gemini 2.5 Pro (頂級深度思考旗艦・200萬長文本)",
+        "emoji": "🧠",
+        "tag": "頂尖推論・深度思考・200萬Token極致分析能力",
+    },
+    {
+        "id": "gemini-3.7-flash",
+        "label": "Google Gemini 3.7 Flash (最新混合推理旗艦・動態思維鏈)",
+        "emoji": "🔮",
+        "tag": "首款混合架構・動態思考推理與極致多工兼備",
+    },
+    {
+        "id": "gemini-3.8-flash",
+        "label": "Google Gemini 3.8 Flash (次世代實驗極速旗艦)",
+        "emoji": "🚀",
+        "tag": "次世代極致低延遲架構・前沿推論突破",
+    },
     {
         "id": "gemini-3.5-flash-lite",
-        "label": "Google Gemini 3.5 Flash Lite (次世代旗艦・超高智能)",
+        "label": "Google Gemini 3.5 Flash Lite (次世代高智能・極致敏捷)",
         "emoji": "✨",
         "tag": "Google 次世代高效能架構・極致敏捷推論",
+    },
+    {
+        "id": "gemini-flash-latest",
+        "label": "Google Gemini Flash Latest (官方動態最新 Flash)",
+        "emoji": "🌟",
+        "tag": "Google 官方即時跟進更新最新 Flash 穩定版本",
+    },
+    {
+        "id": "gemini-pro-latest",
+        "label": "Google Gemini Pro Latest (官方動態最新 Pro)",
+        "emoji": "👑",
+        "tag": "Google 官方即時跟進更新最新 Pro 旗艦版本",
+    },
+    {
+        "id": "gemini-2.5-flash-lite",
+        "label": "Google Gemini 2.5 Flash Lite (極速超輕量・高頻對話)",
+        "emoji": "🍃",
+        "tag": "輕巧敏捷・高頻日常問答最佳性價比選擇",
+    },
+    {
+        "id": "gemini-2.5-flash-image",
+        "label": "Google Gemini 2.5 Flash Image (多模態圖像理解與生成)",
+        "emoji": "🎨",
+        "tag": "多模態影像深度辨識・視覺創意生圖",
     },
 
     # DeepSeek Series
