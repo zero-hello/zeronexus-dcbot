@@ -293,7 +293,8 @@ class TrackSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            # 靜默無感 ACK (Type 6: DEFERRED_UPDATE_MESSAGE)，絕不跳出「正在思考中」懸掛提示
+            await interaction.response.defer(thinking=False)
         idx = int(self.values[0])
         chosen = self.tracks[idx]
         await self.on_select(interaction, chosen)
@@ -324,19 +325,19 @@ class PlaylistPromptView(discord.ui.View):
     @discord.ui.button(label="📋 載入整張清單", style=discord.ButtonStyle.success)
     async def btn_load_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            await interaction.response.defer(thinking=False)
         await self.on_choose(interaction, True)
 
     @discord.ui.button(label="🎵 僅播放當前單曲", style=discord.ButtonStyle.primary)
     async def btn_load_single(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            await interaction.response.defer(thinking=False)
         await self.on_choose(interaction, False)
 
     @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary)
     async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            await interaction.response.defer(thinking=False)
         if interaction.message:
             try:
                 await interaction.message.delete()

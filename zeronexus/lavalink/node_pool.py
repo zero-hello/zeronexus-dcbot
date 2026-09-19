@@ -96,13 +96,28 @@ class NodePoolManager:
                 except Exception as ex:
                     log.warning(f"[NodePoolManager] 公共節點抓取失敗: {ex}")
 
+            # 黑名單防禦：主動過濾已知 IP 被 YouTube 封鎖或頻繁 524 逾時之節點
+            blocked_keywords = {"triniumhost"}
+            candidate_nodes = [
+                n for n in candidate_nodes
+                if not any(b in n["host"].lower() or b in n.get("name", "").lower() for b in blocked_keywords)
+            ]
+
             # 3. 執行探針篩選可用且支援 YouTube 的前 3~5 名節點
             log.info(f"[NodePoolManager] 正在探測 {len(candidate_nodes)} 個候選節點...")
             probe_results = await NodeProbe.probe_multiple(candidate_nodes, concurrency=10, timeout_seconds=4.0)
 
-            valid_probes = [p for p in probe_results if p.is_online and p.is_v4]
-            # 優先排序準則：1. SSL 安全通道 (保證 UDP 語音封包暢通無阻) 2. 具備 yt-sosor 抗封鎖插件 3. 支援 YouTube 4. 延遲最低
-            valid_probes.sort(key=lambda p: (not p.secure, not getattr(p, "has_yt_sosor", False), not p.supports_youtube, p.latency_ms))
+            valid_probes = [
+                p for p in probe_results
+                if p.is_online and p.is_v4 and not any(b in p.host.lower() for b in blocked_keywords)
+            ]
+            # 優先排序準則：1. SSL 安全通道 2. 具備 yt-sosor 抗封鎖外掛 3. 支援 YouTube 4. 連線延遲最低
+            valid_probes.sort(key=lambda p: (
+                not p.secure,
+                not getattr(p, "has_yt_sosor", False),
+                not p.supports_youtube,
+                p.latency_ms,
+            ))
 
             if not valid_probes:
                 log.warning("[NodePoolManager] 探測無可用公共節點，回退至預設靜態配置。")
@@ -176,3 +191,19 @@ class NodePoolManager:
     async def handle_node_disconnect(cls, node: wavelink.Node) -> None:
         """當節點中斷連線時之容錯處理與日誌紀錄。"""
         log.warning(f"[NodePoolManager] 節點斷線: {node.identifier} ({node.uri})，Pool 正在自動遷移活躍播放器。")
+
+    def get_best_node(self) -> Optional[wavelink.Node]:
+        """挑選目前池中連線最健康、優先具備抗封鎖且延遲優質之節點。"""
+        nodes = list(getattr(wavelink.Pool, "nodes", {}).values())
+        connected = [n for n in nodes if n.status is wavelink.NodeStatus.CONNECTED]
+        if not connected:
+            return None
+
+        # 優先挑選包含 millo 或 serenetia 之優質節點
+        for n in connected:
+            ident_low = n.identifier.lower()
+            uri_low = str(getattr(n, "uri", "")).lower()
+            if any(k in ident_low or k in uri_low for k in ("millo", "serenetia")):
+                return n
+
+        return connected[0]

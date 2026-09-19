@@ -30,24 +30,17 @@
     "max_queue_size": 500,
     "nodes": [
       {
+        "name": "MilloHost-V4-SSL",
+        "host": "lava-v4.millohost.my.id",
+        "port": 443,
+        "password": "https://discord.gg/mjS5J2K3ep",
+        "secure": true
+      },
+      {
         "name": "Serenetia-V4-SSL",
         "host": "lavalinkv4.serenetia.com",
         "port": 443,
         "password": "https://seretia.link/discord",
-        "secure": true
-      },
-      {
-        "name": "MilloHost-V4-SSL",
-        "host": "lava-v4.millohost.my.id",
-        "port": 443,
-        "password": "youshallnotpass",
-        "secure": true
-      },
-      {
-        "name": "TriniumHost-V4-SSL",
-        "host": "lavalink-v4.triniumhost.com",
-        "port": 443,
-        "password": "free",
         "secure": true
       }
     ]

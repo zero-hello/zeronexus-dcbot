@@ -156,7 +156,13 @@ class MusicCog(commands.Cog):
 
         if player is None or not isinstance(player, wavelink.Player):
             try:
-                player = await user_voice.channel.connect(cls=wavelink.Player, self_deaf=True, self_mute=False)
+                best_node = self.node_manager.get_best_node()
+                player = await user_voice.channel.connect(
+                    cls=wavelink.Player,
+                    self_deaf=True,
+                    self_mute=False,
+                    node=best_node,
+                )
             except Exception as ex:
                 await InteractionResponder.safe_send(interaction, f"❌ 無法加入語音頻道：`{ex}`", ephemeral=True)
                 return None
@@ -173,30 +179,36 @@ class MusicCog(commands.Cog):
     ) -> Any:
         """安全搜尋歌曲，支援自動節點容錯重試以抵禦 Cloudflare 524 與逾時異常。"""
         all_nodes: list[wavelink.Node] = []
-        if preferred_node and preferred_node.status is wavelink.NodeStatus.CONNECTED:
+        best_node = self.node_manager.get_best_node()
+        if best_node and best_node.status is wavelink.NodeStatus.CONNECTED:
+            all_nodes.append(best_node)
+
+        if preferred_node and preferred_node.status is wavelink.NodeStatus.CONNECTED and preferred_node not in all_nodes:
             all_nodes.append(preferred_node)
 
-        # 優先排入具備 yt-sosor 或 serenetia 之優質節點
+        # 優先排入具備 yt-sosor 或 millo / serenetia 之優質節點
         for n in getattr(wavelink.Pool, "nodes", {}).values():
             if n.status is wavelink.NodeStatus.CONNECTED and n not in all_nodes:
                 ident_low = n.identifier.lower()
                 uri_low = str(getattr(n, "uri", "")).lower()
-                if "serenetia" in ident_low or "serenetia" in uri_low:
-                    all_nodes.insert(0 if not preferred_node else 1, n)
+                if any(k in ident_low or k in uri_low for k in ("millo", "serenetia")):
+                    all_nodes.insert(1 if best_node in all_nodes else 0, n)
                 else:
                     all_nodes.append(n)
 
         for n in all_nodes:
             try:
-                res = await wavelink.Playable.search(query, node=n)
+                res = await asyncio.wait_for(wavelink.Playable.search(query, node=n), timeout=3.2)
                 if res:
                     return res
+            except asyncio.TimeoutError:
+                log.warning(f"[MusicCog] 節點 {n.identifier} 搜尋超過 3.2 秒逾時，切換至備援節點...")
             except Exception as ex:
                 log.warning(f"[MusicCog] 節點 {n.identifier} 搜尋異常 ({ex})，正在自動切換至備援節點重試...")
 
-        # 若指定節點皆未成功，最後以全域預設 Pool 搜尋一次
+        # 若指定節點皆未成功，最後以全域預設 Pool 搜尋一次 (上限 3.5 秒防掛死)
         try:
-            return await wavelink.Playable.search(query)
+            return await asyncio.wait_for(wavelink.Playable.search(query), timeout=3.5)
         except Exception as ex:
             log.error(f"[MusicCog] 所有節點搜尋均失敗: {ex}")
             return None
@@ -298,7 +310,6 @@ class MusicCog(commands.Cog):
                 total_tracks = len(playlist.tracks)
 
                 async def _on_choose_playlist(inter: discord.Interaction, load_all: bool) -> None:
-                    await inter.response.defer()
                     if load_all:
                         # 載入整張清單（最多 100 首防爆）
                         tracks_to_add = playlist.tracks[:100]
@@ -366,7 +377,6 @@ class MusicCog(commands.Cog):
             if isinstance(search_res, list) and len(search_res) > 1:
                 # 彈出前 10 首下拉選單
                 async def _on_select_track(inter: discord.Interaction, selected_track: wavelink.Playable) -> None:
-                    await inter.response.defer()
                     await self._play_or_enqueue(inter, player, selected_track)
 
                 select_view = TrackSelectView(search_res[:10], _on_select_track)
@@ -649,12 +659,18 @@ class MusicCog(commands.Cog):
             log.warning(f"[MusicCog] 正在將播放器自 {current_ident} 容錯遷移至 {backup_node.identifier} 繼續播放...")
             try:
                 await player.switch_node(backup_node)
+                # 容錯遷移後，在此健康節點上重新恢復曲目播放
+                guild_id = player.guild.id if player.guild else 0
+                vol = self.node_manager.get_guild_volume(guild_id)
+                await player.set_volume(vol)
+                await player.play(track, volume=vol)
+
                 channel = player.channel
                 if channel and isinstance(channel, discord.TextChannel):
                     card = ZNCard(
                         title="🔄 自動節點容錯轉移",
                         description=(
-                            f"曲目 **[{track_title}]({getattr(track, 'uri', '')})** 因音訊來源限制播放受阻，\n"
+                            f"曲目 **[{track_title}]({getattr(track, 'uri', '')})** 播放受阻，\n"
                             f"系統已自動為您無縫轉移至備援節點 **`{backup_node.identifier}`** 繼續播放！"
                         ),
                         status_pill=ZNStatusPill.WARNING,
