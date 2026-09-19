@@ -307,7 +307,7 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "1.1.0"
+    version: str = "1.2.0"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
     default_timezone: str = "Asia/Taipei"
