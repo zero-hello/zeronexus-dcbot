@@ -4081,4 +4081,100 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         "handler": h_inspect_channel_overview,
     })
 
+    # =========================================================================
+    # 13. ZeroNexus 500 大師特性中樞工具 (Master 500 Features Dispatcher)
+    # =========================================================================
+
+
+    async def h_call_master_feature(
+        feature_id: int,
+        param: Optional[str] = "",
+        user: Optional[Any] = None,
+        guild: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """調用 ZeroNexus 500 大師特性的底層執行器。"""
+        from zeronexus.features.dispatcher import MasterFeatureDispatcher
+        from zeronexus.features.registry import MasterFeatureRegistry
+        dispatcher = MasterFeatureDispatcher()
+        feat = MasterFeatureRegistry.get_by_id(feature_id)
+        if not feat:
+            return {"error": f"找不到功能編號 #{feature_id}，請確認編號介於 1 至 500。"}
+
+        user_id = str(user.id) if user else "0"
+        guild_id = str(guild.id) if guild else "0"
+        user_name = getattr(user, "display_name", "使用者")
+        guild_name = getattr(guild, "name", "社群")
+
+        embed = await dispatcher.execute_feature(
+            feature_id=feature_id,
+            user_id=user_id,
+            guild_id=guild_id,
+            user_name=user_name,
+            guild_name=guild_name,
+            param=param or ""
+        )
+        return {
+            "feature_id": feature_id,
+            "feature_name": feat.name,
+            "category": feat.category,
+            "title": embed.title,
+            "description": embed.description,
+            "fields": [{"name": f.name, "value": f.value} for f in embed.fields]
+        }
+
+    specs.append({
+        "name": "call_master_feature",
+        "category": "500大師中樞",
+        "description": "呼叫 ZeroNexus 500 大師全功能清單中指定編號 (1-500) 的強大特性（如記憶管理、知識庫檢索、工作流、數據分析、氣象地震、代碼分析等）。",
+        "parameters_desc": "feature_id (1-500整數), param (選填參數)",
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "feature_id": {
+                    "type": "integer",
+                    "description": "500 功能大師清單之目標編號 (1 至 500)。"
+                },
+                "param": {
+                    "type": "string",
+                    "description": "傳遞給該功能的參數（如關鍵字、日期、目標文字或網址）。選填。"
+                }
+            },
+            "required": ["feature_id"]
+        },
+        "handler": h_call_master_feature,
+    })
+
+    async def h_search_master_features(keyword: str, **kwargs: Any) -> Dict[str, Any]:
+        """搜尋 500 大師功能清單。"""
+        from zeronexus.features.registry import MasterFeatureRegistry
+        matched = MasterFeatureRegistry.search(keyword, limit=10)
+        return {
+            "keyword": keyword,
+            "count": len(matched),
+            "features": [
+                {"id": f.id, "name": f.name, "category": f.category, "description": f.description}
+                for f in matched
+            ]
+        }
+
+    specs.append({
+        "name": "search_master_features",
+        "category": "500大師中樞",
+        "description": "在 ZeroNexus 500 項官方需求功能清單中模糊搜尋特定功能與編號。",
+        "parameters_desc": "keyword (搜尋關鍵字)",
+        "parameters_schema": {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "description": "欲查詢的技術名詞或功能關鍵字（例如：記憶、氣象、JSON、Git、工作流、投票等）。"
+                }
+            },
+            "required": ["keyword"]
+        },
+        "handler": h_search_master_features,
+    })
+
     return specs
+

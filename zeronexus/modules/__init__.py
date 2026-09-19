@@ -21,6 +21,7 @@ def register_all_modules() -> None:
     from zeronexus.modules.agent.cog import AgentModule
     from zeronexus.modules.community.cog import CommunityModule
     from zeronexus.modules.tickets.cog import TicketsModule
+    from zeronexus.modules.master.cog import MasterModule
 
     if "moderation" not in module_manager.modules:
         module_manager.register_module(ModerationModule())
@@ -46,6 +47,8 @@ def register_all_modules() -> None:
         module_manager.register_module(CommunityModule())
     if "tickets" not in module_manager.modules:
         module_manager.register_module(TicketsModule())
+    if "master" not in module_manager.modules:
+        module_manager.register_module(MasterModule())
 
 
 __all__ = [
