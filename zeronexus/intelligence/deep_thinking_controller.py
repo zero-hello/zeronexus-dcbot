@@ -45,23 +45,32 @@ class DeepThinkingContext:
     best_thought_path: List[str] = field(default_factory=list)
     final_synthesis: str = ""
     model_native_thought: Optional[str] = None  # 大模型原生深層思維鏈 (Thinking Tokens)
+    is_autonomously_triggered: bool = False     # 是否由 Zero Intelligence 自主元認知觸發
+    autonomous_reason: str = ""                 # 自主觸發依據
+    autonomous_domain: str = ""                 # 自主觸發領域分類
 
     def format_discord_thought_process(self) -> str:
         """格式化為適合 Discord 展示的真實大模型思考區塊（徹底杜絕硬編碼模板文字）"""
         sections: List[str] = []
+
+        header = "🧠 **【AI 深度思維推演歷程 (Chain-of-Thought)】**"
+        if self.is_autonomously_triggered and self.autonomous_reason:
+            sub_header = (
+                f"> ⚡ **Zero Intelligence 自主元認知活化 (Autonomous Meta-Cognition Activated)**\n"
+                f"> 🎯 審查依據：偵測到深層高階命題【{self.autonomous_domain}：{self.autonomous_reason}】\n"
+                f"> 💡 認知決策：本命題具備多維因果推導與邊界假設驗證需求，系統已自主切換至深層思維超頻推導！"
+            )
+        else:
+            sub_header = "> 模型內部認知決策、推論驗證與思維鏈推導（100% 由神經網路原生運算生成）"
 
         if self.model_native_thought and self.model_native_thought.strip():
             clean_thought = self.model_native_thought.strip()
             # 支援超過 2500 字元的分段或呈現，完整展現 DeepSeek / Gemini 大模型原生思維推導
             if len(clean_thought) > 3500:
                 clean_thought = clean_thought[:3400] + "\n\n...（長篇思考歷程已節錄核心推導精華）"
-            sections.append(
-                f"🧠 **【AI 深度思維推演歷程 (Chain-of-Thought)】**\n"
-                f"> 模型內部認知決策、推論驗證與思維鏈推導（100% 由神經網路原生運算生成）\n\n"
-                f"{clean_thought}"
-            )
+            sections.append(f"{header}\n{sub_header}\n\n{clean_thought}")
         else:
-            sections.append("🧠 **【AI 深度思維推演歷程】**\n> 模型以直覺快速模式響應，未輸出深層思維鏈。")
+            sections.append(f"{header}\n{sub_header}\n\n> 模型以直覺快速模式響應，未輸出深層思維鏈。")
 
         return "\n".join(sections)
 
@@ -117,6 +126,63 @@ class DeepThinkingController:
         r"深度思考的(?:原理|歷史|背景|架構)",
     ]
 
+    # =============================================================================
+    # Zero Intelligence 自主元認知審查特徵庫 (Autonomous Meta-Cognitive Heuristics)
+    # 格式：(正則特徵, 命題理由, 領域分類)
+    # =============================================================================
+    AUTONOMOUS_COGNITIVE_DOMAINS = [
+        # 1. 前沿理論物理與量子科學
+        (
+            r"(?:量子(?:力學|糾纏|退相干|疊加|穿隧|霍爾效應|自旋|計算|態|隱形傳態)|薛丁格(?:的貓)?|雙縫干涉|延遲選擇實驗|貝爾不等式|epr\s*悖論|相對論|廣義相對論|狹義相對論|時空曲率|黑洞(?:資訊悖論|奇點|事件視界)|引力波|熱力學第[二三]定律|麥克斯韋妖|費曼路徑積分|弦論|超弦|規範場論|暗物質|宇宙暴脹)",
+            "量子物理與宇宙前沿理論推演",
+            "前沿理論物理",
+        ),
+        # 2. 形式化公理體系與數學邏輯證明
+        (
+            r"(?:公理化證明|嚴格證明|反證法|數學歸納法|哥德爾不完備|停機問題|黎曼猜想|費馬大定理|拓撲學|流形|群論|李代數|伽羅瓦理論|抽象代數|np\s*(?:完全|難題|hard|complete)|p\s*vs\s*np|隨機微積分|伊藤引理|測度論|勒貝格積分|圖論證明|同構|同態|同調|微積分推導|歐幾里得證明|質數無窮)",
+            "形式化公理體系與數學邏輯嚴格推導",
+            "數學公理與邏輯證明",
+        ),
+        # 3. 高階分散式一致性與底層架構
+        (
+            r"(?:分散式共識|raft(?:演算法)?|paxos(?:演算法)?|zab|pbft|拜占庭容錯|cap\s*定理|兩階段提交|2pc|3pc|saga\s*模式|非對稱網絡分區|網絡分區|腦裂|選主機制|日誌壓縮|快取一致性|mesi\s*協定|無鎖(?:佇列|隊列|資料結構|編程)|lock-free|記憶體屏障|memory\s*barrier|高併發死鎖分析|分散式事務|向量時鐘|vector\s*clock|分散式鎖)",
+            "高階分散式一致性與底層併發架構論證",
+            "分散式與底層架構",
+        ),
+        # 4. 複雜演算法漸進複雜度與狀態轉移
+        (
+            r"(?:動態規劃狀態轉移|狀壓\s*dp|漸進時間複雜度|均攤分析|紅黑樹平衡調整|b\+樹併發|跳躍表|skip\s*list|網路流|最小割|最大流|迪傑斯特拉|a\*啟發式|kmp\s*演算法|蒙地卡羅樹搜尋|mcts|反向傳播梯度推導|自注意力機制矩陣|transformer\s*複雜度|狀態壓縮)",
+            "核心演算法漸進複雜度與狀態轉移分析",
+            "複雜演算法與計算複雜度",
+        ),
+        # 5. 哲學本體論、認識論與深層認知思辨
+        (
+            r"(?:忒修斯之船|電車難題|中文房間|心靈哲學|心物二元論|決定論與自由意志|缸中之腦|認識論|本體論|現象學|自我意識難題|泛心論|道德困境|功利主義與義務論|唯實論與唯名論|休謨因果問題|康德純粹理性)",
+            "哲學本體論、認識論與經典思維悖論剖析",
+            "哲學悖論與認知思辨",
+        ),
+        # 6. 底層系統除錯與漏洞根因分析
+        (
+            r"(?:記憶體洩漏|memory\s*leak|segmentation\s*fault|段錯誤|core\s*dump|緩衝區溢位|棧溢出|堆破壞|heap\s*corruption|use-after-free|懸空指針|競態條件|race\s*condition|deadlock\s*排查|asan|gdb\s*根因分析)",
+            "系統底層異常崩潰與記憶體安全根因剖析",
+            "深度系統排錯與根因分析",
+        ),
+        # 7. 多維工程架構決策與深度權衡
+        (
+            r"(?:架構權衡|技術選型權衡|trade-off|根本原因分析|系統重構架構評估|架構遷移風險|單體架構轉微服務|異構資料庫同步|事件驅動架構一致性)",
+            "多維工程架構決策與深層權衡分析",
+            "工程架構與戰略權衡",
+        ),
+    ]
+
+    # 日常寒暄、禮貌感謝與單點生活探針排除清單（確保日常秒回，不浪費算力）
+    TRIVIAL_EXCLUDE_PATTERNS = [
+        r"^(?:嗨|嗨囉|哈囉|hello|hi|hey|安安|早安|午安|晚安|你好|您好|在嗎|在不在)[！!。~～\s]*$",
+        r"^(?:謝謝|感謝|多謝|感恩|thank\s*you|thanks|3q|辛苦了)[！!。~～\s]*$",
+        r"^(?:掰掰|再見|拜拜|goodbye|bye|晚安囉)[！!。~～\s]*$",
+        r"(?:油價|即時油價|天氣|氣象|氣溫|統一發票|發票開獎|火車時刻|高鐵時刻|抽塔羅|擲骰子|擲硬幣|算一下\s*\d+[\+\-\*\/])",
+    ]
+
     def __init__(
         self,
         cognition: Optional[CognitiveNetwork] = None,
@@ -126,6 +192,43 @@ class DeepThinkingController:
         self.causal = causal or causal_engine
         # 紀錄已啟用的頻道或使用者 ID (channel_id 或 user_id 字串)
         self.active_contexts: Set[str] = set()
+
+    def evaluate_autonomous_deep_thinking(
+        self,
+        query: str,
+        context: Optional[dict] = None,
+    ) -> Tuple[bool, str, str]:
+        """Zero Intelligence 自主元認知審查 (Autonomous Meta-Cognitive Deliberation)
+
+        即使使用者未明確提及「開啟深度思考」，系統根據問題本質自主評估是否需要啟用深層思維鏈推演超頻。
+        回傳: (should_activate: bool, reason: str, domain: str)
+        """
+        raw_text = (query or "").strip()
+        if len(raw_text) < 4:
+            return False, "", ""
+
+        cleaned = raw_text.lower()
+
+        # 1. 快速放行排除：問候、純單點生活查詢
+        for triv in self.TRIVIAL_EXCLUDE_PATTERNS:
+            if re.search(triv, cleaned):
+                return False, "", ""
+
+        # 2. 檢驗七大深層命題維度
+        for pattern, reason, domain in self.AUTONOMOUS_COGNITIVE_DOMAINS:
+            if re.search(pattern, cleaned):
+                # 命中高階領域特徵，自主評判啟動深層思維推演
+                logger.info(f"Zero Intelligence 自主元認知活化: 命題「{raw_text[:30]}」符合【{domain}：{reason}】")
+                return True, reason, domain
+
+        # 3. 多維概念密度與深度詞彙審查（當提問包含多個深度推導關鍵詞）
+        deep_inquiry_markers = ["本質", "底層原理", "推導", "證明", "邊界條件", "因果", "矛盾", "假設", "權衡", "複雜度", "一致性"]
+        matched_markers = [m for m in deep_inquiry_markers if m in raw_text]
+        if len(matched_markers) >= 2 and len(raw_text) >= 15:
+            reason = f"深層多維剖析（涉及 { '、'.join(matched_markers[:3]) }）"
+            return True, reason, "多維深度思維推論"
+
+        return False, "", ""
 
     def parse_intent_and_extract_query(self, text: str) -> Tuple[ThinkingIntent, Optional[str]]:
         """精確解析使用者對深度思考的人話意圖，並判斷是否為複合提問（指令 + 具體問題）"""
@@ -273,9 +376,15 @@ class DeepThinkingController:
 
         return None
 
-    def execute_deep_pipeline(self, query: str) -> DeepThinkingContext:
+    def execute_deep_pipeline(
+        self,
+        query: str,
+        is_autonomously_triggered: bool = False,
+        autonomous_reason: str = "",
+        autonomous_domain: str = "",
+    ) -> DeepThinkingContext:
         """執行純 Python 原生認知活化與結構化解析，杜絕硬編碼套話"""
-        logger.info(f"執行 Zero Intelligence 深度認知活化: {query[:50]}...")
+        logger.info(f"執行 Zero Intelligence 深度認知活化 (自主觸發={is_autonomously_triggered}): {query[:50]}...")
 
         # 1. 認知網絡概念活化
         self.cognition.activate_concepts_from_text(query, boost=1.0)
@@ -307,6 +416,9 @@ class DeepThinkingController:
             best_thought_path=[],
             final_synthesis="",
             model_native_thought=None,
+            is_autonomously_triggered=is_autonomously_triggered,
+            autonomous_reason=autonomous_reason,
+            autonomous_domain=autonomous_domain,
         )
 
 
