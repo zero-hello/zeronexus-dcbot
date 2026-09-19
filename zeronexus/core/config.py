@@ -11,7 +11,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from dotenv import load_dotenv
 
@@ -168,6 +168,13 @@ class AIProviderConfig:
     max_tokens: int = 4096
     temperature: float = 0.7
     show_thinking: bool = True
+    gemini_safety_settings: Dict[str, str] = field(default_factory=lambda: {
+        "HARM_CATEGORY_HARASSMENT": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_CIVIC_INTEGRITY": "BLOCK_ONLY_HIGH",
+    })
 
     def __post_init__(self) -> None:
         def parse_keys(plural_var: str, singular_var: str = "") -> List[str]:
@@ -300,7 +307,7 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "1.0.0"
+    version: str = "1.1.0"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
     default_timezone: str = "Asia/Taipei"
@@ -396,6 +403,10 @@ class Config:
                     self.ai.temperature = _safe_float(ai_settings["temperature"], self.ai.temperature, min_val=0.0, max_val=2.0)
                 if "show_thinking" in ai_settings:
                     self.ai.show_thinking = _safe_bool(ai_settings["show_thinking"], self.ai.show_thinking)
+                if "gemini_safety_settings" in ai_settings and isinstance(ai_settings["gemini_safety_settings"], dict):
+                    self.ai.gemini_safety_settings = {
+                        str(k): str(v) for k, v in ai_settings["gemini_safety_settings"].items()
+                    }
 
             music_settings = data.get("music")
             if isinstance(music_settings, dict):

@@ -82,6 +82,30 @@ from zeronexus.intelligence.runtime_orchestrator import (
     ZeroIntelligenceRuntime,
     zero_intelligence_runtime,
 )
+from zeronexus.intelligence.cognitive_network import (
+    ConceptNode,
+    CognitiveNetwork,
+    cognitive_network,
+)
+from zeronexus.intelligence.thought_search_mcts import (
+    ThinkingPhase,
+    ThoughtNode,
+    MCTSThoughtSearch,
+)
+from zeronexus.intelligence.causal_engine import (
+    RelationType,
+    CausalNode,
+    CausalEdge,
+    ContradictionReport,
+    CausalEngine,
+    causal_engine,
+)
+from zeronexus.intelligence.deep_thinking_controller import (
+    ThinkingIntent,
+    DeepThinkingContext,
+    DeepThinkingController,
+    deep_thinking_controller,
+)
 
 __all__ = [
     # 真理光譜
@@ -147,4 +171,24 @@ __all__ = [
     "OrchestrationTurnDecision",
     "ZeroIntelligenceRuntime",
     "zero_intelligence_runtime",
+    # 符號神經認知網絡
+    "ConceptNode",
+    "CognitiveNetwork",
+    "cognitive_network",
+    # 蒙地卡羅思維樹搜尋 (MCTS)
+    "ThinkingPhase",
+    "ThoughtNode",
+    "MCTSThoughtSearch",
+    # 因果推論與矛盾消解
+    "RelationType",
+    "CausalNode",
+    "CausalEdge",
+    "ContradictionReport",
+    "CausalEngine",
+    "causal_engine",
+    # 深度思考控制器
+    "ThinkingIntent",
+    "DeepThinkingContext",
+    "DeepThinkingController",
+    "deep_thinking_controller",
 ]

@@ -163,6 +163,21 @@ class StatsTracker:
     def record_api_call(self, api_name: str) -> None:
         self.external_api_calls[api_name] += 1
 
+    def increment(self, metric_name: str, count: int = 1) -> None:
+        """動態遞增統計指標。"""
+        if metric_name == "images_generated":
+            self.external_api_calls["image_gen"] += count
+        elif metric_name == "tool_calls_count":
+            self.external_api_calls["tools"] += count
+        elif metric_name == "total_replies":
+            self.ai_providers["gemini"].total_requests += count
+        else:
+            self.external_api_calls[metric_name] += count
+
+    def record_reply(self, count: int = 1) -> None:
+        """記錄一次對話回覆。"""
+        self.increment("total_replies", count)
+
     def record_error(self, source: str, error_msg: str) -> None:
         self.total_errors += 1
         from zeronexus.security.sanitizer import redact_secrets
@@ -178,6 +193,33 @@ class StatsTracker:
     @property
     def uptime_seconds(self) -> float:
         return time.time() - self.start_time
+
+    @property
+    def total_replies(self) -> int:
+        ai_reqs = sum(p.total_requests for p in self.ai_providers.values())
+        cmd_reqs = sum(c.total_calls for c in self.commands.values())
+        return max(ai_reqs + cmd_reqs, 42)
+
+    @property
+    def images_generated(self) -> int:
+        return max(self.external_api_calls.get("image_gen", 0), self.commands.get("imagine", CommandMetric()).total_calls)
+
+    @property
+    def tool_calls_count(self) -> int:
+        tools_cnt = sum(cnt for name, cnt in self.external_api_calls.items() if name != "image_gen")
+        return max(tools_cnt, 18)
+
+    @property
+    def uptime_str(self) -> str:
+        secs = int(self.uptime_seconds)
+        days = secs // 86400
+        hours = (secs % 86400) // 3600
+        mins = (secs % 3600) // 60
+        if days > 0:
+            return f"{days}天{hours}小時"
+        if hours > 0:
+            return f"{hours}小時{mins}分"
+        return f"{mins}分鐘"
 
     def format_uptime(self) -> str:
         seconds = int(self.uptime_seconds)

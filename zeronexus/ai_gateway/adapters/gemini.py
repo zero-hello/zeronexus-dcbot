@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from zeronexus.ai_gateway.adapters.base import AIResult, BaseAIAdapter
+from zeronexus.core.config import config
 from zeronexus.core.logger import log
 from zeronexus.security.sanitizer import redact_secrets
 
@@ -120,6 +121,11 @@ class GeminiAdapter(BaseAIAdapter):
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
+            ]
+        elif getattr(config.ai, "gemini_safety_settings", None):
+            payload["safetySettings"] = [
+                {"category": cat, "threshold": thresh}
+                for cat, thresh in config.ai.gemini_safety_settings.items()
             ]
 
         # Format Gemini tools

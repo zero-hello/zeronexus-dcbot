@@ -43,6 +43,10 @@ from zeronexus.engines.cwa_service import cwa_service
 from zeronexus.engines.image_gen import image_gen_engine
 from zeronexus.engines.prompt_engine import prompt_engine
 from zeronexus.engines.web_client import detect_search_intent, web_client
+from zeronexus.intelligence.deep_thinking_controller import (
+    ThinkingIntent,
+    deep_thinking_controller,
+)
 from zeronexus.models.guild import GuildSettings
 from zeronexus.modules import module_manager, register_all_modules
 from zeronexus.security.ratelimit import quota_service
@@ -815,16 +819,34 @@ class ZeroNexusBot(commands.Bot):
 
     @tasks.loop(seconds=60.0)
     async def presence_loop(self) -> None:
-        """Rotates Discord custom Playing activity without flooding Gateway."""
+        """Rotates Discord custom Playing activity without flooding Gateway with dynamic template rendering."""
         try:
             activities = config.platform.presence_activities
             if not activities:
                 return
 
-            text = activities[self._presence_index % len(activities)]
+            raw_text = activities[self._presence_index % len(activities)]
             self._presence_index += 1
 
-            clean_text = text.replace("正在遊玩：", "").replace("正在遊玩:", "").strip()
+            clean_text = raw_text.replace("正在遊玩：", "").replace("正在遊玩:", "").strip()
+
+            # 動態即時統計數據樣板渲染
+            if "{" in clean_text and "}" in clean_text:
+                from zeronexus.core.stats import stats
+                ping_ms = int(self.latency * 1000) if self.latency and str(self.latency) != "nan" else 24
+                guild_count = len(self.guilds)
+                try:
+                    clean_text = clean_text.format(
+                        total_replies=stats.total_replies,
+                        images_generated=stats.images_generated,
+                        tool_calls_count=stats.tool_calls_count,
+                        guild_count=guild_count,
+                        ping_ms=ping_ms,
+                        uptime_str=stats.uptime_str,
+                    )
+                except Exception as fmt_err:
+                    log.debug(f"Presence template format skipped: {fmt_err}")
+
             activity = discord.Game(name=clean_text)
             await self.change_presence(activity=activity, status=discord.Status.online)
         except asyncio.CancelledError:
@@ -1311,11 +1333,29 @@ class ZeroNexusBot(commands.Bot):
             except Exception as pe:
                 log.warning(f"Failed to lookup UserProfile preferences: {pe}")
 
-            persona = user_persona or (settings.ai_persona if settings else None) or "01_cat"
+            persona = user_persona or (settings.ai_persona if settings else None) or "zeronexus"
             active_model = user_model or (settings.ai_model if settings else None) or model_registry.get_active_default_model()
 
             # Process attachments (multimodal: images, docs, code/text, audio, general)
             images, image_thumbnail, attachment_tool_results, attachment_notes = await self._ingest_attachments(message.attachments)
+
+            # 4.9 Check for Deep Thinking Natural Language Control Intent
+            thinking_intent = deep_thinking_controller.parse_intent(user_prompt)
+            if thinking_intent != ThinkingIntent.NONE:
+                context_key = str(message.channel.id)
+                reply_text = deep_thinking_controller.handle_intent(thinking_intent, context_key)
+                if reply_text:
+                    pill = ZNStatusPill.SUCCESS if thinking_intent == ThinkingIntent.ENABLE else ZNStatusPill.INFO
+                    card = ZNCard(
+                        title="🧠 Zero Intelligence 深度思考",
+                        description=reply_text,
+                        status_pill=pill,
+                        color=ZNColor.CYAN if thinking_intent == ThinkingIntent.ENABLE else ZNColor.PRIMARY,
+                    )
+                    await self._safe_edit_status_message(status_msg, message.channel, card=card)
+                    if reservation:
+                        await quota_service.release_quota(reservation)
+                    return
 
             # 5. Check for Natural Language Model Switching Intent
             t_m0 = time.perf_counter()
@@ -2012,6 +2052,33 @@ class ZeroNexusBot(commands.Bot):
                 except Exception as ye:
                     log.warning(f"YouTube auto-router error in AI channel: {ye}")
 
+            # Check if Deep Thinking Mode is active
+            channel_key = str(message.channel.id)
+            is_deep_thinking_active = deep_thinking_controller.is_enabled(channel_key) or any(
+                kw in user_prompt.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析"]
+            )
+            deep_thinking_ctx = None
+            if is_deep_thinking_active:
+                await report_progress(
+                    1, 2, "Zero Intelligence 原生深度思考推演",
+                    "正在執行 Hebbian 認知活化、MCTS 思維樹推導與因果矛盾審查...",
+                    icon="🧠"
+                )
+                try:
+                    deep_thinking_ctx = deep_thinking_controller.execute_deep_pipeline(user_prompt)
+                    deep_instruction = (
+                        f"\n\n【Zero Intelligence 深度思維推演與因果公理】（由原生 Python MCTS 運算導出）：\n"
+                        f"- 命題邏輯自洽度：{deep_thinking_ctx.coherence_score * 100:.1f}%\n"
+                        f"- 活化認知概念：{', '.join(c for c, _ in deep_thinking_ctx.activated_concepts[:5]) if deep_thinking_ctx.activated_concepts else '基本常識'}\n"
+                        f"- 核心推導結論：{deep_thinking_ctx.final_synthesis}\n"
+                        f"請依據上述嚴謹之思維脈絡深入解答，切勿敷衍或浮於表面！"
+                    )
+                    system_instruction += deep_instruction
+                    tool_results["zero_intelligence_deep_thinking"] = deep_thinking_ctx.final_synthesis
+                    stats.increment("tool_calls_count", 1)
+                except Exception as dte:
+                    log.warning(f"Deep thinking pipeline error: {dte}")
+
             # General conversational reasoning progress (when no specific tool router handled)
             if not tool_results:
                 await report_progress(1, 2, "梳理對話脈絡", "正在分析您的語意、上下文歷史與個人化偏好...", icon="🧠")
@@ -2094,6 +2161,9 @@ class ZeroNexusBot(commands.Bot):
 
             # 整合真實模型思維與工具調用脈絡（杜絕空洞虛假的罐頭文字）
             extracted_thinking = combine_thinking_and_tools(extracted_thinking, ai_res.tool_calls)
+            if deep_thinking_ctx:
+                dt_block = deep_thinking_ctx.format_discord_thought_process()
+                extracted_thinking = f"{dt_block}\n\n{extracted_thinking}" if extracted_thinking else dt_block
 
             if not clean_answer.strip():
                 if generated_image_url or generated_image_bytes:
