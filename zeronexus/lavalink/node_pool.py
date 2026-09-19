@@ -122,12 +122,27 @@ class NodePoolManager:
             if not selected and valid_probes:
                 selected = valid_probes[:2]
 
+            seen_identifiers = set()
+            seen_endpoints = set()
             wavelink_nodes: List[wavelink.Node] = []
             for sp in selected:
+                ep = (sp.host.lower(), sp.port)
+                if ep in seen_endpoints:
+                    continue
+                seen_endpoints.add(ep)
+
+                base_ident = sp.identifier or f"{sp.host}:{sp.port}"
+                ident = base_ident
+                counter = 1
+                while ident in seen_identifiers:
+                    ident = f"{base_ident}-{counter}"
+                    counter += 1
+                seen_identifiers.add(ident)
+
                 proto = "https" if sp.secure else "http"
                 uri = f"{proto}://{sp.host}:{sp.port}"
                 node = wavelink.Node(
-                    identifier=sp.identifier or f"{sp.host}:{sp.port}",
+                    identifier=ident,
                     uri=uri,
                     password=sp.password,
                     inactive_player_timeout=config.music.auto_leave_seconds,

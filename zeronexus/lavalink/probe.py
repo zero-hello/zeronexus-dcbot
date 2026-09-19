@@ -66,9 +66,9 @@ class NodeProbe:
         }
 
         start_time = time.perf_counter()
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        connector = aiohttp.TCPConnector(ssl=False)
         try:
-            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-            connector = aiohttp.TCPConnector(ssl=False)
             async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                 async with session.get(info_url, headers=headers) as resp:
                     elapsed = (time.perf_counter() - start_time) * 1000.0
@@ -121,6 +121,9 @@ class NodeProbe:
             result.error_message = "連線超時"
         except Exception as ex:
             result.error_message = str(ex)
+        finally:
+            if not connector.closed:
+                await connector.close()
 
         return result
 

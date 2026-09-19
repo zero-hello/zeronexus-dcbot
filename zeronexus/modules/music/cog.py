@@ -168,6 +168,9 @@ class MusicCog(commands.Cog):
     @app_commands.describe(查詢或連結="輸入歌曲關鍵字搜尋，或貼上 YouTube 音樂網址")
     @command_guard("music", required_level=ZNPermissionLevel.EVERYONE)
     async def play_command(self, interaction: discord.Interaction, 查詢或連結: str) -> None:
+        # 第一行立即進行 defer ACK，防止語音連線握手超時導致 10062
+        await interaction.response.defer()
+
         player = await self._get_or_connect_player(interaction)
         if not player:
             return
@@ -176,7 +179,6 @@ class MusicCog(commands.Cog):
 
         # 1. 檢查是否包含 YouTube list 播放清單參數
         if PLAYLIST_REGEX.search(query):
-            await interaction.response.defer(ephemeral=True)
             search_res = await wavelink.Playable.search(query)
 
             if isinstance(search_res, wavelink.Playlist):
@@ -184,6 +186,7 @@ class MusicCog(commands.Cog):
                 total_tracks = len(playlist.tracks)
 
                 async def _on_choose_playlist(inter: discord.Interaction, load_all: bool) -> None:
+                    await inter.response.defer()
                     if load_all:
                         # 載入整張清單（最多 100 首防爆）
                         tracks_to_add = playlist.tracks[:100]
@@ -230,22 +233,22 @@ class MusicCog(commands.Cog):
                     status_pill=ZNStatusPill.INFO,
                     color=ZNColor.PRIMARY,
                 )
-                await interaction.followup.send(embed=prompt_card.to_embed(), view=prompt_view, ephemeral=True)
+                await interaction.followup.send(embed=prompt_card.to_embed(), view=prompt_view)
                 return
 
         # 2. 一般搜尋或單曲連結
         if not query.startswith(("http://", "https://")):
             # 關鍵字搜尋：抓取前 10 首
-            await interaction.response.defer(ephemeral=True)
             search_res = await wavelink.Playable.search(f"ytsearch:{query}")
 
             if not search_res:
-                await interaction.followup.send("❌ 找不到符合條件的歌曲，請嘗試其他關鍵字。", ephemeral=True)
+                await interaction.followup.send("❌ 找不到符合條件的歌曲，請嘗試其他關鍵字。")
                 return
 
             if isinstance(search_res, list) and len(search_res) > 1:
                 # 彈出前 10 首下拉選單
                 async def _on_select_track(inter: discord.Interaction, selected_track: wavelink.Playable) -> None:
+                    await inter.response.defer()
                     await self._play_or_enqueue(inter, player, selected_track)
 
                 select_view = TrackSelectView(search_res[:10], _on_select_track)
@@ -255,17 +258,16 @@ class MusicCog(commands.Cog):
                     status_pill=ZNStatusPill.INFO,
                     color=ZNColor.PRIMARY,
                 )
-                await interaction.followup.send(embed=select_card.to_embed(), view=select_view, ephemeral=True)
+                await interaction.followup.send(embed=select_card.to_embed(), view=select_view)
                 return
 
             track = search_res[0] if isinstance(search_res, list) else search_res
             await self._play_or_enqueue(interaction, player, track)
         else:
             # 直接 URL
-            await interaction.response.defer()
             search_res = await wavelink.Playable.search(query)
             if not search_res:
-                await interaction.followup.send("❌ 無法解析該音樂網址，請確認連結有效性。", ephemeral=True)
+                await interaction.followup.send("❌ 無法解析該音樂網址，請確認連結有效性。")
                 return
 
             track = search_res[0] if isinstance(search_res, list) else search_res
