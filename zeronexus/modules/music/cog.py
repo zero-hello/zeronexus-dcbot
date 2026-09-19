@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Optional
 
@@ -75,7 +76,7 @@ class MusicModule(BaseModule):
         self.set_state(ModuleState.RUNNING)
 
     async def shutdown(self) -> None:
-        self.set_state(ModuleState.DISABLED, "音樂模組安全關閉")
+        self.set_state(ModuleState.DISABLED, "音樂模組安全關退")
 
 
 class MusicCog(commands.Cog):
@@ -87,13 +88,44 @@ class MusicCog(commands.Cog):
         self.bot = bot
         self.node_manager = NodePoolManager.get_instance(bot)
         self._dashboards: dict[int, NowPlayingView] = {}
+        self._ticker_tasks: dict[int, asyncio.Task] = {}
 
     async def cog_load(self) -> None:
         """Cog 載入時非同步初始化 Lavalink 節點池。"""
         self.bot.loop.create_task(self.node_manager.initialize(self.bot))
 
+    def _start_ticker(self, guild_id: int, player: wavelink.Player) -> None:
+        """啟動該伺服器控制面板進度條背景刷新任務 (每 6 秒平滑更新)。"""
+        self._stop_ticker(guild_id)
+
+        async def _ticker_loop() -> None:
+            while True:
+                await asyncio.sleep(6.0)
+                try:
+                    if not player or not player.connected or not player.playing:
+                        break
+                    # 若暫停中則略過該次編輯以節省 API 資源
+                    if getattr(player, "paused", False):
+                        continue
+                    dashboard = self._dashboards.get(guild_id)
+                    if dashboard and dashboard.message:
+                        await dashboard.refresh_dashboard()
+                except asyncio.CancelledError:
+                    break
+                except Exception as ex:
+                    log.debug(f"[MusicCog] 進度條定時刷新例外: {ex}")
+                    break
+
+        self._ticker_tasks[guild_id] = self.bot.loop.create_task(_ticker_loop())
+
+    def _stop_ticker(self, guild_id: int) -> None:
+        """終止該伺服器之控制面板進度條刷新任務。"""
+        task = self._ticker_tasks.pop(guild_id, None)
+        if task and not task.done():
+            task.cancel()
+
     # --------------------------------------------------------------------------
-    # 輔助函式：取得或連線語音播放器
+    # 輔助函式：取得或連線語音播放器 (具備斷線殭屍播放器自我修復)
     # --------------------------------------------------------------------------
     async def _get_or_connect_player(self, interaction: discord.Interaction) -> Optional[wavelink.Player]:
         """驗證使用者語音狀態並連線至該語音頻道。"""
@@ -107,7 +139,22 @@ class MusicCog(commands.Cog):
             return None
 
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
-        if not player or not isinstance(player, wavelink.Player):
+        if player is not None:
+            # 檢查連線狀態是否健康，若已斷線則強制清理以供重新乾淨建立連線
+            if not player.connected:
+                log.warning("[MusicCog] 偵測到中斷之語音播放器殘留，正在清理並重新建立連線...")
+                try:
+                    await player.disconnect(force=True)
+                except Exception:
+                    pass
+                player = None
+            elif player.channel != user_voice.channel:
+                try:
+                    await player.move_to(user_voice.channel)
+                except Exception:
+                    pass
+
+        if player is None or not isinstance(player, wavelink.Player):
             try:
                 player = await user_voice.channel.connect(cls=wavelink.Player, self_deaf=True, self_mute=False)
             except Exception as ex:
@@ -204,6 +251,7 @@ class MusicCog(commands.Cog):
             msg = await InteractionResponder.safe_send(interaction, card=card, view=dashboard)
             if msg:
                 dashboard.message = msg
+            self._start_ticker(guild_id, player)
         else:
             # 當前正有歌曲播放中，加入待播隊列
             await player.queue.put_wait(track)
@@ -275,6 +323,7 @@ class MusicCog(commands.Cog):
                             msg = await InteractionResponder.safe_send(inter, card=card, view=dashboard)
                             if msg:
                                 dashboard.message = msg
+                            self._start_ticker(inter.guild_id or 0, player)
                         else:
                             for t in tracks_to_add:
                                 await player.queue.put_wait(t)
@@ -385,6 +434,8 @@ class MusicCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "❌ 機器人目前未在語音頻道內。", ephemeral=True)
             return
 
+        guild_id = interaction.guild_id or 0
+        self._stop_ticker(guild_id)
         player.queue.clear()
         await player.stop()
         card = ZNCard(
@@ -393,6 +444,12 @@ class MusicCog(commands.Cog):
             status_pill=ZNStatusPill.WARNING,
             color=ZNColor.ERROR,
         )
+        dashboard = self._dashboards.get(guild_id)
+        if dashboard and dashboard.message:
+            try:
+                await dashboard.message.edit(embed=card.to_embed(), view=None)
+            except Exception:
+                pass
         await InteractionResponder.safe_send(interaction, card=card)
 
     # --------------------------------------------------------------------------
@@ -550,12 +607,13 @@ class MusicCog(commands.Cog):
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
-        """監聽歌曲開始播放事件，自動同步刷新控制面板並重設容錯計數。"""
+        """監聽歌曲開始播放事件，自動同步刷新控制面板並啟動進度更新與重設容錯計數。"""
         player = payload.player
         if not player or not player.guild:
             return
         setattr(player, "_failover_count", 0)
         guild_id = player.guild.id
+        self._start_ticker(guild_id, player)
         dashboard = self._dashboards.get(guild_id)
         if dashboard:
             await dashboard.refresh_dashboard()
@@ -642,41 +700,46 @@ class MusicCog(commands.Cog):
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload) -> None:
-        """監聽歌曲結束，若隊列為空則渲染 TrackEndedView。"""
+        """監聽歌曲結束，若隊列為空則就地將控制面板轉換為待機卡片。"""
         player = payload.player
-        if not player:
+        if not player or not player.guild:
             return
+
+        guild_id = player.guild.id
+        self._stop_ticker(guild_id)
 
         # 若隊列還有歌，Wavelink 會自動播放下一首
         if len(player.queue) > 0:
             return
 
-        # 隊列已空，展示完畢待機面板
+        # 隊列已空，展示完畢待機面板並原地更新控制面板
+        vol = self.node_manager.get_guild_volume(guild_id)
         card = ZNCard(
-            title="🏁 待播隊列已播放完畢",
-            description="隊列中的所有歌曲已全部播放完畢！您可以點擊下方按鈕繼續點播新歌曲唷～",
+            title="🏁 待播隊列已播放完畢 (待機中)",
+            description="隊列中的歌曲已全部播放完畢！您可以點擊下方「➕ 添加歌曲」按鈕繼續點播新歌曲唷～",
             status_pill=ZNStatusPill.INFO,
             color=ZNColor.PRIMARY,
+            footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
         )
 
-        async def _on_modal_add(inter: discord.Interaction, q: str) -> None:
-            await inter.response.defer()
-            search_query = q.strip()
-            target_q = search_query if search_query.startswith(("http://", "https://")) else f"ytsearch:{search_query}"
-            res = await self._safe_search_tracks(target_q, preferred_node=player.node)
-            if res:
-                t = res[0] if isinstance(res, list) else res
-                await self._play_or_enqueue(inter, player, t)
-            else:
-                await inter.followup.send("❌ 找不到該歌曲。", ephemeral=True)
+        ended_view = TrackEndedView(self._create_on_add_song(player))
+        dashboard = self._dashboards.get(guild_id)
 
-        ended_view = TrackEndedView(_on_modal_add)
-        channel = player.channel
-        if channel and isinstance(channel, discord.TextChannel):
+        updated = False
+        if dashboard and dashboard.message:
             try:
-                await channel.send(embed=card.to_embed(), view=ended_view)
+                await dashboard.message.edit(embed=card.to_embed(), view=ended_view)
+                updated = True
             except Exception:
                 pass
+
+        if not updated:
+            channel = player.channel
+            if channel and isinstance(channel, discord.TextChannel):
+                try:
+                    await channel.send(embed=card.to_embed(), view=ended_view)
+                except Exception:
+                    pass
 
 
 async def setup(bot: commands.Bot) -> None:
