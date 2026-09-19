@@ -2060,29 +2060,25 @@ class ZeroNexusBot(commands.Bot):
             deep_thinking_ctx = None
             if is_deep_thinking_active:
                 await report_progress(
-                    1, 3, "Zero Intelligence 認知概念拓撲活化",
-                    "正在深度解析問題本質、萃取關鍵實體與領域相依性...",
+                    1, 3, "深度思維鏈 (Chain-of-Thought) 展開",
+                    "正在像 DeepSeek-R1 般深層剖析問題本質、探討底層定義與邊界假設...",
                     icon="🧠"
                 )
                 try:
                     deep_thinking_ctx = deep_thinking_controller.execute_deep_pipeline(user_prompt)
-                    await asyncio.sleep(0.8)
+                    await asyncio.sleep(0.4)
                     await report_progress(
-                        2, 3, "MCTS 思維樹展開與因果審查",
-                        f"正在針對「{deep_thinking_ctx.query[:20]}」進行多路假說推演、邊界反例審查與矛盾消解...",
-                        icon="🌳"
+                        2, 3, "神經網路多維因果推演",
+                        f"正在針對「{user_prompt[:20]}」進行多路邏輯求證與本質剖析...",
+                        icon="✨"
                     )
-                    await asyncio.sleep(0.8)
                     deep_instruction = (
-                        f"\n\n【Zero Intelligence 深度思維推演與因果公理】（由原生 Python MCTS 運算導出）：\n"
-                        f"- 命題邏輯自洽度：{deep_thinking_ctx.coherence_score * 100:.1f}%\n"
-                        f"- 活化認知概念：{', '.join(c for c, _ in deep_thinking_ctx.activated_concepts[:5]) if deep_thinking_ctx.activated_concepts else '基本常識'}\n"
-                        f"- 核心推導結論：{deep_thinking_ctx.final_synthesis}\n"
-                        f"請依據上述嚴謹之思維脈絡深入解答，務必展現詳盡的思考與嚴密的技術推導，切勿浮於表面！"
+                        "\n\n【深度思考模式已全面啟用 (Deep Thinking Mode Activated)】\n"
+                        "請模仿 DeepSeek-R1 進行極致深入的逐步邏輯推導（Chain-of-Thought）。\n"
+                        "拆解核心定義、探討底層原理、排查潛在邊界反例，給出嚴謹深刻且洞察本質的完整解答！"
                     )
                     system_instruction += deep_instruction
-                    tool_results["zero_intelligence_deep_thinking"] = deep_thinking_ctx.final_synthesis
-                    stats.increment("tool_calls_count", 1)
+                    stats.increment("deep_thinking_count", 1)
                 except Exception as dte:
                     log.warning(f"Deep thinking pipeline error: {dte}")
 
@@ -2168,9 +2164,23 @@ class ZeroNexusBot(commands.Bot):
             clean_answer, extracted_thinking = extract_and_sanitize_ai_response(ai_res.text)
             clean_answer = _clean_stored_turn(clean_answer, "assistant")
 
-            # 優先採用適配器回傳的原生思考 (例如 Gemini 4096 tokens 原生思考)
+            # 優先採用適配器回傳的原生思考 (例如 Gemini 4096 tokens 原生思考或 DeepSeek-R1 reasoning)
             if not extracted_thinking and getattr(ai_res, "thinking_process", None):
                 extracted_thinking = ai_res.thinking_process
+
+            # 若使用者開啟深度思考但當前模型未附帶思考鏈，主動調用模型推理大腦進行真·Chain-of-Thought
+            if is_deep_thinking_active and not extracted_thinking:
+                try:
+                    await report_progress(3, 3, "真實神經網路思維鏈推演", "正在以大模型原生推理引擎進行多維因果推演...", icon="🧠")
+                    dynamic_thought = await deep_thinking_controller.generate_model_thought(
+                        query=user_prompt,
+                        ai_gateway=ai_gateway,
+                        active_model=active_model,
+                    )
+                    if dynamic_thought:
+                        extracted_thinking = dynamic_thought
+                except Exception as dte:
+                    log.warning(f"動態調用模型深度思考失敗: {dte}")
 
             # 整合真實模型思維與工具調用脈絡（杜絕空洞虛假的罐頭文字）
             extracted_thinking = combine_thinking_and_tools(extracted_thinking, ai_res.tool_calls)

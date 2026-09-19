@@ -91,6 +91,7 @@ class DeepSeekAdapter(BaseAIAdapter):
                 raise ValueError("DeepSeek returned empty choices.")
             msg_obj = choices[0].get("message") or {}
             text_result = msg_obj.get("content") or ""
+            reasoning = msg_obj.get("reasoning_content") or choices[0].get("reasoning")
 
             usage = data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
@@ -105,6 +106,7 @@ class DeepSeekAdapter(BaseAIAdapter):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 raw_response=data,
+                thinking_process=str(reasoning).strip() if reasoning else None,
             )
         except Exception as e:
             raise ValueError(f"Failed to parse DeepSeek response: {redact_secrets(str(e))}")

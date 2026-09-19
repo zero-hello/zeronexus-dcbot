@@ -241,6 +241,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                 "messages": formatted_messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
+                "include_reasoning": True,
             }
             if formatted_tools:
                 payload["tools"] = formatted_tools
@@ -415,6 +416,11 @@ class OpenRouterAdapter(BaseAIAdapter):
                         current_data = sub_data
 
                     text_result = current_msg.get("content", "") or ""
+                    native_thinking = (
+                        current_msg.get("reasoning_content")
+                        or current_msg.get("reasoning")
+                        or (choices[0].get("reasoning") if choices else None)
+                    )
                     usage = current_data.get("usage", {})
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
@@ -435,6 +441,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                         fallback_reason=f"原要求模型 {primary_model} 故障，由 OpenRouter 候選池 {real_model} 接手" if is_fb else None,
                         requested_model=primary_model,
                         tool_calls=executed_tool_calls or None,
+                        thinking_process=str(native_thinking).strip() if native_thinking else None,
                     )
                 except Exception as e:
                     raise ValueError(f"Failed to parse OpenRouter response: {redact_secrets(str(e))}")
@@ -488,6 +495,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                     "messages": formatted_messages,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
+                    "include_reasoning": True,
                 }
                 em_resp = await client.post(endpoint, headers=headers, json=em_payload, timeout=timeout)
                 if em_resp.status_code == 200:
@@ -501,6 +509,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                     if choices:
                         msg_obj = choices[0].get("message") or {}
                         text_result = msg_obj.get("content") or ""
+                        em_thinking = msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or choices[0].get("reasoning")
                         usage = (data or {}).get("usage", {})
                         latency_ms = (time.perf_counter() - start_time) * 1000
                         return AIResult(
@@ -515,6 +524,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                             fallback_reason=f"原要求模型 {primary_model} 額度或連線耗盡，緊急降級至 google/gemini-2.5-flash",
                             requested_model=primary_model,
                             tool_calls=executed_tool_calls or None,
+                            thinking_process=str(em_thinking).strip() if em_thinking else None,
                         )
             except Exception as em_err:
                 log.error(f"Clean emergency fallback also failed: {redact_secrets(str(em_err))}")
@@ -531,6 +541,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                     "messages": formatted_messages,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
+                    "include_reasoning": True,
                 }
                 free_resp = await client.post(endpoint, headers=headers, json=free_payload, timeout=timeout)
                 if free_resp.status_code == 200:
@@ -544,6 +555,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                     if choices:
                         msg_obj = choices[0].get("message") or {}
                         text_result = msg_obj.get("content") or ""
+                        free_thinking = msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or choices[0].get("reasoning")
                         usage = (data or {}).get("usage", {})
                         latency_ms = (time.perf_counter() - start_time) * 1000
                         log.info(f"OpenRouter free-tier fallback succeeded with {free_model}.")
@@ -559,6 +571,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                             fallback_reason=f"付費配額已耗盡 (HTTP {last_status})，已自動切換至零成本免費模型 {free_model}",
                             requested_model=primary_model,
                             tool_calls=executed_tool_calls or None,
+                            thinking_process=str(free_thinking).strip() if free_thinking else None,
                         )
             except Exception as free_err:
                 log.error(f"Free-tier fallback {free_model} failed: {redact_secrets(str(free_err))}")

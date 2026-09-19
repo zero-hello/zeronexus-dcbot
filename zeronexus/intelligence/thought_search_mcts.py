@@ -184,32 +184,31 @@ class MCTSThoughtSearchEngine:
 
     def _expand(self, node: ThoughtNode) -> ThoughtNode:
         """依據當前狀態產生推論子節點。"""
-        subj = self._extract_subject_focus(node.state.problem_statement, node.state.known_facts)
         depth = node.state.depth + 1
         actions_to_generate: List[Tuple[ThoughtActionType, str]] = []
 
         if depth == 1:
             actions_to_generate.append((
                 ThoughtActionType.DECOMPOSE,
-                f"解構 {subj} 之核心訴求：提煉輸入前提、關鍵技術指標與現實約束邊界"
+                "問題前提解析與邊界條件設定"
             ))
             actions_to_generate.append((
                 ThoughtActionType.HYPOTHESIZE,
-                f"構建主流假設路徑：針對 {subj}，評估其核心架構特徵對目標工作負載之支撐度與瓶頸閾值"
+                "構建推導假設路徑與因果節點"
             ))
         elif depth == 2:
             actions_to_generate.append((
                 ThoughtActionType.CRITIQUE,
-                f"反證與極端壓力測試：審查 {subj} 是否存在規格失衡、單核/多工瓶頸、資源爭用或現實相容性隱患"
+                "反例排查與邊界極限自洽審查"
             ))
             actions_to_generate.append((
                 ThoughtActionType.CROSS_EXAMINE,
-                f"因果交叉求證：比對客觀基準數據與物理/架構因果律，驗證 {subj} 各項論據之因果相依性"
+                "命題交叉驗證與客觀邏輯檢驗"
             ))
         elif depth >= 3:
             actions_to_generate.append((
                 ThoughtActionType.SYNTHESIZE,
-                f"論證收斂判定：排除矛盾假說，針對 {subj} 形成兼顧客觀真實與實用價值之確定性最優解"
+                "收斂推導最優路徑與結論判定"
             ))
 
         for act_type, act_desc in actions_to_generate:

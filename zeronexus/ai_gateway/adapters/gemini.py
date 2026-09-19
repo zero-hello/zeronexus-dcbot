@@ -106,9 +106,10 @@ class GeminiAdapter(BaseAIAdapter):
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        # 針對 Gemini 2.5/3.x 系列啟用原生深度思考 (Thinking Budget: 4096 tokens)
+        # 針對 Gemini 2.5/3.x 系列啟用原生深度思考 (含完整思維鏈輸出與 4096 tokens 思維預算)
         if any(v in model.lower() for v in ["2.5", "3.", "flash", "pro", "exp", "thinking"]):
             gen_config["thinkingConfig"] = {
+                "includeThoughts": True,
                 "thinkingBudget": 4096,
             }
 

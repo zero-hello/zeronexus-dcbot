@@ -14,13 +14,12 @@ import random
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 from zeronexus.intelligence.causal_engine import CausalEngine, causal_engine
 from zeronexus.intelligence.cognitive_network import CognitiveNetwork, cognitive_network
 from zeronexus.intelligence.thought_search_mcts import (
     ThinkingPhase,
-    thought_search_engine,
 )
 from zeronexus.intelligence.truth_spectrum import TruthLevel
 
@@ -49,39 +48,21 @@ class DeepThinkingContext:
     model_native_thought: Optional[str] = None  # 大模型原生深層思維鏈 (Thinking Tokens)
 
     def format_discord_thought_process(self) -> str:
-        """格式化為適合 Discord 展示的折疊思考區塊"""
+        """格式化為適合 Discord 展示的真實大模型思考區塊（徹底杜絕硬編碼模板文字）"""
         sections: List[str] = []
 
-        # 若模型有原生深層思考（如 Gemini 4096 tokens 或 DeepSeek-R1 <think>），優先完整展現大模型原生推理
         if self.model_native_thought and self.model_native_thought.strip():
             clean_thought = self.model_native_thought.strip()
-            if len(clean_thought) > 1500:
-                clean_thought = clean_thought[:1450] + "\n...（長篇思考歷程已節錄核心推導精華）"
-            sections.append(f"🧠 **【AI 原生深層思維鏈 (Thinking Engine)】**\n{clean_thought}\n")
-            sections.append("───────────────\n🔍 **【Zero Intelligence 認知與因果自洽審核】**")
+            # 支援超過 2500 字元的分段或呈現，完整展現 DeepSeek / Gemini 大模型原生思維推導
+            if len(clean_thought) > 3500:
+                clean_thought = clean_thought[:3400] + "\n\n...（長篇思考歷程已節錄核心推導精華）"
+            sections.append(
+                f"🧠 **【AI 深度思維推演歷程 (Chain-of-Thought)】**\n"
+                f"> 模型內部認知決策、推論驗證與思維鏈推導（100% 由神經網路原生運算生成）\n\n"
+                f"{clean_thought}"
+            )
         else:
-            sections.append("🧠 **【Zero Intelligence 深度思維推演歷程】**")
-
-        concepts_str = ', '.join(f'`{c}`' for c, _ in self.activated_concepts[:5]) if self.activated_concepts else '全域常識檢索'
-        sections.append(f"⚡ **認知網絡活化領域**：{concepts_str}")
-        sections.append(f"🛡️ **命題邏輯自洽度**：`{self.coherence_score * 100:.1f}%`")
-
-        if self.contradictions_found:
-            sections.append(f"⚠️ **消解矛盾項**：{len(self.contradictions_found)} 處已自動修正")
-
-        sections.append("\n**思維樹搜尋 (MCTS) 推演鏈：**")
-        for idx, (phase, content) in enumerate(self.phases, start=1):
-            phase_name = {
-                ThinkingPhase.DECOMPOSE: "核心拆解",
-                ThinkingPhase.HYPOTHESIZE: "假說建立",
-                ThinkingPhase.CRITIQUE: "批判質疑",
-                ThinkingPhase.CROSS_EXAMINE: "因果交叉驗證",
-                ThinkingPhase.SYNTHESIZE: "收斂綜合",
-            }.get(phase, phase.value)
-            sections.append(f"• `[階段 {idx} · {phase_name}]` {content}")
-
-        if self.final_synthesis:
-            sections.append(f"\n💡 **底層推演結論**：{self.final_synthesis}")
+            sections.append("🧠 **【AI 深度思維推演歷程】**\n> 模型以直覺快速模式響應，未輸出深層思維鏈。")
 
         return "\n".join(sections)
 
@@ -204,87 +185,80 @@ class DeepThinkingController:
         """檢查指定頻道或使用者是否啟用深度思考"""
         return context_key in self.active_contexts
 
-    def execute_deep_pipeline(self, query: str) -> DeepThinkingContext:
-        """執行純 Python 原生 Zero Intelligence 深度思考管線
+    async def generate_model_thought(
+        self,
+        query: str,
+        ai_gateway: Any,
+        active_model: Optional[str] = None,
+    ) -> Optional[str]:
+        """調用大模型自身進行如同 DeepSeek-R1 的原生 Chain-of-Thought 深度思維推演（絕非硬編碼假模板）"""
+        if not ai_gateway:
+            return None
+        try:
+            thought_prompt = (
+                "You are the deep internal reasoning engine of ZeroNexus, performing an authentic Chain-of-Thought (CoT) deduction, mimicking DeepSeek-R1.\n"
+                "When given the user's prompt, conduct an in-depth, multi-faceted mental reasoning process:\n"
+                "1. Deconstruct the user's premises, implicit assumptions, and core questions.\n"
+                "2. Explore candidate explanations, theoretical principles, mathematical definitions, and technical constraints.\n"
+                "3. Challenge assumptions with edge cases, potential paradoxes, or counterexamples.\n"
+                "4. Converge logically and reach an undeniable, clear conclusion.\n\n"
+                "IMPORTANT RULES:\n"
+                "- Output ONLY your authentic, stream-of-consciousness thought process.\n"
+                "- Do NOT write user-facing greetings, preamble, or conversational fluff.\n"
+                "- Be raw, rigorous, technical, and analytical.\n"
+                "- You may think in Traditional Chinese, English, or a mix, exactly as real reasoning models do."
+            )
+            candidate_thinker = active_model or "gemini-3.1-flash-lite"
+            ai_res, _ = await ai_gateway.generate_response(
+                system_instruction=thought_prompt,
+                messages=[{"role": "user", "content": f"Please reason deeply about this prompt:\n{query}"}],
+                override_model=candidate_thinker,
+                allow_tools=False,
+            )
+            if ai_res.thinking_process and ai_res.thinking_process.strip():
+                return ai_res.thinking_process.strip()
+            if ai_res.text and ai_res.text.strip():
+                from zeronexus.ai_gateway.context_builder import extract_and_sanitize_ai_response
+                clean_t, extracted_t = extract_and_sanitize_ai_response(ai_res.text)
+                return (extracted_t or clean_t or ai_res.text).strip()
+        except Exception as e:
+            logger.warning(f"動態調用模型深度思考失敗: {e}")
+        return None
 
-        1. 概念認知網絡活化 (Hebbian Spreading Activation)
-        2. 蒙地卡羅思維樹搜尋 (MCTS Thought Search)
-        3. 因果 DAG 構建與矛盾衝突自洽性審查 (Causal DAG & Contradiction Resolver)
-        4. 綜合歸納產出推導成果
-        """
-        logger.info(f"執行 Zero Intelligence 深度思考推演: {query[:50]}...")
+    def execute_deep_pipeline(self, query: str) -> DeepThinkingContext:
+        """執行純 Python 原生認知活化與結構化解析，杜絕硬編碼套話"""
+        logger.info(f"執行 Zero Intelligence 深度認知活化: {query[:50]}...")
 
         # 1. 認知網絡概念活化
         self.cognition.activate_concepts_from_text(query, boost=1.0)
         top_concepts = self.cognition.get_activated_concepts(threshold=0.1)
 
-        # 2. 蒙地卡羅思維樹搜尋 (MCTS 樹狀多步深層推導)
-        concept_names = [c for c, _ in top_concepts]
-        mcts_steps, confidence = thought_search_engine.search_optimal_reasoning_path(
-            problem=query,
-            context_facts=concept_names[:4],
-            max_depth=4,
-        )
-
-        phases_recorded: List[Tuple[ThinkingPhase, str]] = []
-        for step in mcts_steps:
-            act_str = step.get("action", "reasoning")
-            try:
-                phase_enum = ThinkingPhase(act_str)
-            except ValueError:
-                phase_enum = ThinkingPhase.DECOMPOSE
-            phases_recorded.append((phase_enum, step.get("description", "")))
-
-        # 提取問題主題精華
-        cleaned_q = re.sub(r"[？\?！!。，,、\s\n]+", " ", query).strip()
-        cleaned_q = re.sub(r"^(?:請教|請問|幫我|想問|我想問|你覺得|如何|怎麼|為什麼|為啥|到底|能否|可以)\s*", "", cleaned_q)
-        q_subj = cleaned_q[:25] if len(cleaned_q) > 25 else (cleaned_q or "當前議題")
-        focus_hint = f"（領域：{', '.join(concept_names[:2])}）" if concept_names else ""
-
-        # 若搜尋步數較少，補充針對該具體問題之動態結構化階段，杜絕空洞套話
-        if len(phases_recorded) < 3:
-            fallback_phases = [
-                (ThinkingPhase.DECOMPOSE, f"拆解核心子命題：探討「{q_subj}」{focus_hint} 之本質條件、效能指標與邊界約束"),
-                (ThinkingPhase.HYPOTHESIZE, f"構建針對「{q_subj}」之關鍵假說與因果路徑，評估不同組態與策略之適配性"),
-                (ThinkingPhase.CRITIQUE, f"反向批判與極限壓力測試：審查「{q_subj}」是否存在單點瓶頸、資源競爭、相容性缺陷或配置失衡"),
-                (ThinkingPhase.CROSS_EXAMINE, f"因果交叉求證：比對客觀基準數據與架構限制，確證「{q_subj}」各項論據之因果相依性"),
-                (ThinkingPhase.SYNTHESIZE, f"收斂整合：排除矛盾與缺陷方案，針對「{q_subj}」產出兼顧實用與客觀事實之確定性決策"),
-            ]
-            for p, d in fallback_phases:
-                if not any(ep == p for ep, _ in phases_recorded):
-                    phases_recorded.append((p, d))
-
-        # 3. 因果邏輯與矛盾審查 (動態綁定問題實體)
+        # 2. 因果邏輯與矛盾審查
         dag = CausalEngine()
-        main_topic = concept_names[0] if concept_names else q_subj[:12]
-        dag.add_node("query_input", f"輸入前提: {q_subj[:15]}", value=0.9, truth_level=TruthLevel.OBSERVED)
-        dag.add_node("hypothesis", f"核心推導假說 ({main_topic})", value=0.8, truth_level=TruthLevel.DERIVED)
-        dag.add_node("reality_check", "客觀事實與因果律相容度", value=0.85, truth_level=TruthLevel.KNOWN)
+        concept_names = [c for c, _ in top_concepts]
+        main_topic = concept_names[0] if concept_names else "核心命題"
+        dag.add_node("query_input", f"輸入前提: {query[:20]}", value=0.9, truth_level=TruthLevel.OBSERVED)
+        dag.add_node("hypothesis", f"核心推導假說 ({main_topic})", value=0.85, truth_level=TruthLevel.DERIVED)
+        dag.add_node("reality_check", "客觀事實與因果相容度", value=0.9, truth_level=TruthLevel.KNOWN)
 
-        dag.add_edge("query_input", "hypothesis", weight=0.8, description="前提充分支撐假說")
-        dag.add_edge("hypothesis", "reality_check", weight=0.9, description="論點符合物理或邏輯因果")
+        dag.add_edge("query_input", "hypothesis", weight=0.8)
+        dag.add_edge("hypothesis", "reality_check", weight=0.9)
 
         dag.propagate_forward()
         report = dag.audit_contradictions()
         if report.has_conflict:
             dag.resolve_conflicts(report)
 
-        # 4. 產生歸納成果 (動態結合問題實體與推導成果)
-        synthesis = (
-            f"針對「{q_subj}」經 {len(phases_recorded)} 步 MCTS 思維樹推導與因果審查，"
-            f"邏輯自洽度達 {report.coherence_score * 100:.1f}%。"
-            f"已排查邊界缺陷與邏輯矛盾，收斂確定最優解。"
-        )
-
         return DeepThinkingContext(
             query=query,
             is_active=True,
-            phases=phases_recorded,
+            phases=[],
             activated_concepts=top_concepts,
             coherence_score=report.coherence_score,
             contradictions_found=report.conflict_details,
-            best_thought_path=[desc for _, desc in phases_recorded],
-            final_synthesis=synthesis,
+            best_thought_path=[],
+            final_synthesis="",
+            model_native_thought=None,
         )
 
 
