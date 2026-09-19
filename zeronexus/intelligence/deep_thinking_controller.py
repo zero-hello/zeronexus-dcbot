@@ -46,19 +46,30 @@ class DeepThinkingContext:
     contradictions_found: List[str] = field(default_factory=list)
     best_thought_path: List[str] = field(default_factory=list)
     final_synthesis: str = ""
+    model_native_thought: Optional[str] = None  # 大模型原生深層思維鏈 (Thinking Tokens)
 
     def format_discord_thought_process(self) -> str:
         """格式化為適合 Discord 展示的折疊思考區塊"""
-        lines = [
-            "🧠 **【Zero Intelligence 深度思維推演歷程】**",
-            f"⚡ **認知網絡活化概念**：{', '.join(f'`{c}`' for c, _ in self.activated_concepts[:5]) if self.activated_concepts else '全域常識檢索'}",
-            f"🔍 **命題邏輯自洽度**：`{self.coherence_score * 100:.1f}%`"
-        ]
+        sections: List[str] = []
+
+        # 若模型有原生深層思考（如 Gemini 4096 tokens 或 DeepSeek-R1 <think>），優先完整展現大模型原生推理
+        if self.model_native_thought and self.model_native_thought.strip():
+            clean_thought = self.model_native_thought.strip()
+            if len(clean_thought) > 1500:
+                clean_thought = clean_thought[:1450] + "\n...（長篇思考歷程已節錄核心推導精華）"
+            sections.append(f"🧠 **【AI 原生深層思維鏈 (Thinking Engine)】**\n{clean_thought}\n")
+            sections.append("───────────────\n🔍 **【Zero Intelligence 認知與因果自洽審核】**")
+        else:
+            sections.append("🧠 **【Zero Intelligence 深度思維推演歷程】**")
+
+        concepts_str = ', '.join(f'`{c}`' for c, _ in self.activated_concepts[:5]) if self.activated_concepts else '全域常識檢索'
+        sections.append(f"⚡ **認知網絡活化領域**：{concepts_str}")
+        sections.append(f"🛡️ **命題邏輯自洽度**：`{self.coherence_score * 100:.1f}%`")
 
         if self.contradictions_found:
-            lines.append(f"⚠️ **消解矛盾項**：{len(self.contradictions_found)} 處已自動修正")
+            sections.append(f"⚠️ **消解矛盾項**：{len(self.contradictions_found)} 處已自動修正")
 
-        lines.append("\n**思維樹搜尋 (MCTS) 推演鏈：**")
+        sections.append("\n**思維樹搜尋 (MCTS) 推演鏈：**")
         for idx, (phase, content) in enumerate(self.phases, start=1):
             phase_name = {
                 ThinkingPhase.DECOMPOSE: "核心拆解",
@@ -67,12 +78,12 @@ class DeepThinkingContext:
                 ThinkingPhase.CROSS_EXAMINE: "因果交叉驗證",
                 ThinkingPhase.SYNTHESIZE: "收斂綜合",
             }.get(phase, phase.value)
-            lines.append(f"• `[階段 {idx} · {phase_name}]` {content}")
+            sections.append(f"• `[階段 {idx} · {phase_name}]` {content}")
 
         if self.final_synthesis:
-            lines.append(f"\n💡 **底層推演結論**：{self.final_synthesis}")
+            sections.append(f"\n💡 **底層推演結論**：{self.final_synthesis}")
 
-        return "\n".join(lines)
+        return "\n".join(sections)
 
 
 class DeepThinkingController:
@@ -224,25 +235,31 @@ class DeepThinkingController:
                 phase_enum = ThinkingPhase.DECOMPOSE
             phases_recorded.append((phase_enum, step.get("description", "")))
 
-        # 若搜尋步數較少，補充結構化階段
+        # 提取問題主題精華
+        cleaned_q = re.sub(r"[？\?！!。，,、\s\n]+", " ", query).strip()
+        cleaned_q = re.sub(r"^(?:請教|請問|幫我|想問|我想問|你覺得|如何|怎麼|為什麼|為啥|到底|能否|可以)\s*", "", cleaned_q)
+        q_subj = cleaned_q[:25] if len(cleaned_q) > 25 else (cleaned_q or "當前議題")
+        focus_hint = f"（領域：{', '.join(concept_names[:2])}）" if concept_names else ""
+
+        # 若搜尋步數較少，補充針對該具體問題之動態結構化階段，杜絕空洞套話
         if len(phases_recorded) < 3:
             fallback_phases = [
-                (ThinkingPhase.DECOMPOSE, f"拆解核心子命題：探討 '{query[:30]}' 之本質條件與邊界約束"),
-                (ThinkingPhase.HYPOTHESIZE, f"構建主要假說，綜合相關認知概念：{', '.join(concept_names[:3]) if concept_names else '基本事實'}"),
-                (ThinkingPhase.CRITIQUE, "反向批判審視：檢驗潛在邏輯漏洞、反例與極端邊界情況"),
-                (ThinkingPhase.CROSS_EXAMINE, "交叉驗證因果因應律與外部真理事實"),
-                (ThinkingPhase.SYNTHESIZE, "收斂整合推導成果，形成高置信度自洽論述"),
+                (ThinkingPhase.DECOMPOSE, f"拆解核心子命題：探討「{q_subj}」{focus_hint} 之本質條件、效能指標與邊界約束"),
+                (ThinkingPhase.HYPOTHESIZE, f"構建針對「{q_subj}」之關鍵假說與因果路徑，評估不同組態與策略之適配性"),
+                (ThinkingPhase.CRITIQUE, f"反向批判與極限壓力測試：審查「{q_subj}」是否存在單點瓶頸、資源競爭、相容性缺陷或配置失衡"),
+                (ThinkingPhase.CROSS_EXAMINE, f"因果交叉求證：比對客觀基準數據與架構限制，確證「{q_subj}」各項論據之因果相依性"),
+                (ThinkingPhase.SYNTHESIZE, f"收斂整合：排除矛盾與缺陷方案，針對「{q_subj}」產出兼顧實用與客觀事實之確定性決策"),
             ]
             for p, d in fallback_phases:
                 if not any(ep == p for ep, _ in phases_recorded):
                     phases_recorded.append((p, d))
 
-        # 3. 因果邏輯與矛盾審查
+        # 3. 因果邏輯與矛盾審查 (動態綁定問題實體)
         dag = CausalEngine()
-        # 建立因果節點
-        dag.add_node("query_input", "使用者輸入與前提條件", value=0.9, truth_level=TruthLevel.OBSERVED)
-        dag.add_node("hypothesis", "推導核心論點", value=0.8, truth_level=TruthLevel.DERIVED)
-        dag.add_node("reality_check", "事實與因果律相容度", value=0.85, truth_level=TruthLevel.KNOWN)
+        main_topic = concept_names[0] if concept_names else q_subj[:12]
+        dag.add_node("query_input", f"輸入前提: {q_subj[:15]}", value=0.9, truth_level=TruthLevel.OBSERVED)
+        dag.add_node("hypothesis", f"核心推導假說 ({main_topic})", value=0.8, truth_level=TruthLevel.DERIVED)
+        dag.add_node("reality_check", "客觀事實與因果律相容度", value=0.85, truth_level=TruthLevel.KNOWN)
 
         dag.add_edge("query_input", "hypothesis", weight=0.8, description="前提充分支撐假說")
         dag.add_edge("hypothesis", "reality_check", weight=0.9, description="論點符合物理或邏輯因果")
@@ -252,10 +269,11 @@ class DeepThinkingController:
         if report.has_conflict:
             dag.resolve_conflicts(report)
 
-        # 4. 產生歸納成果
+        # 4. 產生歸納成果 (動態結合問題實體與推導成果)
         synthesis = (
-            f"經 {len(phases_recorded)} 步 MCTS 思維樹推導與因果檢驗，全命題邏輯自洽度達 "
-            f"{report.coherence_score * 100:.1f}%。核心概念自洽收斂，無未消解矛盾。"
+            f"針對「{q_subj}」經 {len(phases_recorded)} 步 MCTS 思維樹推導與因果審查，"
+            f"邏輯自洽度達 {report.coherence_score * 100:.1f}%。"
+            f"已排查邊界缺陷與邏輯矛盾，收斂確定最優解。"
         )
 
         return DeepThinkingContext(

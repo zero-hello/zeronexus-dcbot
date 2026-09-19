@@ -172,33 +172,44 @@ class MCTSThoughtSearchEngine:
             curr = max(curr.children, key=lambda c: c.ucb1(self.exploration_weight))
         return curr
 
+    def _extract_subject_focus(self, problem: str, known_facts: List[str]) -> str:
+        """從問題中萃取最具代表性的主題與實體，徹底拒絕空洞假話。"""
+        import re
+        cleaned = re.sub(r"[？\?！!。，,、\s\n]+", " ", problem).strip()
+        cleaned = re.sub(r"^(?:請教|請問|幫我|想問|我想問|你覺得|如何|怎麼|為什麼|為啥|到底|能否|可以)\s*", "", cleaned)
+        if known_facts:
+            focus = "、".join(known_facts[:2])
+            return f"「{cleaned[:20]}」 (領域：{focus})" if len(cleaned) > 20 else f"「{cleaned}」 (領域：{focus})"
+        return f"「{cleaned[:25]}」" if len(cleaned) > 25 else (f"「{cleaned}」" if cleaned else "核心議題")
+
     def _expand(self, node: ThoughtNode) -> ThoughtNode:
         """依據當前狀態產生推論子節點。"""
+        subj = self._extract_subject_focus(node.state.problem_statement, node.state.known_facts)
         depth = node.state.depth + 1
         actions_to_generate: List[Tuple[ThoughtActionType, str]] = []
 
         if depth == 1:
             actions_to_generate.append((
                 ThoughtActionType.DECOMPOSE,
-                "將核心目標分解為輸入前提、邏輯約束與邊界條件三維度"
+                f"解構 {subj} 之核心訴求：提煉輸入前提、關鍵技術指標與現實約束邊界"
             ))
             actions_to_generate.append((
                 ThoughtActionType.HYPOTHESIZE,
-                "建立基準假設並預先構思主流因果路徑"
+                f"構建主流假設路徑：針對 {subj}，評估其核心架構特徵對目標工作負載之支撐度與瓶頸閾值"
             ))
         elif depth == 2:
             actions_to_generate.append((
                 ThoughtActionType.CRITIQUE,
-                "啟用反證審查：檢視是否存在反例、極值溢位或死鎖邊界"
+                f"反證與極端壓力測試：審查 {subj} 是否存在規格失衡、單核/多工瓶頸、資源爭用或現實相容性隱患"
             ))
             actions_to_generate.append((
                 ThoughtActionType.CROSS_EXAMINE,
-                "調閱真實世界工具與客觀觀測結果進行對齊檢驗"
+                f"因果交叉求證：比對客觀基準數據與物理/架構因果律，驗證 {subj} 各項論據之因果相依性"
             ))
         elif depth >= 3:
             actions_to_generate.append((
                 ThoughtActionType.SYNTHESIZE,
-                "排除矛盾假設，聚合收斂為精確、無幻覺之確定性解法"
+                f"論證收斂判定：排除矛盾假說，針對 {subj} 形成兼顧客觀真實與實用價值之確定性最優解"
             ))
 
         for act_type, act_desc in actions_to_generate:

@@ -102,12 +102,19 @@ class GeminiAdapter(BaseAIAdapter):
                 "parts": parts,
             })
 
+        gen_config: Dict[str, Any] = {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        }
+        # 針對 Gemini 2.5/3.x 系列啟用原生深度思考 (Thinking Budget: 4096 tokens)
+        if any(v in model.lower() for v in ["2.5", "3.", "flash", "pro", "exp", "thinking"]):
+            gen_config["thinkingConfig"] = {
+                "thinkingBudget": 4096,
+            }
+
         payload: Dict[str, Any] = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-            },
+            "generationConfig": gen_config,
         }
         if system_instruction:
             payload["system_instruction"] = {
@@ -184,6 +191,7 @@ class GeminiAdapter(BaseAIAdapter):
             last_data: Dict[str, Any] = {}
             real_model = cur_model
             text_result = ""
+            native_thinking: Optional[str] = None
 
             try:
                 while True:
@@ -262,8 +270,23 @@ class GeminiAdapter(BaseAIAdapter):
                     parts = cand_content.get("parts") or []
                     fc_parts = [p for p in parts if isinstance(p, dict) and (p.get("functionCall") or p.get("function_call"))]
 
+                    thought_texts: List[str] = []
+                    normal_texts: List[str] = []
+                    for p in parts:
+                        if not isinstance(p, dict):
+                            continue
+                        if p.get("thought") is True:
+                            th = p.get("text", "").strip()
+                            if th:
+                                thought_texts.append(th)
+                        elif p.get("text"):
+                            normal_texts.append(p.get("text", ""))
+
+                    if thought_texts:
+                        native_thinking = "\n\n".join(thought_texts)
+
                     if not fc_parts or round_count >= max_tool_rounds:
-                        text_result = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                        text_result = "".join(normal_texts) if normal_texts else "".join(p.get("text", "") for p in parts if isinstance(p, dict))
                         break
 
                     round_count += 1
@@ -342,10 +365,16 @@ class GeminiAdapter(BaseAIAdapter):
                     is_fallback=is_fb,
                     fallback_reason=f"Primary model '{primary_model}' failed, auto-switched to '{cur_model}'" if is_fb else None,
                     requested_model=primary_model,
+                    thinking_process=native_thinking,
                 )
             except Exception as exc:
                 last_error = exc
                 err_text = str(exc).lower()
+                if "thinkingconfig" in err_text:
+                    if "thinkingConfig" in cur_payload.get("generationConfig", {}):
+                        log.warning(f"Model '{cur_model}' does not support thinkingConfig, retrying without it...")
+                        del cur_payload["generationConfig"]["thinkingConfig"]
+                        continue
                 is_recoverable = (
                     "429" in err_text
                     or "503" in err_text

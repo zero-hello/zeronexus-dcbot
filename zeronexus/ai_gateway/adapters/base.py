@@ -21,6 +21,7 @@ class AIResult:
     fallback_reason: Optional[str] = None
     requested_model: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    thinking_process: Optional[str] = None
 
     @property
     def total_tokens(self) -> int:

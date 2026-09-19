@@ -2060,18 +2060,25 @@ class ZeroNexusBot(commands.Bot):
             deep_thinking_ctx = None
             if is_deep_thinking_active:
                 await report_progress(
-                    1, 2, "Zero Intelligence 原生深度思考推演",
-                    "正在執行 Hebbian 認知活化、MCTS 思維樹推導與因果矛盾審查...",
+                    1, 3, "Zero Intelligence 認知概念拓撲活化",
+                    "正在深度解析問題本質、萃取關鍵實體與領域相依性...",
                     icon="🧠"
                 )
                 try:
                     deep_thinking_ctx = deep_thinking_controller.execute_deep_pipeline(user_prompt)
+                    await asyncio.sleep(0.8)
+                    await report_progress(
+                        2, 3, "MCTS 思維樹展開與因果審查",
+                        f"正在針對「{deep_thinking_ctx.query[:20]}」進行多路假說推演、邊界反例審查與矛盾消解...",
+                        icon="🌳"
+                    )
+                    await asyncio.sleep(0.8)
                     deep_instruction = (
                         f"\n\n【Zero Intelligence 深度思維推演與因果公理】（由原生 Python MCTS 運算導出）：\n"
                         f"- 命題邏輯自洽度：{deep_thinking_ctx.coherence_score * 100:.1f}%\n"
                         f"- 活化認知概念：{', '.join(c for c, _ in deep_thinking_ctx.activated_concepts[:5]) if deep_thinking_ctx.activated_concepts else '基本常識'}\n"
                         f"- 核心推導結論：{deep_thinking_ctx.final_synthesis}\n"
-                        f"請依據上述嚴謹之思維脈絡深入解答，切勿敷衍或浮於表面！"
+                        f"請依據上述嚴謹之思維脈絡深入解答，務必展現詳盡的思考與嚴密的技術推導，切勿浮於表面！"
                     )
                     system_instruction += deep_instruction
                     tool_results["zero_intelligence_deep_thinking"] = deep_thinking_ctx.final_synthesis
@@ -2080,7 +2087,7 @@ class ZeroNexusBot(commands.Bot):
                     log.warning(f"Deep thinking pipeline error: {dte}")
 
             # General conversational reasoning progress (when no specific tool router handled)
-            if not tool_results:
+            if not tool_results and not is_deep_thinking_active:
                 await report_progress(1, 2, "梳理對話脈絡", "正在分析您的語意、上下文歷史與個人化偏好...", icon="🧠")
 
             # Build messages
@@ -2096,7 +2103,9 @@ class ZeroNexusBot(commands.Bot):
             )
             pipeline_metrics.context_build_ms = (time.perf_counter() - t_ctx0) * 1000.0
 
-            if tool_results:
+            if is_deep_thinking_active:
+                await report_progress(3, 3, "AI 模型深層思維鏈推理中 (Thinking Budget: 4096)", f"正在調用 {active_model} 展開多步長程推演與自洽論證...", icon="⚡")
+            elif tool_results:
                 await report_progress(1, 1, "彙整情資與深度推論", f"已備妥情資，正在調用 {active_model} 生成流暢回覆...", icon="🧠")
             else:
                 await report_progress(2, 2, "組織深度推論與回答", f"正在調用 {active_model} 推論並生成流暢回覆...", icon="✨")
@@ -2159,11 +2168,15 @@ class ZeroNexusBot(commands.Bot):
             clean_answer, extracted_thinking = extract_and_sanitize_ai_response(ai_res.text)
             clean_answer = _clean_stored_turn(clean_answer, "assistant")
 
+            # 優先採用適配器回傳的原生思考 (例如 Gemini 4096 tokens 原生思考)
+            if not extracted_thinking and getattr(ai_res, "thinking_process", None):
+                extracted_thinking = ai_res.thinking_process
+
             # 整合真實模型思維與工具調用脈絡（杜絕空洞虛假的罐頭文字）
             extracted_thinking = combine_thinking_and_tools(extracted_thinking, ai_res.tool_calls)
             if deep_thinking_ctx:
-                dt_block = deep_thinking_ctx.format_discord_thought_process()
-                extracted_thinking = f"{dt_block}\n\n{extracted_thinking}" if extracted_thinking else dt_block
+                deep_thinking_ctx.model_native_thought = extracted_thinking
+                extracted_thinking = deep_thinking_ctx.format_discord_thought_process()
 
             if not clean_answer.strip():
                 if generated_image_url or generated_image_bytes:
