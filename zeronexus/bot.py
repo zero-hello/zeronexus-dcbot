@@ -82,6 +82,7 @@ EXTENSION_MODULES = [
     "zeronexus.modules.standalone.cog",
     "zeronexus.modules.community.cog",
     "zeronexus.modules.tickets.cog",
+    "zeronexus.modules.developer.cog",
 ]
 
 
@@ -95,7 +96,7 @@ class ZeroNexusBot(commands.Bot):
         intents.members = True
 
         super().__init__(
-            command_prefix=commands.when_mentioned_or(config.platform.default_prefix),
+            command_prefix=commands.when_mentioned_or("!zn ", "!zn", config.platform.default_prefix),
             intents=intents,
             help_command=None,
         )
@@ -970,7 +971,7 @@ class ZeroNexusBot(commands.Bot):
         # Check if in secret Easter egg channel (in guild or DM)
         if config.is_secret_channel(message.channel.id):
             clean_content = (message.content or "").strip()
-            if clean_content.startswith("-"):
+            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith(config.platform.default_prefix):
                 await self.process_commands(message)
                 return
 
@@ -1011,10 +1012,8 @@ class ZeroNexusBot(commands.Bot):
                     clean_content = re.sub(rf"<@!?{self.user.id}>\s*", "", clean_content)
 
                 # IGNORE PREFIX CHECK:
-                # If actual user content starts with '-', DO NOT trigger AI under any circumstances!
-                # Do not trim leading spaces (e.g. ' -你好' starts with ' ', so not ignored).
-                # Do not search inner content (e.g. '你好-世界' starts with '你', so not ignored).
-                if clean_content.startswith("-"):
+                # If actual user content starts with '-', '!zn', or default prefix, DO NOT trigger AI under any circumstances!
+                if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith(config.platform.default_prefix):
                     await self.process_commands(message)
                     return
 
@@ -1034,8 +1033,8 @@ class ZeroNexusBot(commands.Bot):
         else:
             # Direct Message (DM) private conversation with 100% feature parity
             clean_content = raw_content.strip()
-            # If actual user content starts with '-' or prefix, process traditional commands
-            if clean_content.startswith("-") or clean_content.startswith(config.platform.default_prefix):
+            # If actual user content starts with '-', '!zn', or prefix, process traditional commands
+            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith(config.platform.default_prefix):
                 await self.process_commands(message)
                 return
 
