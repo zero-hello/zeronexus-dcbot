@@ -133,6 +133,117 @@ class AIProfileModal(discord.ui.Modal, title="建立自訂 AI 人格"):
         await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
 
+async def switch_model_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """為 /人工智慧 切換模型 提供極速、高質感之旗艦模型與註冊表動態自動補全。"""
+    from zeronexus.ui.model_select_view import MODEL_SELECT_ENTRIES
+
+    choices: List[app_commands.Choice[str]] = []
+    q = current.lower().strip()
+    added_ids = set()
+
+    try:
+        # 1. First priority: Pre-curated, highly aesthetic, emoji-rich flagship catalog
+        for entry in MODEL_SELECT_ENTRIES:
+            m_id = entry["id"]
+            m_label = entry["label"]
+            m_emoji = entry.get("emoji", "🤖")
+            m_tag = entry.get("tag", "")
+
+            searchable = f"{m_id} {m_label} {m_tag}".lower()
+
+            matched = False
+            if not q:
+                matched = True
+            elif q in searchable:
+                matched = True
+            elif ("deepseek" in q or "deep" in q) and "deepseek" in searchable:
+                matched = True
+            elif "gemini" in q and "gemini" in searchable:
+                matched = True
+            elif "qwen" in q and "qwen" in searchable:
+                matched = True
+            elif "r1" in q and "r1" in searchable:
+                matched = True
+            elif "v4" in q and "v4" in searchable:
+                matched = True
+            elif "flash" in q and "flash" in searchable:
+                matched = True
+            elif "pro" in q and "pro" in searchable:
+                matched = True
+            elif "gpt" in q and "gpt" in searchable:
+                matched = True
+            elif "grok" in q and "grok" in searchable:
+                matched = True
+
+            if matched and m_id not in added_ids:
+                display_name = f"{m_emoji} {m_label}"
+                choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
+                added_ids.add(m_id)
+                if len(choices) >= 25:
+                    break
+
+        # 2. Secondary fallback: Search active models registered in model_registry
+        if len(choices) < 25 and q:
+            from zeronexus.ai_gateway.model_registry import model_registry
+            for reg_m in model_registry.list_active_models():
+                m_id = reg_m.model_id
+                m_name = reg_m.display_name
+                if m_id in added_ids:
+                    continue
+                searchable = f"{m_id} {m_name} {reg_m.description}".lower()
+                if q in searchable:
+                    emoji = "💎" if "gemini" in m_id.lower() else ("💬" if "deepseek" in m_id.lower() else "🇨🇳")
+                    display_name = f"{emoji} {m_name} ({m_id})"
+                    choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
+                    added_ids.add(m_id)
+                    if len(choices) >= 25:
+                        break
+
+        # 3. Tertiary fallback: Search remaining active models from OpenRouter catalog
+        if len(choices) < 25 and q:
+            for m in model_catalog._all_models:
+                m_id = m.get("id", "")
+                m_name = m.get("name", m_id)
+                if ":batch" in m_id.lower() or "deprecated" in m_id.lower():
+                    continue
+                if m_id in added_ids:
+                    continue
+
+                if q in m_id.lower() or q in m_name.lower():
+                    emoji = "🌐"
+                    if "gemini" in m_id.lower():
+                        emoji = "💎"
+                    elif "deepseek" in m_id.lower():
+                        emoji = "💬"
+                    elif "qwen" in m_id.lower():
+                        emoji = "🇨🇳"
+                    elif "gpt" in m_id.lower():
+                        emoji = "🧠"
+                    elif "grok" in m_id.lower():
+                        emoji = "⚡"
+
+                    display_name = f"{emoji} {m_name} ({m_id})"
+                    choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
+                    added_ids.add(m_id)
+                    if len(choices) >= 25:
+                        break
+    except Exception as exc:
+        log.error(f"Error in switch_model_autocomplete: {exc}", exc_info=True)
+        if not choices:
+            choices = [
+                app_commands.Choice(name="💎 Google Gemini 3.1 Flash Lite (系統預設)", value="gemini-3.1-flash-lite"),
+                app_commands.Choice(name="⚡ Google Gemini 2.5 Flash", value="gemini-2.5-flash"),
+                app_commands.Choice(name="🧠 Google Gemini 2.5 Pro", value="gemini-2.5-pro"),
+                app_commands.Choice(name="👁️ DeepSeek - V4 Flash Vision Exp", value="deepseek/deepseek-v4-flash-vision-exp"),
+                app_commands.Choice(name="🇨🇳 OpenRouter - Qwen 2.5 72B", value="qwen/qwen-2.5-72b-instruct"),
+            ]
+
+    return choices[:25]
+
+
 class AICog(commands.Cog):
     """Discord Slash Command Group for /人工智慧."""
 
@@ -695,6 +806,7 @@ class AICog(commands.Cog):
 
     @ai_group.command(name="切換模型", description="切換個人或伺服器 AI 模型 (支援 Qwen、DeepSeek、Gemini)")
     @app_commands.describe(模型="輸入或選擇欲使用的 AI 模型 (可留空以開啟互動式選單)", 套用範圍="套用至個人偏好或伺服器全域預設")
+    @app_commands.autocomplete(模型=switch_model_autocomplete)
     @command_guard("ai")
     async def switch_model_command(
         self,
@@ -772,105 +884,6 @@ class AICog(commands.Cog):
             card=card,
             ephemeral=(not switch_res.is_success),
         )
-
-
-    @switch_model_command.autocomplete("模型")
-    async def switch_model_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-        from zeronexus.ui.model_select_view import MODEL_SELECT_ENTRIES
-
-        choices: List[app_commands.Choice[str]] = []
-        q = current.lower().strip()
-        added_ids = set()
-
-        # 1. First priority: Pre-curated, highly aesthetic, emoji-rich flagship catalog (matching user reference)
-        for entry in MODEL_SELECT_ENTRIES:
-            m_id = entry["id"]
-            m_label = entry["label"]
-            m_emoji = entry.get("emoji", "🤖")
-            m_tag = entry.get("tag", "")
-
-            searchable = f"{m_id} {m_label} {m_tag}".lower()
-
-            # Smart alias shortcuts
-            matched = False
-            if not q:
-                matched = True
-            elif q in searchable:
-                matched = True
-            elif ("deepseek" in q or "deep" in q) and "deepseek" in searchable:
-                matched = True
-            elif "gemini" in q and "gemini" in searchable:
-                matched = True
-            elif "qwen" in q and "qwen" in searchable:
-                matched = True
-            elif "r1" in q and "r1" in searchable:
-                matched = True
-            elif "v4" in q and "v4" in searchable:
-                matched = True
-            elif "flash" in q and "flash" in searchable:
-                matched = True
-            elif "pro" in q and "pro" in searchable:
-                matched = True
-            elif "gpt" in q and "gpt" in searchable:
-                matched = True
-            elif "grok" in q and "grok" in searchable:
-                matched = True
-
-            if matched and m_id not in added_ids:
-                display_name = f"{m_emoji} {m_label}"
-                choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
-                added_ids.add(m_id)
-                if len(choices) >= 25:
-                    break
-
-        # 2. Secondary fallback: Search active models registered in model_registry
-        if len(choices) < 25 and q:
-            from zeronexus.ai_gateway.model_registry import model_registry
-            for reg_m in model_registry.list_active_models():
-                m_id = reg_m.model_id
-                m_name = reg_m.display_name
-                if m_id in added_ids:
-                    continue
-                searchable = f"{m_id} {m_name} {reg_m.description}".lower()
-                if q in searchable:
-                    emoji = "💎" if "gemini" in m_id.lower() else ("💬" if "deepseek" in m_id.lower() else "🇨🇳")
-                    display_name = f"{emoji} {m_name} ({m_id})"
-                    choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
-                    added_ids.add(m_id)
-                    if len(choices) >= 25:
-                        break
-
-        # 3. Tertiary fallback: Search remaining active models from OpenRouter catalog
-        if len(choices) < 25 and q:
-            for m in model_catalog._all_models:
-                m_id = m.get("id", "")
-                m_name = m.get("name", m_id)
-                # Filter out batch, deprecated or internal models
-                if ":batch" in m_id.lower() or "deprecated" in m_id.lower():
-                    continue
-                if m_id in added_ids:
-                    continue
-
-                if q in m_id.lower() or q in m_name.lower():
-                    emoji = "🌐"
-                    if "gemini" in m_id.lower():
-                        emoji = "💎"
-                    elif "deepseek" in m_id.lower():
-                        emoji = "💬"
-                    elif "qwen" in m_id.lower():
-                        emoji = "🇨🇳"
-                    elif "gpt" in m_id.lower():
-                        emoji = "🧠"
-                    elif "grok" in m_id.lower():
-                        emoji = "⚡"
-
-                    display_name = f"{emoji} {m_name} ({m_id})"
-                    choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
-                    added_ids.add(m_id)
-                    if len(choices) >= 25:
-                        break
-
-        return choices
 
     @ai_group.command(name="模型目錄", description="檢視目前支援的 AI 模型分類與代表性模型")
     @command_guard("ai")

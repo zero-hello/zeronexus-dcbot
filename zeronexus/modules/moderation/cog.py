@@ -249,6 +249,71 @@ def _has_guild_perm(user: Any, perm_name: str) -> bool:
 
 
 # ==============================================================================
+# Autocomplete Handlers
+# ==============================================================================
+
+async def unban_user_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    """即時搜尋伺服器黑名單成員供解除封鎖選取。"""
+    if not interaction.guild:
+        return []
+    bot_member = interaction.guild.me
+    if not bot_member or not bot_member.guild_permissions.ban_members:
+        return []
+
+    choices: List[app_commands.Choice[str]] = []
+    try:
+        curr_lower = current.strip().lower()
+        async for ban_entry in interaction.guild.bans(limit=1000):
+            u = ban_entry.user
+            u_name = u.name
+            u_global = getattr(u, "global_name", "") or ""
+            u_id_str = str(u.id)
+
+            if (
+                not curr_lower
+                or curr_lower in u_name.lower()
+                or curr_lower in u_global.lower()
+                or curr_lower in u_id_str
+            ):
+                reason_snippet = f" | 原因: {ban_entry.reason}" if ban_entry.reason else ""
+                tag_str = f"{u_name} ({u_id_str}){reason_snippet}"
+                choices.append(app_commands.Choice(name=tag_str[:100], value=u_id_str))
+                if len(choices) >= 25:
+                    break
+    except Exception as ex:
+        log.debug(f"[Moderation] unban autocomplete failed: {ex}")
+    return choices
+
+
+async def timeout_duration_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    """提供禁言時長常用預設選項與動態篩選。"""
+    presets = [
+        ("60秒 (1 分鐘)", "60s"),
+        ("5 分鐘", "5m"),
+        ("10 分鐘 (預設)", "10m"),
+        ("30 分鐘", "30m"),
+        ("1 小時", "1h"),
+        ("6 小時", "6h"),
+        ("12 小時", "12h"),
+        ("1 天 (24 小時)", "1d"),
+        ("3 天", "3d"),
+        ("1 週 (7 天)", "7d"),
+        ("2 週 (14 天)", "14d"),
+        ("4 週 (28 天 - Discord 上限)", "28d"),
+    ]
+    curr = current.strip().lower()
+    choices: List[app_commands.Choice[str]] = []
+    for label, val in presets:
+        if not curr or curr in label.lower() or curr in val.lower():
+            choices.append(app_commands.Choice(name=label, value=val))
+    return choices[:25]
+
+
+# ==============================================================================
 # Cog Implementation
 # ==============================================================================
 
@@ -422,6 +487,7 @@ class ModerationCog(commands.Cog):
     # --------------------------------------------------------------------------
     @manage_group.command(name="解除封鎖", description="搜尋黑名單或依使用者 ID 解除封鎖")
     @app_commands.describe(使用者="請選擇黑名單成員或輸入 Discord 使用者 ID (純數字)", 原因="解封原因")
+    @app_commands.autocomplete(使用者=unban_user_autocomplete)
     @command_guard("moderation", required_level=ZNPermissionLevel.ADMINISTRATOR)
     async def unban_command(self, interaction: discord.Interaction, 使用者: str, 原因: str = "管理員裁決解除") -> None:
         if not interaction.guild:
@@ -498,46 +564,13 @@ class ModerationCog(commands.Cog):
         )
         await InteractionResponder.safe_send(interaction, card=card)
 
-    @unban_command.autocomplete("使用者")
-    async def unban_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> List[app_commands.Choice[str]]:
-        """Live search for banned members within guild ban records."""
-        if not interaction.guild:
-            return []
-        bot_member = interaction.guild.me
-        if not bot_member or not bot_member.guild_permissions.ban_members:
-            return []
-
-        choices: List[app_commands.Choice[str]] = []
-        try:
-            curr_lower = current.strip().lower()
-            async for ban_entry in interaction.guild.bans(limit=1000):
-                u = ban_entry.user
-                u_name = u.name
-                u_global = getattr(u, "global_name", "") or ""
-                u_id_str = str(u.id)
-
-                if (
-                    not curr_lower
-                    or curr_lower in u_name.lower()
-                    or curr_lower in u_global.lower()
-                    or curr_lower in u_id_str
-                ):
-                    reason_snippet = f" | 原因: {ban_entry.reason}" if ban_entry.reason else ""
-                    tag_str = f"{u_name} ({u_id_str}){reason_snippet}"
-                    choices.append(app_commands.Choice(name=tag_str[:100], value=u_id_str))
-                    if len(choices) >= 25:
-                        break
-        except Exception:
-            pass
-        return choices
 
     # --------------------------------------------------------------------------
     # 4. 禁言 timeout
     # --------------------------------------------------------------------------
     @manage_group.command(name="禁言", description="對成員套用通訊隔離 (支援 10m/2h/1天等友善時長)")
     @app_commands.describe(成員="目標成員", 時長="禁言時長 (例如: 10m, 1h, 1天, 7d, 28d，預設 10m)", 原因="禁言原因")
+    @app_commands.autocomplete(時長=timeout_duration_autocomplete)
     @command_guard("moderation", required_level=ZNPermissionLevel.MODERATOR)
     async def timeout_command(
         self,
@@ -601,31 +634,6 @@ class ModerationCog(commands.Cog):
         )
         await InteractionResponder.safe_send(interaction, card=card)
 
-    @timeout_command.autocomplete("時長")
-    async def timeout_duration_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> List[app_commands.Choice[str]]:
-        """Provides common presets for timeout durations."""
-        presets = [
-            ("60秒 (1 分鐘)", "60s"),
-            ("5 分鐘", "5m"),
-            ("10 分鐘 (預設)", "10m"),
-            ("30 分鐘", "30m"),
-            ("1 小時", "1h"),
-            ("6 小時", "6h"),
-            ("12 小時", "12h"),
-            ("1 天 (24 小時)", "1d"),
-            ("3 天", "3d"),
-            ("1 週 (7 天)", "7d"),
-            ("2 週 (14 天)", "14d"),
-            ("4 週 (28 天 - Discord 上限)", "28d"),
-        ]
-        curr = current.strip().lower()
-        choices: List[app_commands.Choice[str]] = []
-        for label, val in presets:
-            if not curr or curr in label.lower() or curr in val.lower():
-                choices.append(app_commands.Choice(name=label, value=val))
-        return choices[:25]
 
     # --------------------------------------------------------------------------
     # 5. 解除禁言 untimeout
