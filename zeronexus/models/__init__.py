@@ -1,7 +1,7 @@
 """ZeroNexus Database Models."""
 
 from zeronexus.models.guild import GuildSettings, EarthquakeNotificationRecord
-from zeronexus.models.user import UserProfile, AIQuotaRecord, AIImageQuotaRecord, EconomyWallet
+from zeronexus.models.user import UserProfile, AIQuotaRecord, AIImageQuotaRecord, EconomyWallet, UserAffinityRecord
 from zeronexus.models.memory import ConversationMemory
 from zeronexus.models.persona import CustomPersonaModel
 from zeronexus.models.moderation import ModerationCase, WarningRecord
@@ -32,6 +32,7 @@ __all__ = [
     "AIQuotaRecord",
     "AIImageQuotaRecord",
     "EconomyWallet",
+    "UserAffinityRecord",
     "ConversationMemory",
     "CustomPersonaModel",
     "ModerationCase",

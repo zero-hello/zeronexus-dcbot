@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, Integer, String
+from sqlalchemy import BigInteger, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from zeronexus.core.database import Base
@@ -98,6 +98,23 @@ class EconomyWallet(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class UserAffinityRecord(Base):
+    """Tracks affinity score (0-100), relationship tier, interactions, and AI impressions."""
+
+    __tablename__ = "user_affinities"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    score: Mapped[float] = mapped_column(Float, default=30.0)  # 預設起始值 30.0，最高 100.0，最低 0.0
+    interactions_count: Mapped[int] = mapped_column(Integer, default=0)
+    deep_chats_count: Mapped[int] = mapped_column(Integer, default=0)  # 深度心靈/私聊傾訴次數
+    ai_impression: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # AI 心中專屬印象與評價
+    last_interaction: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),

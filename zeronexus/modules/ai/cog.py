@@ -83,6 +83,7 @@ class AIModule(BaseModule):
             ("思考模式設定", "切換是否在對話中展示思考歷程", ZNPermissionLevel.EVERYONE),
             ("翻譯助理", "多語系上下文高精確度翻譯", ZNPermissionLevel.EVERYONE),
             ("炸裂功能", "瀏覽 22 款全新 AI 炸裂對話功能與玩法示範", ZNPermissionLevel.EVERYONE),
+            ("好感度", "檢視你與 ZeroNexus 之間的心靈羈絆、隱性好感度與專屬印象評價", ZNPermissionLevel.EVERYONE),
         ]
         for name, desc, perm in commands_list:
             is_guild_only = name in ("設定頻道", "移除頻道", "頻道記憶重置", "重設額度")
@@ -1202,6 +1203,14 @@ class AICog(commands.Cog):
             ),
         )
         await InteractionResponder.safe_send(interaction, card=card)
+
+    @ai_group.command(name="好感度", description="查看你與 ZeroNexus 之間的心靈羈絆、隱性好感度與專屬印象評價")
+    @command_guard("ai")
+    async def affinity_command(self, interaction: discord.Interaction) -> None:
+        await InteractionResponder.safe_defer(interaction, ephemeral=True)
+        from zeronexus.engines.affinity_engine import affinity_engine
+        card = await affinity_engine.build_affinity_card(interaction.user.id, interaction.user.display_name)
+        await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
     @ai_group.command(name="自訂人格", description="透過表單建立您專屬的客製化人格")
     @command_guard("ai")

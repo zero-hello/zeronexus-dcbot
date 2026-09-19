@@ -744,6 +744,66 @@ class ContextBuilder:
                 ))
                 log.info(f"Auto-saved long term memory for user {user.id}: {key_clean or 'FACT'} = {val_clean}")
 
+    async def record_visual_history(
+        self,
+        user: discord.User | discord.Member,
+        action_type: str,
+        detail: str,
+        guild_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+    ) -> None:
+        """記錄使用者創作的圖片或分享的附件/照片歷史至長期事實記憶庫中，供情緒回溯與心靈同理使用。"""
+        fact_key = "歷史視覺創作" if action_type == "image_generation" else "歷史附件分享"
+        content = detail[:500].strip()
+        if not content:
+            return
+
+        try:
+            async with db.session() as session:
+                existing_stmt = select(ConversationMemory).where(
+                    ConversationMemory.scope == "user_long_term",
+                    ConversationMemory.user_id == user.id,
+                    ConversationMemory.content == content,
+                )
+                existing = (await session.execute(existing_stmt)).scalars().first()
+                if existing:
+                    existing.created_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    return
+
+                count_stmt = select(func.count()).select_from(ConversationMemory).where(
+                    ConversationMemory.scope == "user_long_term",
+                    ConversationMemory.user_id == user.id,
+                )
+                cnt = await session.scalar(count_stmt) or 0
+                if cnt >= 50:
+                    oldest_stmt = (
+                        select(ConversationMemory)
+                        .where(
+                            ConversationMemory.scope == "user_long_term",
+                            ConversationMemory.user_id == user.id,
+                        )
+                        .order_by(ConversationMemory.created_at)
+                        .limit(1)
+                    )
+                    oldest = (await session.execute(oldest_stmt)).scalars().first()
+                    if oldest:
+                        await session.delete(oldest)
+
+                session.add(ConversationMemory(
+                    scope="user_long_term",
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    user_id=user.id,
+                    role="system",
+                    fact_key=fact_key,
+                    content=content,
+                ))
+                await session.commit()
+                log.info(f"Recorded multimodal visual history for user {user.id}: [{fact_key}] {content}")
+        except Exception as err:
+            log.warning(f"Failed to record multimodal visual history: {err}")
+
     async def get_custom_persona(
         self,
         user_id: int,

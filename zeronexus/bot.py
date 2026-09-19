@@ -38,9 +38,11 @@ from zeronexus.core.logger import log
 from zeronexus.core.scheduler import scheduler
 from zeronexus.core.stats import AIPipelineMetrics, stats
 from zeronexus.engines.ai_features import detect_conversational_feature
+from zeronexus.engines.affinity_engine import affinity_engine
 from zeronexus.engines.cwa_client import cwa_client
 from zeronexus.engines.cwa_service import cwa_service
 from zeronexus.engines.image_gen import image_gen_engine
+from zeronexus.engines.private_dialogue import private_dialogue_engine
 from zeronexus.engines.prompt_engine import prompt_engine
 from zeronexus.engines.web_client import detect_search_intent, web_client
 from zeronexus.intelligence.deep_thinking_controller import (
@@ -1004,7 +1006,12 @@ class ZeroNexusBot(commands.Bot):
             except Exception as dbe:
                 log.warning(f"Failed to fetch GuildSettings in on_message: {dbe}")
 
-            is_ai_channel = bool(settings and settings.ai_channel_id == message.channel.id)
+            channel_name = getattr(message.channel, "name", "") or ""
+            is_heart_thread = isinstance(message.channel, discord.Thread) and (
+                private_dialogue_engine.is_heart_thread(message.channel.id)
+                or channel_name.startswith("🌿・心靈")
+            )
+            is_ai_channel = bool(settings and settings.ai_channel_id == message.channel.id) or is_heart_thread
 
             if is_ai_channel or is_mentioned:
                 clean_content = raw_content
@@ -1022,7 +1029,7 @@ class ZeroNexusBot(commands.Bot):
                         message,
                         settings=settings,
                         prompt_override=clean_content,
-                        is_shared_ai_channel=is_ai_channel,
+                        is_shared_ai_channel=False if is_heart_thread else bool(settings and settings.ai_channel_id == message.channel.id),
                         is_secret_easter_egg=False,
                     ),
                     name=f"ai_channel_msg_{message.id}",
@@ -1062,6 +1069,7 @@ class ZeroNexusBot(commands.Bot):
         prompt_override: Optional[str] = None,
         is_shared_ai_channel: bool = True,
         is_secret_easter_egg: bool = False,
+        channel_override: Optional[discord.abc.Messageable] = None,
     ) -> None:
         """Entry point for AI channel processing with in-flight concurrency tracking."""
         self._in_flight_message_ids.add(message.id)
@@ -1073,6 +1081,7 @@ class ZeroNexusBot(commands.Bot):
                 prompt_override=prompt_override,
                 is_shared_ai_channel=is_shared_ai_channel,
                 is_secret_easter_egg=is_secret_easter_egg,
+                channel_override=channel_override,
             )
         finally:
             self._in_flight_message_ids.discard(message.id)
@@ -1085,11 +1094,14 @@ class ZeroNexusBot(commands.Bot):
         prompt_override: Optional[str] = None,
         is_shared_ai_channel: bool = True,
         is_secret_easter_egg: bool = False,
+        channel_override: Optional[discord.abc.Messageable] = None,
     ) -> None:
         """Responds in designated AI channel or mentions with immutable RequestContext, decoupled typing, and quota reservation."""
         t0 = time.perf_counter()
         pipeline_metrics = AIPipelineMetrics()
         pipeline_metrics.event_received_ms = 0.1
+
+        effective_channel = channel_override if channel_override is not None else message.channel
 
         raw_prompt = (prompt_override if prompt_override is not None else message.content).strip()
         # 全域提及與身分組標籤預清洗，提取純淨的語意文本（徹底解決多 @ 使用者時意圖判定被干擾之缺陷）
@@ -1106,7 +1118,7 @@ class ZeroNexusBot(commands.Bot):
             message_id=message.id,
             author_id=message.author.id,
             author_name=message.author.display_name,
-            channel_id=message.channel.id,
+            channel_id=getattr(effective_channel, "id", message.channel.id),
             guild_id=message.guild.id if message.guild else None,
             created_at=time.time(),
             is_shared_ai_channel=is_shared_ai_channel,
@@ -1128,13 +1140,69 @@ class ZeroNexusBot(commands.Bot):
                 color=ZNColor.INFO,
             )
             try:
-                await message.reply(embed=q_card.to_embed(), mention_author=False)
+                if channel_override is not None:
+                    await effective_channel.send(embed=q_card.to_embed())
+                else:
+                    await message.reply(embed=q_card.to_embed(), mention_author=False)
             except (discord.NotFound, discord.HTTPException):
                 try:
-                    await message.channel.send(embed=q_card.to_embed())
+                    await effective_channel.send(embed=q_card.to_embed())
                 except Exception:
                     pass
             return
+
+        # 1.5. Natural Language Private Heart Thread Intent Check (自然語言意圖觸發私密討論串)
+        if (
+            message.guild
+            and not isinstance(message.channel, discord.Thread)
+            and channel_override is None
+            and not is_secret_easter_egg
+        ):
+            is_private_intent, extracted_topic = private_dialogue_engine.detect_private_chat_intent(user_prompt)
+            if is_private_intent:
+                thread, is_pvt = await private_dialogue_engine.create_heart_thread(message)
+                if thread:
+                    notice_card = private_dialogue_engine.build_public_notice_card(message.author, thread, is_private=is_pvt)
+                    try:
+                        await message.reply(embed=notice_card.to_embed(), mention_author=False)
+                    except Exception:
+                        try:
+                            await message.channel.send(embed=notice_card.to_embed())
+                        except Exception:
+                            pass
+
+                    # 隱性記錄心靈傾訴好感度
+                    asyncio.create_task(affinity_engine.record_interaction(
+                        user_id=message.author.id,
+                        user_text=user_prompt,
+                        is_private_thread=True,
+                        has_deep_emotion=True,
+                    ))
+
+                    if not extracted_topic:
+                        # 純意圖觸發，在討論串內發送嚴肅穩重、認真傾聽的開場詢問
+                        welcome_card = private_dialogue_engine.build_thread_welcome_card(message.author)
+                        await thread.send(embed=welcome_card.to_embed())
+                        return
+                    else:
+                        # 複合心事提問（例如：「我想單獨跟你聊聊，其實我今天被裁員了...」）
+                        welcome_card = private_dialogue_engine.build_thread_welcome_card(message.author)
+                        await thread.send(embed=welcome_card.to_embed())
+                        deep_prompt = f"【使用者在專屬私密討論串向你吐露心事，請嚴肅、穩重、極致高情商同理，剖析問題本質，絕不使用空泛雞湯口號】：\n{extracted_topic}"
+                        sub_task = asyncio.create_task(
+                            self._handle_ai_channel_message(
+                                message,
+                                settings=settings,
+                                prompt_override=deep_prompt,
+                                is_shared_ai_channel=False,
+                                is_secret_easter_egg=False,
+                                channel_override=thread,
+                            ),
+                            name=f"heart_thread_sub_{message.id}",
+                        )
+                        self._background_tasks.add(sub_task)
+                        sub_task.add_done_callback(self._on_background_task_done)
+                        return
 
         # 2. Quota Check & Reservation (atomic 3-phase)
         if is_secret_easter_egg:
@@ -1155,10 +1223,13 @@ class ZeroNexusBot(commands.Bot):
                     color=ZNColor.ERROR,
                 )
                 try:
-                    await message.reply(embed=card.to_embed(), mention_author=False)
+                    if channel_override is not None:
+                        await effective_channel.send(embed=card.to_embed())
+                    else:
+                        await message.reply(embed=card.to_embed(), mention_author=False)
                 except (discord.NotFound, discord.HTTPException):
                     try:
-                        await message.channel.send(embed=card.to_embed())
+                        await effective_channel.send(embed=card.to_embed())
                     except Exception:
                         pass
                 return
@@ -1180,18 +1251,24 @@ class ZeroNexusBot(commands.Bot):
             )
         t_defer0 = time.perf_counter()
         try:
-            status_msg = await message.reply(view=status_card.to_layout_view(), mention_author=False)
+            if channel_override is not None:
+                status_msg = await effective_channel.send(view=status_card.to_layout_view())
+            else:
+                status_msg = await message.reply(view=status_card.to_layout_view(), mention_author=False)
         except Exception as v2_err:
             log.info(f"Failed to reply with Components V2 LayoutView ({v2_err}), falling back to Embed reply.")
             try:
-                status_msg = await message.reply(embed=status_card.to_embed(), mention_author=False)
+                if channel_override is not None:
+                    status_msg = await effective_channel.send(embed=status_card.to_embed())
+                else:
+                    status_msg = await message.reply(embed=status_card.to_embed(), mention_author=False)
             except (discord.NotFound, discord.HTTPException) as send_err:
                 log.warning(f"Failed to reply to message {message.id} (message may be deleted): {send_err}. Falling back to channel.send.")
                 try:
-                    status_msg = await message.channel.send(view=status_card.to_layout_view())
+                    status_msg = await effective_channel.send(view=status_card.to_layout_view())
                 except Exception:
                     try:
-                        status_msg = await message.channel.send(embed=status_card.to_embed())
+                        status_msg = await effective_channel.send(embed=status_card.to_embed())
                     except Exception as ch_err:
                         log.error(f"Failed to send thinking placeholder to channel: {ch_err}")
                         if reservation:
@@ -2233,12 +2310,44 @@ class ZeroNexusBot(commands.Bot):
 
             await context_builder.save_interaction_memories(
                 user=message.author,
-                channel=message.channel,
+                channel=effective_channel,
                 guild=message.guild,
                 user_content=user_prompt,
                 assistant_content=clean_answer,
                 is_shared_ai_channel=is_shared_ai_channel,
             )
+
+            # 背景更新隱性好感度與情感羈絆（完全隱性，無愛心條或點數干擾）
+            is_heart_thread_turn = isinstance(effective_channel, discord.Thread) and (
+                private_dialogue_engine.is_heart_thread(effective_channel.id)
+                or (getattr(effective_channel, "name", "") or "").startswith("🌿・心靈")
+            )
+            asyncio.create_task(affinity_engine.record_interaction(
+                user_id=message.author.id,
+                user_text=user_prompt,
+                is_private_thread=is_heart_thread_turn,
+            ))
+
+            # 多模態視覺創作歷史萃取與記憶保存
+            if draw_intent and (generated_image_url or generated_image_bytes):
+                asyncio.create_task(context_builder.record_visual_history(
+                    user=message.author,
+                    action_type="image_generation",
+                    detail=f"曾創作繪製 AI 圖像，提示詞為「{draw_intent.prompt}」（風格：{draw_intent.style or '自然藝術'}）",
+                    guild_id=message.guild.id if message.guild else None,
+                    channel_id=getattr(effective_channel, "id", message.channel.id),
+                ))
+
+            # 多模態附件/照片分享歷史萃取與記憶保存
+            if attachment_notes:
+                att_summary = "、".join(n[:80] for n in attachment_notes[:2])
+                asyncio.create_task(context_builder.record_visual_history(
+                    user=message.author,
+                    action_type="attachment_share",
+                    detail=f"曾分享過檔案或圖片素材：{att_summary}",
+                    guild_id=message.guild.id if message.guild else None,
+                    channel_id=getattr(effective_channel, "id", message.channel.id),
+                ))
 
             # Check Quota reminder threshold
             today_str = quota_service.get_today_str()
@@ -2278,7 +2387,7 @@ class ZeroNexusBot(commands.Bot):
                 answer=clean_answer,
                 thinking_process=extracted_thinking,
             )
-            await self._trigger_typing_safe(message.channel)
+            await self._trigger_typing_safe(effective_channel)
             t_send = time.perf_counter()
 
             layout_view = resp.card.to_layout_view(extra_view=action_view)
@@ -2293,7 +2402,7 @@ class ZeroNexusBot(commands.Bot):
                 edit_kwargs["attachments"] = attachments_to_send
 
             try:
-                await self._safe_edit_status_message(status_msg, message.channel, **edit_kwargs)
+                await self._safe_edit_status_message(status_msg, effective_channel, **edit_kwargs)
             except Exception as edit_err:
                 log.warning(f"Failed to edit status message with attachments/view: {edit_err}")
 
