@@ -199,11 +199,17 @@ class NodePoolManager:
         if not connected:
             return None
 
-        # 優先挑選包含 millo 或 serenetia 之優質節點
+        # 優先挑選目前實測 YouTube 播放最穩定之 serenetia 節點
         for n in connected:
             ident_low = n.identifier.lower()
             uri_low = str(getattr(n, "uri", "")).lower()
-            if any(k in ident_low or k in uri_low for k in ("millo", "serenetia")):
+            if "serenetia" in ident_low or "serenetia" in uri_low:
+                return n
+
+        for n in connected:
+            ident_low = n.identifier.lower()
+            uri_low = str(getattr(n, "uri", "")).lower()
+            if "millo" in ident_low or "millo" in uri_low:
                 return n
 
         return connected[0]

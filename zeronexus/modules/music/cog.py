@@ -91,7 +91,10 @@ class MusicCog(commands.Cog):
         self._ticker_tasks: dict[int, asyncio.Task] = {}
 
     async def cog_load(self) -> None:
-        """Cog 載入時非同步初始化 Lavalink 節點池。"""
+        """Cog 載入時非同步初始化 Lavalink 節點池並優化日誌過濾。"""
+        import logging
+        # 抑制 Wavelink 底層 TrackException 冗長之 Java StackTrace 終端刷屏
+        logging.getLogger("TrackException").setLevel(logging.CRITICAL)
         self.bot.loop.create_task(self.node_manager.initialize(self.bot))
 
     def _start_ticker(self, guild_id: int, player: wavelink.Player) -> None:
@@ -647,7 +650,22 @@ class MusicCog(commands.Cog):
         current_node = player.node if player else None
         current_ident = current_node.identifier if current_node else "Unknown"
 
-        log.error(f"[MusicCog] 節點 {current_ident} 歌曲播放異常: {payload.exception} (曲目: {track_title})")
+        raw_exc = payload.exception
+        err_msg = "來源限制或格式不支援"
+        if isinstance(raw_exc, dict):
+            m = raw_exc.get("message", "")
+            if m:
+                first_line = m.strip().split("\n")[0]
+                if "All clients failed" in first_line:
+                    err_msg = "YouTube 來源音訊串流受阻"
+                else:
+                    err_msg = first_line[:60]
+            elif raw_exc.get("severity"):
+                err_msg = f"嚴重等級: {raw_exc.get('severity')}"
+        elif raw_exc:
+            err_msg = str(raw_exc).strip().split("\n")[0][:60]
+
+        log.warning(f"[MusicCog] 節點 {current_ident} 播放受阻 ({err_msg})，曲目: {track_title}")
 
         if not player:
             return
