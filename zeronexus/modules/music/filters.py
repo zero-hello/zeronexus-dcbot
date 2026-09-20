@@ -91,8 +91,24 @@ class MusicFilters:
         setattr(player, "_hifi_enabled", False)
 
     @classmethod
+    async def apply_speed(cls, player: wavelink.Player, speed: float) -> float:
+        """套用播放倍速濾鏡 (0.25x ~ 4.0x) 並回傳實際倍率。"""
+        clamped = round(max(0.25, min(4.0, float(speed))), 2)
+        filters: wavelink.Filters = player.filters or wavelink.Filters()
+        filters.timescale.set(speed=clamped)
+        await player.set_filters(filters)
+        setattr(player, "_playback_speed", clamped)
+        return clamped
+
+    @classmethod
+    def get_speed(cls, player: wavelink.Player) -> float:
+        """取得播放器當前之播放倍速 (預設為 1.0x)。"""
+        return getattr(player, "_playback_speed", 1.0)
+
+    @classmethod
     async def reset_all(cls, player: wavelink.Player) -> None:
         """重設所有音訊濾鏡為預設平坦狀態。"""
         filters = wavelink.Filters()
         await player.set_filters(filters)
         setattr(player, "_hifi_enabled", False)
+        setattr(player, "_playback_speed", 1.0)

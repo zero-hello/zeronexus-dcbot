@@ -62,6 +62,7 @@ class MusicModule(BaseModule):
             ("音高", "調整音樂音高濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
             ("重低音", "調整重低音強化濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
             ("音質", "切換純淨高保真 Hi-Fi 增強模式 (提升人聲清澈度與通透感)", ZNPermissionLevel.EVERYONE),
+            ("倍速", "調整音樂播放倍速 (0.25x ~ 4.0x)", ZNPermissionLevel.EVERYONE),
         ]
         for name, desc, perm in commands_list:
             self.registered_commands.append(
@@ -722,6 +723,36 @@ class MusicCog(commands.Cog):
                 color=ZNColor.SECONDARY,
             )
 
+        await InteractionResponder.safe_send(interaction, card=card)
+
+    # --------------------------------------------------------------------------
+    # 12. 倍速指令 /音樂 倍速
+    # --------------------------------------------------------------------------
+    @music_group.command(name="倍速", description="調整音樂播放倍速 (0.25x ~ 4.0x，預設 1.0x)")
+    @app_commands.describe(倍率="請輸入播放倍率 (0.25 到 4.0，例如 1.25、1.5 或 2.0)")
+    @command_guard("music", required_level=ZNPermissionLevel.EVERYONE)
+    async def speed_command(self, interaction: discord.Interaction, 倍率: float) -> None:
+        if 倍率 < 0.25 or 倍率 > 4.0:
+            await InteractionResponder.safe_send(interaction, "❌ 播放倍速必須介於 **0.25x 到 4.0x** 之間唷！", ephemeral=True)
+            return
+
+        player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
+        if not player or not player.connected:
+            await InteractionResponder.safe_send(interaction, "❌ 目前播放器未連線至語音頻道。", ephemeral=True)
+            return
+
+        actual_speed = await MusicFilters.apply_speed(player, 倍率)
+        speed_str = f"{actual_speed:.2f}".rstrip("0").rstrip(".") if actual_speed != int(actual_speed) else f"{int(actual_speed)}"
+
+        if interaction.guild_id and interaction.guild_id in self._dashboards:
+            await self._dashboards[interaction.guild_id].refresh_dashboard()
+
+        card = ZNCard(
+            title="⚡ 播放倍速已套用",
+            description=f"已成功將播放速度調整為 **{speed_str}x**！\n（透過數位音訊濾鏡處理，維持原調不失真變音）",
+            status_pill=ZNStatusPill.SUCCESS,
+            color=ZNColor.PRIMARY,
+        )
         await InteractionResponder.safe_send(interaction, card=card)
 
     # --------------------------------------------------------------------------

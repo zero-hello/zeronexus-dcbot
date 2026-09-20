@@ -82,12 +82,15 @@ def build_now_playing_card(player: wavelink.Player, volume: int) -> ZNCard:
         f"⏱️ 播放進度：{bar}\n"
     )
 
+    speed_val = getattr(player, "_playback_speed", 1.0)
+    speed_str = f"{speed_val:.2f}".rstrip("0").rstrip(".") if speed_val != int(speed_val) else f"{int(speed_val)}"
+
     card = ZNCard(
         title="🎵 正在播放 (Now Playing)",
         description=desc,
         status_pill=ZNStatusPill.SUCCESS,
         color=ZNColor.PRIMARY,
-        footer_text=f"🔊 音量：{volume}%  |  🔁 循環：{loop_text}  |  📜 待播隊列：{queue_count} 首",
+        footer_text=f"🔊 音量：{volume}%  |  ⚡ 倍速：{speed_str}x  |  🔁 循環：{loop_text}  |  📜 待播隊列：{queue_count} 首",
     )
     if artwork:
         card.set_thumbnail(artwork)
@@ -133,6 +136,47 @@ class VolumeModal(discord.ui.Modal, title="🔊 調整音樂播放音量"):
 
         await self.on_refresh()
         await interaction.followup.send(f"🔊 音量已成功設定為 **{clamped}%**！", ephemeral=True)
+
+
+class SpeedModal(discord.ui.Modal, title="⚡ 調整音樂播放倍速"):
+    """播放倍速調整彈出視窗表單 (支援 0.25x ~ 4.0x)。"""
+
+    def __init__(self, player: wavelink.Player, current_speed: float, on_refresh: Callable[[], Coroutine[Any, Any, None]]) -> None:
+        super().__init__()
+        self.player = player
+        self.on_refresh = on_refresh
+
+        speed_str = f"{current_speed:.2f}".rstrip("0").rstrip(".") if current_speed != int(current_speed) else f"{int(current_speed)}"
+        self.speed_input = discord.ui.TextInput(
+            label="請輸入播放倍速 (0.25x ~ 4.0x)",
+            default=speed_str,
+            placeholder="例如: 1.25 (支援 0.25 到 4.0，預設 1.0)",
+            min_length=1,
+            max_length=5,
+            required=True,
+        )
+        self.add_item(self.speed_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        val_str = self.speed_input.value.strip()
+        try:
+            val = float(val_str)
+        except ValueError:
+            await interaction.followup.send("❌ 播放倍速必須為有效數字（例如 `1.25` 或 `2`）。", ephemeral=True)
+            return
+
+        if val < 0.25 or val > 4.0:
+            await interaction.followup.send("❌ 播放倍速範圍必須介於 **0.25x 到 4.0x** 之間唷！", ephemeral=True)
+            return
+
+        from zeronexus.modules.music.filters import MusicFilters
+        actual_speed = await MusicFilters.apply_speed(self.player, val)
+        await self.on_refresh()
+
+        actual_str = f"{actual_speed:.2f}".rstrip("0").rstrip(".") if actual_speed != int(actual_speed) else f"{int(actual_speed)}"
+        await interaction.followup.send(f"⚡ 播放倍速已成功設定為 **{actual_str}x**！", ephemeral=True)
 
 
 class AddSongModal(discord.ui.Modal, title="➕ 添加點播新歌曲"):
@@ -194,6 +238,11 @@ class NowPlayingView(discord.ui.View):
         else:
             self.btn_loop.label = "🔁 循環：關閉"
             self.btn_loop.style = discord.ButtonStyle.secondary
+
+        current_speed = getattr(self.player, "_playback_speed", 1.0)
+        speed_str = f"{current_speed:.2f}".rstrip("0").rstrip(".") if current_speed != int(current_speed) else f"{int(current_speed)}"
+        self.btn_speed.label = f"⚡ 倍速：{speed_str}x"
+        self.btn_speed.style = discord.ButtonStyle.primary if current_speed != 1.0 else discord.ButtonStyle.secondary
 
     async def refresh_dashboard(self) -> None:
         """更新控制面板卡片與按鈕。"""
@@ -292,6 +341,12 @@ class NowPlayingView(discord.ui.View):
             await interaction.response.edit_message(view=lv, embed=None)
         else:
             await self.refresh_dashboard()
+
+    @discord.ui.button(label="⚡ 倍速：1.0x", style=discord.ButtonStyle.secondary, row=1)
+    async def btn_speed(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        current_speed = getattr(self.player, "_playback_speed", 1.0)
+        modal = SpeedModal(self.player, current_speed, self.refresh_dashboard)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="➕ 添加歌曲", style=discord.ButtonStyle.success, row=1)
     async def btn_add_song(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
