@@ -411,21 +411,37 @@ class PlaylistPromptView(discord.ui.View):
     async def btn_load_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(thinking=False)
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            await interaction.edit_original_response(view=self)
+        except Exception:
+            pass
         await self.on_choose(interaction, True)
 
     @discord.ui.button(label="🎵 僅播放當前單曲", style=discord.ButtonStyle.primary)
     async def btn_load_single(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(thinking=False)
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            await interaction.edit_original_response(view=self)
+        except Exception:
+            pass
         await self.on_choose(interaction, False)
 
     @discord.ui.button(label="❌ 取消", style=discord.ButtonStyle.secondary)
     async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(thinking=False)
-        if interaction.message:
+        try:
+            await interaction.delete_original_response()
+        except Exception:
             try:
-                await interaction.message.delete()
+                await interaction.edit_original_response(content="❌ 已取消載入播放清單。", embed=None, view=None)
             except Exception:
                 pass
 

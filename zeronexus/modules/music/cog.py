@@ -263,18 +263,181 @@ class MusicCog(commands.Cog):
             search_q = clean_q if clean_q.startswith(("http://", "https://")) else f"ytsearch:{clean_q}"
             res = await self._safe_search_tracks(search_q, preferred_node=player.node)
             if not res:
-                await inter.followup.send("❌ 找不到該歌曲，請嘗試其他關鍵字或有效網址。", ephemeral=True)
+                await InteractionResponder.safe_send(inter, "❌ 找不到該歌曲，請嘗試其他關鍵字或有效網址。", ephemeral=True)
                 return
 
-            track = res[0] if isinstance(res, list) else res
-            await self._play_or_enqueue(inter, player, track)
-            dur = format_ms_to_clock(track.length) if hasattr(track, "length") else "未知"
-            await inter.followup.send(
-                f"🎶 已成功加入待播隊列：**[{track.title}]({getattr(track, 'uri', '')})** (`{dur}`)",
+            await self._dispatch_search_result(
+                interaction=inter,
+                player=player,
+                search_res=res,
+                query=clean_q,
                 ephemeral=True,
             )
 
         return _on_add
+
+    # --------------------------------------------------------------------------
+    # 輔助函式：統一調度搜尋結果 (防爆清單、前 10 首選單與單曲播放)
+    # --------------------------------------------------------------------------
+    async def _dispatch_search_result(
+        self,
+        interaction: discord.Interaction,
+        player: wavelink.Player,
+        search_res: Any,
+        query: str,
+        ephemeral: bool = False,
+    ) -> None:
+        """統一調度與處理搜尋結果（包含播放清單防爆、關鍵字前 10 首下拉選單與單曲播放）。"""
+        guild_id = interaction.guild_id or 0
+
+        # ----------------------------------------------------------------------
+        # 1. 播放清單防爆處理 (wavelink.Playlist 或具備 tracks 屬性之清單容器)
+        # ----------------------------------------------------------------------
+        if isinstance(search_res, wavelink.Playlist) or (hasattr(search_res, "tracks") and not hasattr(search_res, "title")):
+            playlist = search_res
+            total_tracks = len(playlist.tracks)
+
+            if total_tracks == 0:
+                await InteractionResponder.safe_send(interaction, "❌ 此播放清單內沒有任何可播放的曲目。", ephemeral=ephemeral)
+                return
+
+            # 如果清單只有單一曲目，直接播放/加入隊列，不需彈出防爆打擾
+            if total_tracks == 1:
+                single_track = playlist.tracks[0]
+                await self._play_or_enqueue(interaction, player, single_track, ephemeral=ephemeral)
+                return
+
+            # 多首曲目：觸發防爆確認
+            selected_idx = getattr(playlist, "selected", 0)
+            if selected_idx is None or selected_idx < 0 or selected_idx >= total_tracks:
+                selected_idx = 0
+            single_track = playlist.tracks[selected_idx]
+
+            async def _on_choose_playlist(inter: discord.Interaction, load_all: bool) -> None:
+                if load_all:
+                    # 載入整張清單（最多 100 首防爆）
+                    tracks_to_add = playlist.tracks[:100]
+                    first_track = tracks_to_add[0]
+
+                    if not player.playing:
+                        vol = self.node_manager.get_guild_volume(guild_id)
+                        await player.set_volume(vol)
+                        try:
+                            await MusicFilters.apply_hifi(player)
+                        except Exception:
+                            pass
+                        await player.play(first_track, volume=vol)
+
+                        for t in tracks_to_add[1:]:
+                            await player.queue.put_wait(t)
+
+                        dashboard = NowPlayingView(
+                            player=player,
+                            volume=vol,
+                            guild_id=guild_id,
+                            on_add_song=self._create_on_add_song(player),
+                            text_channel_id=inter.channel_id,
+                        )
+                        self._dashboards[guild_id] = dashboard
+                        card = build_now_playing_card(player, vol)
+                        msg = await InteractionResponder.safe_send(inter, card=card, view=dashboard)
+                        if msg:
+                            dashboard.message = msg
+                        self._start_ticker(guild_id, player)
+                    else:
+                        for t in tracks_to_add:
+                            await player.queue.put_wait(t)
+                        dashboard = self._dashboards.get(guild_id)
+                        if dashboard:
+                            await dashboard.refresh_dashboard()
+
+                    res_card = ZNCard(
+                        title="📋 播放清單已載入",
+                        description=f"已成功匯入清單 **{playlist.name}** 共 **{len(tracks_to_add)}** 首曲目！",
+                        status_pill=ZNStatusPill.SUCCESS,
+                        color=ZNColor.SUCCESS,
+                    )
+                    try:
+                        await inter.edit_original_response(embed=res_card.to_embed(), view=None)
+                    except Exception:
+                        await InteractionResponder.safe_send(inter, card=res_card, ephemeral=ephemeral)
+                else:
+                    # 僅播放當前單曲
+                    await self._play_or_enqueue(inter, player, single_track, ephemeral=ephemeral)
+                    dur = format_ms_to_clock(single_track.length) if hasattr(single_track, "length") else "未知"
+                    res_card = ZNCard(
+                        title="🎶 已加入當前單曲",
+                        description=f"已從清單中挑選單曲：**[{single_track.title}]({getattr(single_track, 'uri', '')})** (`{dur}`)",
+                        status_pill=ZNStatusPill.SUCCESS,
+                        color=ZNColor.PRIMARY,
+                    )
+                    try:
+                        await inter.edit_original_response(embed=res_card.to_embed(), view=None)
+                    except Exception:
+                        pass
+
+            prompt_view = PlaylistPromptView(_on_choose_playlist, playlist_count=total_tracks)
+            prompt_card = ZNCard(
+                title="🛡️ YouTube 播放清單防爆確認",
+                description=(
+                    f"偵測到播放清單連結：**{playlist.name}**\n"
+                    f"清單共包含 **{total_tracks}** 首歌曲。\n\n"
+                    f"請問您希望匯入整張清單，還是僅播放單一曲目呢？"
+                ),
+                status_pill=ZNStatusPill.WARNING,
+                color=ZNColor.WARNING,
+            )
+            await InteractionResponder.safe_send(
+                interaction,
+                card=prompt_card,
+                view=prompt_view,
+                ephemeral=ephemeral,
+            )
+            return
+
+        # ----------------------------------------------------------------------
+        # 2. 關鍵字搜尋多首結果 (list 且非 URL)
+        # ----------------------------------------------------------------------
+        if isinstance(search_res, list):
+            if not query.startswith(("http://", "https://")) and len(search_res) > 1 and not ephemeral:
+                # 關鍵字搜尋：彈出前 10 首下拉選單
+                async def _on_select_track(inter: discord.Interaction, selected_track: wavelink.Playable) -> None:
+                    await self._play_or_enqueue(inter, player, selected_track, ephemeral=ephemeral)
+                    try:
+                        dur = format_ms_to_clock(selected_track.length) if hasattr(selected_track, "length") else "未知"
+                        chosen_card = ZNCard(
+                            title="🎶 已選取曲目",
+                            description=f"已成功加入：**[{selected_track.title}]({getattr(selected_track, 'uri', '')})** (`{dur}`)",
+                            status_pill=ZNStatusPill.SUCCESS,
+                            color=ZNColor.SUCCESS,
+                        )
+                        await inter.edit_original_response(embed=chosen_card.to_embed(), view=None)
+                    except Exception:
+                        pass
+
+                select_view = TrackSelectView(search_res[:10], _on_select_track)
+                select_card = ZNCard(
+                    title="🔍 搜尋結果清單 (前 10 首)",
+                    description=f"針對「**{query}**」找到了多首曲目，請透過下方選單選取：",
+                    status_pill=ZNStatusPill.INFO,
+                    color=ZNColor.PRIMARY,
+                )
+                await InteractionResponder.safe_send(
+                    interaction,
+                    card=select_card,
+                    view=select_view,
+                    ephemeral=ephemeral,
+                )
+                return
+
+            target_track = search_res[0]
+        else:
+            target_track = search_res
+
+        # ----------------------------------------------------------------------
+        # 3. 單曲播放或加入待播隊列
+        # ----------------------------------------------------------------------
+        await self._play_or_enqueue(interaction, player, target_track, ephemeral=ephemeral)
 
     # --------------------------------------------------------------------------
     # 輔助函式：播放或加入待播隊列
@@ -284,8 +447,17 @@ class MusicCog(commands.Cog):
         interaction: discord.Interaction,
         player: wavelink.Player,
         track: wavelink.Playable,
+        ephemeral: bool = False,
     ) -> None:
         """執行歌曲播放或推進待播清單。"""
+        # 第二道絕對防線：若傳入的是未解包之 Playlist，嚴格強制提取單曲，絕不允許整張直接塞入 queue
+        if isinstance(track, wavelink.Playlist) or (hasattr(track, "tracks") and not hasattr(track, "title")):
+            log.warning("[MusicCog] 攔截到未解包之 Playlist 傳入 _play_or_enqueue，自動降級為單一曲目！")
+            selected_idx = getattr(track, "selected", 0)
+            if selected_idx is None or selected_idx < 0 or selected_idx >= len(track.tracks):
+                selected_idx = 0
+            track = track.tracks[selected_idx]
+
         guild_id = interaction.guild_id or 0
         volume = self.node_manager.get_guild_volume(guild_id)
 
@@ -332,7 +504,11 @@ class MusicCog(commands.Cog):
             artwork = getattr(track, "artwork", None)
             if artwork:
                 card.set_thumbnail(artwork)
-            await InteractionResponder.safe_send(interaction, card=card)
+            await InteractionResponder.safe_send(interaction, card=card, ephemeral=ephemeral)
+
+            dashboard = self._dashboards.get(guild_id)
+            if dashboard:
+                await dashboard.refresh_dashboard()
 
     # --------------------------------------------------------------------------
     # 1. 播放指令 /音樂 播放
@@ -349,107 +525,20 @@ class MusicCog(commands.Cog):
             return
 
         query = 查詢或連結.strip()
+        search_q = query if query.startswith(("http://", "https://")) else f"ytsearch:{query}"
+        search_res = await self._safe_search_tracks(search_q, preferred_node=player.node)
 
-        # 1. 檢查是否包含 YouTube list 播放清單參數
-        if PLAYLIST_REGEX.search(query):
-            search_res = await self._safe_search_tracks(query, preferred_node=player.node)
+        if not search_res:
+            await InteractionResponder.safe_send(interaction, "❌ 找不到符合條件的歌曲，請嘗試其他關鍵字或有效網址。")
+            return
 
-            if isinstance(search_res, wavelink.Playlist):
-                playlist = search_res
-                total_tracks = len(playlist.tracks)
-
-                async def _on_choose_playlist(inter: discord.Interaction, load_all: bool) -> None:
-                    if load_all:
-                        # 載入整張清單（最多 100 首防爆）
-                        tracks_to_add = playlist.tracks[:100]
-                        first_track = tracks_to_add[0]
-
-                        if not player.playing:
-                            vol = self.node_manager.get_guild_volume(inter.guild_id or 0)
-                            await player.set_volume(vol)
-                            await player.play(first_track, volume=vol)
-
-                            for t in tracks_to_add[1:]:
-                                await player.queue.put_wait(t)
-
-                            dashboard = NowPlayingView(
-                                player=player,
-                                volume=vol,
-                                guild_id=inter.guild_id or 0,
-                                on_add_song=self._create_on_add_song(player),
-                                text_channel_id=inter.channel_id,
-                            )
-                            self._dashboards[inter.guild_id or 0] = dashboard
-                            card = build_now_playing_card(player, vol)
-                            msg = await InteractionResponder.safe_send(inter, card=card, view=dashboard)
-                            if msg:
-                                dashboard.message = msg
-                            self._start_ticker(inter.guild_id or 0, player)
-                        else:
-                            for t in tracks_to_add:
-                                await player.queue.put_wait(t)
-
-                        card = ZNCard(
-                            title="📋 播放清單已載入",
-                            description=f"已成功匯入清單 **{playlist.name}** 共 **{len(tracks_to_add)}** 首曲目！",
-                            status_pill=ZNStatusPill.SUCCESS,
-                            color=ZNColor.SUCCESS,
-                        )
-                        await InteractionResponder.safe_send(inter, card=card)
-                    else:
-                        # 僅播放當前單曲
-                        single_track = playlist.tracks[0]
-                        await self._play_or_enqueue(inter, player, single_track)
-
-                prompt_view = PlaylistPromptView(_on_choose_playlist, playlist_count=total_tracks)
-                prompt_card = ZNCard(
-                    title="📋 偵測到 YouTube 播放清單",
-                    description=(
-                        f"您輸入的連結包含播放清單參數：**{playlist.name}**\n"
-                        f"共包含 **{total_tracks}** 首歌曲。\n\n"
-                        f"請問您希望匯入整張清單，還是僅播放單一曲目呢？"
-                    ),
-                    status_pill=ZNStatusPill.INFO,
-                    color=ZNColor.PRIMARY,
-                )
-                await interaction.followup.send(embed=prompt_card.to_embed(), view=prompt_view)
-                return
-
-        # 2. 一般搜尋或單曲連結
-        if not query.startswith(("http://", "https://")):
-            # 關鍵字搜尋：抓取前 10 首
-            search_res = await self._safe_search_tracks(f"ytsearch:{query}", preferred_node=player.node)
-
-            if not search_res:
-                await interaction.followup.send("❌ 找不到符合條件的歌曲，請嘗試其他關鍵字。")
-                return
-
-            if isinstance(search_res, list) and len(search_res) > 1:
-                # 彈出前 10 首下拉選單
-                async def _on_select_track(inter: discord.Interaction, selected_track: wavelink.Playable) -> None:
-                    await self._play_or_enqueue(inter, player, selected_track)
-
-                select_view = TrackSelectView(search_res[:10], _on_select_track)
-                select_card = ZNCard(
-                    title="🔍 搜尋結果清單 (前 10 首)",
-                    description=f"針對「**{query}**」找到了多首曲目，請透過下方選單選取：",
-                    status_pill=ZNStatusPill.INFO,
-                    color=ZNColor.PRIMARY,
-                )
-                await interaction.followup.send(embed=select_card.to_embed(), view=select_view)
-                return
-
-            track = search_res[0] if isinstance(search_res, list) else search_res
-            await self._play_or_enqueue(interaction, player, track)
-        else:
-            # 直接 URL
-            search_res = await self._safe_search_tracks(query, preferred_node=player.node)
-            if not search_res:
-                await interaction.followup.send("❌ 無法解析該音樂網址，請確認連結有效性或稍後再試。")
-                return
-
-            track = search_res[0] if isinstance(search_res, list) else search_res
-            await self._play_or_enqueue(interaction, player, track)
+        await self._dispatch_search_result(
+            interaction=interaction,
+            player=player,
+            search_res=search_res,
+            query=query,
+            ephemeral=False,
+        )
 
     # --------------------------------------------------------------------------
     # 2. 暫停指令 /音樂 暫停
