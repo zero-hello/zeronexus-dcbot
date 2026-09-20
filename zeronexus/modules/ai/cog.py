@@ -1003,8 +1003,8 @@ class AICog(commands.Cog):
         await InteractionResponder.safe_send(interaction, card=card)
 
     PERSONA_NAMES: dict[str, str] = {
-        "normal_persona": "ZeroNexus (官方預設 normal_persona)",
-        "zeronexus": "ZeroNexus (官方預設 normal_persona)",
+        "normal_persona": "ZeroNexus (官方旗艦預設)",
+        "zeronexus": "ZeroNexus (官方旗艦預設)",
         "shy_catgirl": "害羞貓娘 (害羞軟萌、溫柔治癒)",
         "01_cat": "可愛貓咪 (親近活潑、輕快傲嬌)",
         "02_asian_parents": "亞洲長輩 (關心作息、實用碎念)",
@@ -1026,7 +1026,7 @@ class AICog(commands.Cog):
     @ai_group.command(name="切換人格", description="切換 AI 互動人格角色 (共 17 款)")
     @app_commands.describe(人格="選擇想要切換的人格", 套用範圍="設定為個人偏好（所有與您的對話/AI頻道），或是全伺服器預設（需管理員）")
     @app_commands.choices(人格=[
-        app_commands.Choice(name="ZeroNexus (官方預設 normal_persona)", value="normal_persona"),
+        app_commands.Choice(name="ZeroNexus (官方旗艦預設)", value="normal_persona"),
         app_commands.Choice(name="害羞貓娘 (害羞軟萌、溫柔治癒)", value="shy_catgirl"),
         app_commands.Choice(name="可愛貓咪 (親近活潑、輕快傲嬌)", value="01_cat"),
         app_commands.Choice(name="亞洲長輩 (關心作息、實用碎念)", value="02_asian_parents"),
@@ -1138,7 +1138,7 @@ class AICog(commands.Cog):
         card = ZNCard(
             title="ZeroNexus 17 款深度內建人格清單",
             description=(
-                "0. **ZeroNexus 官方預設** (`normal_persona`) — 官方旗艦預設管家，開朗可愛、清晰嚴謹的全能夥伴\n"
+                "0. **ZeroNexus** — 官方旗艦預設管家，開朗可愛、清晰嚴謹的全能夥伴\n"
                 "🐾. **害羞貓娘** (`shy_catgirl`) — 極度害羞容易臉紅、軟萌純真、溫柔治癒力破表\n"
                 "1. **可愛貓咪** (`01_cat`) — 親近活潑、輕快傲嬌\n"
                 "2. **亞洲長輩** (`02_asian_parents`) — 關心健康作息、實用碎念、溫暖有力\n"

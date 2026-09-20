@@ -169,11 +169,11 @@ class AIProviderConfig:
     temperature: float = 0.7
     show_thinking: bool = True
     gemini_safety_settings: Dict[str, str] = field(default_factory=lambda: {
-        "HARM_CATEGORY_HARASSMENT": "BLOCK_ONLY_HIGH",
-        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_ONLY_HIGH",
-        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_ONLY_HIGH",
-        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_ONLY_HIGH",
-        "HARM_CATEGORY_CIVIC_INTEGRITY": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
+        "HARM_CATEGORY_CIVIC_INTEGRITY": "BLOCK_NONE",
     })
 
     def __post_init__(self) -> None:
