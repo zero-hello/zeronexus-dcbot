@@ -63,6 +63,7 @@ class MusicModule(BaseModule):
             ("重低音", "調整重低音強化濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
             ("音質", "切換純淨高保真 Hi-Fi 增強模式 (提升人聲清澈度與通透感)", ZNPermissionLevel.EVERYONE),
             ("倍速", "調整音樂播放倍速 (0.25x ~ 4.0x)", ZNPermissionLevel.EVERYONE),
+            ("循環", "切換音樂循環播放模式 (單曲循環 / 隊列循環 / 關閉)", ZNPermissionLevel.EVERYONE),
         ]
         for name, desc, perm in commands_list:
             self.registered_commands.append(
@@ -122,8 +123,9 @@ class MusicCog(commands.Cog):
                             continue
                         await dashboard.refresh_dashboard()
                     else:
-                        # 未在播放中，巡檢隊列是否已播畢清空
-                        if len(player.queue) == 0:
+                        mode = getattr(player.queue, "mode", wavelink.QueueMode.normal)
+                        # 未在播放中，僅在「非循環模式」且「隊列為空」時才判定播畢
+                        if len(player.queue) == 0 and mode == wavelink.QueueMode.normal:
                             idle_ticks += 1
                             # 連續兩次巡檢 (約 10 秒) 均非播放狀態且隊列為空，主動執行播畢轉換待機面板
                             if idle_ticks >= 2:
@@ -198,6 +200,7 @@ class MusicCog(commands.Cog):
                     await player.switch_node(best_node)
                 except Exception:
                     pass
+            player.autoplay = wavelink.AutoPlayMode.partial
 
         if player is None or not isinstance(player, wavelink.Player):
             try:
@@ -206,6 +209,7 @@ class MusicCog(commands.Cog):
                     self_deaf=True,
                     self_mute=False,
                 )
+                player.autoplay = wavelink.AutoPlayMode.partial
             except Exception as ex:
                 await InteractionResponder.safe_send(interaction, f"❌ 無法加入語音頻道：`{ex}`", ephemeral=True)
                 return None
@@ -462,6 +466,7 @@ class MusicCog(commands.Cog):
         volume = self.node_manager.get_guild_volume(guild_id)
 
         if not player.playing:
+            player.autoplay = wavelink.AutoPlayMode.partial
             # 當前未播歌，直接開播並帶上持久化音量
             await player.set_volume(volume)
             # 全自動套用 Hi-Fi 純淨高保真等化補償濾鏡
@@ -585,6 +590,7 @@ class MusicCog(commands.Cog):
 
         guild_id = interaction.guild_id or 0
         self._stop_ticker(guild_id)
+        player.queue.mode = wavelink.QueueMode.normal
         player.queue.clear()
         await player.stop()
 
@@ -845,6 +851,71 @@ class MusicCog(commands.Cog):
         await InteractionResponder.safe_send(interaction, card=card)
 
     # --------------------------------------------------------------------------
+    # 13. 循環指令 /音樂 循環
+    # --------------------------------------------------------------------------
+    @music_group.command(name="循環", description="切換音樂循環播放模式 (單曲循環 / 隊列循環 / 關閉)")
+    @app_commands.describe(模式="選擇循環模式 (留空則依序輪流切換)")
+    @app_commands.choices(
+        模式=[
+            app_commands.Choice(name="🔂 單曲循環 (重複播放當前歌曲)", value="loop"),
+            app_commands.Choice(name="🔁 隊列循環 (清單播完後從頭輪播)", value="loop_all"),
+            app_commands.Choice(name="❌ 關閉循環 (依序播放完畢即停止)", value="normal"),
+        ]
+    )
+    @command_guard("music", required_level=ZNPermissionLevel.EVERYONE)
+    async def loop_command(
+        self,
+        interaction: discord.Interaction,
+        模式: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
+        if not player or not player.connected:
+            await InteractionResponder.safe_send(interaction, "❌ 目前播放器未連線至語音頻道。", ephemeral=True)
+            return
+
+        player.autoplay = wavelink.AutoPlayMode.partial
+
+        if 模式:
+            val = 模式.value
+            if val == "loop":
+                player.queue.mode = wavelink.QueueMode.loop
+                if player.current:
+                    player.queue._loaded = player.current
+            elif val == "loop_all":
+                player.queue.mode = wavelink.QueueMode.loop_all
+            else:
+                player.queue.mode = wavelink.QueueMode.normal
+        else:
+            current_mode = getattr(player.queue, "mode", wavelink.QueueMode.normal)
+            if current_mode == wavelink.QueueMode.normal:
+                player.queue.mode = wavelink.QueueMode.loop
+                if player.current:
+                    player.queue._loaded = player.current
+            elif current_mode == wavelink.QueueMode.loop:
+                player.queue.mode = wavelink.QueueMode.loop_all
+            else:
+                player.queue.mode = wavelink.QueueMode.normal
+
+        new_mode = player.queue.mode
+        if new_mode == wavelink.QueueMode.loop:
+            mode_desc = "🔂 **單曲循環**（將持續重複播放當前曲目）"
+        elif new_mode == wavelink.QueueMode.loop_all:
+            mode_desc = "🔁 **隊列循環**（整張清單播畢後將自動從頭重新循環）"
+        else:
+            mode_desc = "❌ **循環已關閉**（播放清單播畢後將自動進入待機）"
+
+        if interaction.guild_id and interaction.guild_id in self._dashboards:
+            await self._dashboards[interaction.guild_id].refresh_dashboard()
+
+        card = ZNCard(
+            title="🔁 循環播放模式已更新",
+            description=f"目前播放狀態：{mode_desc}",
+            status_pill=ZNStatusPill.SUCCESS,
+            color=ZNColor.PRIMARY,
+        )
+        await InteractionResponder.safe_send(interaction, card=card)
+
+    # --------------------------------------------------------------------------
     # 事件監聽：歌曲播放開始 (Track Start)
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
@@ -986,7 +1057,7 @@ class MusicCog(commands.Cog):
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload) -> None:
-        """監聽歌曲結束，若隊列為空則就地將控制面板轉換為待機卡片。"""
+        """監聽歌曲結束，若隊列為空且無開啟循環則就地將控制面板轉換為待機卡片。"""
         player = payload.player
         if not player or not player.guild:
             return
@@ -994,13 +1065,25 @@ class MusicCog(commands.Cog):
         guild_id = player.guild.id
         track_title = getattr(payload.track, "title", "未知曲目")
         reason = getattr(payload, "reason", "finished")
-        log.info(f"[MusicCog] 歌曲播放結束: {track_title}, reason={reason}, 隊列剩餘: {len(player.queue)}")
+        mode = getattr(player.queue, "mode", wavelink.QueueMode.normal)
+        q_len = len(player.queue)
+        log.info(f"[MusicCog] 歌曲播放結束: {track_title}, reason={reason}, 循環模式: {mode.name}, 隊列剩餘: {q_len}")
 
-        self._stop_ticker(guild_id)
-
-        # 若隊列還有歌，Wavelink 會自動播放下一首
-        if len(player.queue) > 0:
+        # 1. 若開啟了單曲循環或隊列循環，Wavelink AutoPlay 會自動續播重播，絕不轉待機
+        if mode in (wavelink.QueueMode.loop, wavelink.QueueMode.loop_all):
+            log.info(f"[MusicCog] 伺服器 {guild_id} 目前處於循環模式 ({mode.name})，交由 AutoPlay 自動接續播放...")
             return
+
+        # 2. 若隊列中尚有待播曲目，交由 AutoPlay 播放下一首
+        if q_len > 0:
+            return
+
+        # 3. 若為切歌或重播被取代事件 (replaced)，略過待機轉換
+        if reason == "replaced":
+            return
+
+        # 4. 隊列真正空了且無任何循環，終止定時器並原地更新控制面板為待機卡片
+        self._stop_ticker(guild_id)
 
         # 隊列已空，展示完畢待機面板並原地更新控制面板
         vol = self.node_manager.get_guild_volume(guild_id)

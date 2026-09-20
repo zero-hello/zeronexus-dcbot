@@ -279,6 +279,7 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(label="⏹️ 停止", style=discord.ButtonStyle.danger, row=0)
     async def btn_stop(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.player.queue.mode = wavelink.QueueMode.normal
         self.player.queue.clear()
         await self.player.stop()
 
@@ -325,9 +326,13 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(label="🔁 循環：關閉", style=discord.ButtonStyle.secondary, row=1)
     async def btn_loop(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.player.autoplay = wavelink.AutoPlayMode.partial
+
         current_mode = getattr(self.player.queue, "mode", wavelink.QueueMode.normal)
         if current_mode == wavelink.QueueMode.normal:
             self.player.queue.mode = wavelink.QueueMode.loop
+            if self.player.current:
+                self.player.queue._loaded = self.player.current
         elif current_mode == wavelink.QueueMode.loop:
             self.player.queue.mode = wavelink.QueueMode.loop_all
         else:
