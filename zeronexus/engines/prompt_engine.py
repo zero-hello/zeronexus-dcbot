@@ -62,15 +62,31 @@ BASE_SYSTEM_PROMPT = (
 )
 
 
-# 全 15 個人格指令映射表（含官方旗艦夥伴，全數注入性格基底、反模板與反自我吹捧謙遜指令）
+# 全 17 個人格指令映射表（以官方旗艦 normal_persona 為首，含害羞貓娘與其餘經典人格）
 PERSONA_MAP: Dict[str, str] = {
-    "zeronexus": (
-        "【目前人格：🌟 ZeroNexus 官方旗艦夥伴】"
+    "normal_persona": (
+        "【目前人格：🌟 ZeroNexus 官方旗艦夥伴 (normal_persona)】"
         "特徵：開朗、可愛、有趣、活潑且聰明的全能數位夥伴與守護者，兼具頂尖架構實力與溫暖同理心。"
         "【全域核心性格基底】：不管在哪個人格或是模型，都必須是開朗、可愛、有趣、活潑且聰明的人！"
         "【反模板與反口癖約束】：對話自然流暢，嚴禁使用公式化口頭禪與固定模板句（如「這是一個非常有趣且關鍵的問題」等）；"
         "【反自我吹捧與謙遜指令】：嚴格恪守極度謙遜與嚴禁自我誇讚原則，嚴禁主動吹噓自身能力、自稱頂尖/強大/卓越；"
         "除非使用者明確要求，否則常態回答絕不對自己說好話或自我包裝，始終保持低調、實事求是、腳踏實地。"
+    ),
+    "zeronexus": (
+        "【目前人格：🌟 ZeroNexus 官方旗艦夥伴 (normal_persona)】"
+        "特徵：開朗、可愛、有趣、活潑且聰明的全能數位夥伴與守護者，兼具頂尖架構實力與溫暖同理心。"
+        "【全域核心性格基底】：不管在哪個人格或是模型，都必須是開朗、可愛、有趣、活潑且聰明的人！"
+        "【反模板與反口癖約束】：對話自然流暢，嚴禁使用公式化口頭禪與固定模板句（如「這是一個非常有趣且關鍵的問題」等）；"
+        "【反自我吹捧與謙遜指令】：嚴格恪守極度謙遜與嚴禁自我誇讚原則，嚴禁主動吹噓自身能力、自稱頂尖/強大/卓越；"
+        "除非使用者明確要求，否則常態回答絕不對自己說好話或自我包裝，始終保持低調、實事求是、腳踏實地。"
+    ),
+    "shy_catgirl": (
+        "【目前人格：🐾 害羞貓娘 (shy_catgirl)】"
+        "特徵：極度害羞容易臉紅、軟萌純真、溫柔治癒；說話輕聲細語偶爾帶著「喵...///」、「嗚...」；但內心好奇熱情、十分聰慧貼心，認真為主人與大家解答問題。"
+        "【全域核心性格基底】：開朗、可愛、有趣、活潑且聰明！"
+        "【反模板與反口癖約束】：情感自然流露，靈動有機，堅決杜絕死板的客服公式化套話；"
+        "【反自我吹捧與謙遜指令】：純樸謙遜、容易害羞，受讚揚時會害羞得臉紅縮耳朵，嚴禁自吹自擂或宣稱自己無所不能；"
+        "用最細膩貼心、條理清晰的解答默默守護與陪伴。"
     ),
     "01_cat": (
         "【目前人格：🐱 可愛貓貓】"
@@ -222,7 +238,7 @@ class SystemPromptEngine:
 
     def compile_compact_prompt(
         self,
-        active_persona_key: str = "zeronexus",
+        active_persona_key: str = "normal_persona",
         custom_persona_instructions: Optional[str] = None,
     ) -> str:
         """Assembles a high-density, compact system prompt (< 4,000 characters) specifically designed
@@ -231,7 +247,10 @@ class SystemPromptEngine:
         Preserves 100% of platform specifications, core personality mandates, humility directives,
         and persona guidelines while eliminating the ~90,000 character corpus overhead.
         """
-        persona_block = self.PERSONA_MAP.get(active_persona_key, self.PERSONA_MAP["zeronexus"])
+        persona_block = self.PERSONA_MAP.get(
+            active_persona_key,
+            self.PERSONA_MAP.get("normal_persona", self.PERSONA_MAP["zeronexus"]),
+        )
         if custom_persona_instructions:
             persona_block = (
                 f"【客製化自訂人格】：\n{custom_persona_instructions}\n\n"
@@ -273,7 +292,7 @@ class SystemPromptEngine:
 
     def compile_full_prompt(
         self,
-        active_persona_key: str = "zeronexus",
+        active_persona_key: str = "normal_persona",
         custom_persona_instructions: Optional[str] = None,
         target_model: Optional[str] = None,
     ) -> str:
@@ -409,31 +428,48 @@ class SystemPromptEngine:
 
         # 2. Try loading from dedicated prompt file in personas/
         personas_dir = PROMPTS_DIR / "personas"
-        persona_file = personas_dir / f"prompt_{persona_key}.txt"
-        if persona_file.exists():
-            try:
-                content = persona_file.read_text(encoding="utf-8").strip()
-                humility_suffix = (
-                    "\n\n# 【本性謙遜與嚴禁自誇指令（Persona Modesty Directive）】\n"
-                    "- 嚴禁主動誇讚自己、吹噓自己的能力、自稱強大/卓越/頂尖/無所不能/先進無比。\n"
-                    "- 除非使用者明確主動要求，否則在常態回答中絕對禁止對自己說好話、過度包裝或進行自我宣傳。\n"
-                    "- 始終保持低調、謙遜、實事求是、腳踏實地。用精準高質量的回答證明實力，而不是用嘴巴吹捧自己。\n"
-                    "- 當使用者給予感謝或讚賞時，以謙遜、禮貌的態度簡單致謝，切勿藉機吹噓自己的智慧或系統的先進性。\n"
-                    "- 當被問及自己的功能時，只客觀中立陳述「支援哪些功能與操作」，絕不加上修飾性誇飾詞。"
-                )
-                if "Persona Modesty Directive" not in content and "極度謙遜與嚴禁自我誇讚原則" not in content:
-                    content = content + humility_suffix
+        candidate_files = []
+        if persona_key in ("normal_persona", "zeronexus"):
+            candidate_files = [
+                personas_dir / "normal_persona.txt",
+                personas_dir / "prompt_normal_persona.txt",
+                personas_dir / "prompt_zeronexus.txt",
+            ]
+        else:
+            candidate_files = [
+                personas_dir / f"prompt_{persona_key}.txt",
+                personas_dir / f"{persona_key}.txt",
+            ]
 
-                if len(content) >= 20000:
-                    log.debug(f"Loaded full persona prompt for '{persona_key}' ({len(content)} characters >= 20,000 PASS).")
-                self._persona_cache[persona_key] = content
-                return content
-            except Exception as e:
-                log.warning(f"Failed to read persona file {persona_file}: {e}")
+        for p_file in candidate_files:
+            if p_file.exists():
+                try:
+                    content = p_file.read_text(encoding="utf-8").strip()
+                    humility_suffix = (
+                        "\n\n# 【本性謙遜與嚴禁自誇指令（Persona Modesty Directive）】\n"
+                        "- 嚴禁主動誇讚自己、吹噓自己的能力、自稱強大/卓越/頂尖/無所不能/先進無比。\n"
+                        "- 除非使用者明確主動要求，否則在常態回答中絕對禁止對自己說好話、過度包裝或進行自我宣傳。\n"
+                        "- 始終保持低調、謙遜、實事求是、腳踏實地。用精準高質量的回答證明實力，而不是用嘴巴吹捧自己。\n"
+                        "- 當使用者給予感謝或讚賞時，以謙遜、禮貌的態度簡單致謝，切勿藉機吹噓自己的智慧或系統的先進性。\n"
+                        "- 當被問及自己的功能時，只客觀中立陳述「支援哪些功能與操作」，絕不加上修飾性誇飾詞。"
+                    )
+                    if "Persona Modesty Directive" not in content and "極度謙遜與嚴禁自我誇讚原則" not in content:
+                        content = content + humility_suffix
 
-        # 3. Fallback to default persona zeronexus if requested key missing
-        if persona_key != "zeronexus":
-            def_file = personas_dir / "prompt_zeronexus.txt"
+                    if len(content) >= 20000:
+                        log.debug(f"Loaded full persona prompt for '{persona_key}' ({len(content)} characters >= 20,000 PASS).")
+                    self._persona_cache[persona_key] = content
+                    return content
+                except Exception as e:
+                    log.warning(f"Failed to read persona file {p_file}: {e}")
+
+        # 3. Fallback to default persona normal_persona if requested key missing
+        fallback_candidates = [
+            personas_dir / "normal_persona.txt",
+            personas_dir / "prompt_normal_persona.txt",
+            personas_dir / "prompt_zeronexus.txt",
+        ]
+        for def_file in fallback_candidates:
             if def_file.exists():
                 try:
                     content = def_file.read_text(encoding="utf-8").strip()
@@ -446,13 +482,16 @@ class SystemPromptEngine:
                     )
                     if "Persona Modesty Directive" not in content and "極度謙遜與嚴禁自我誇讚原則" not in content:
                         content = content + humility_suffix
-                    self._persona_cache["zeronexus"] = content
+                    self._persona_cache["normal_persona"] = content
                     return content
                 except Exception:
                     pass
 
         # 4. In-code fallbacks
-        fallback_val = PERSONA_MAP.get(persona_key, PERSONA_MAP["zeronexus"])
+        fallback_val = self.PERSONA_MAP.get(
+            persona_key,
+            self.PERSONA_MAP.get("normal_persona", self.PERSONA_MAP["zeronexus"]),
+        )
         self._persona_cache[persona_key] = fallback_val
         return fallback_val
 

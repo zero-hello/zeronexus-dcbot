@@ -163,7 +163,7 @@ class AIProviderConfig:
     daily_limit_per_user: int = 80
     short_term_memory_limit: int = 400
     memory_ttl_seconds: int = 1800
-    default_persona: str = "zeronexus"
+    default_persona: str = "normal_persona"
     request_timeout_seconds: int = 60
     max_tokens: int = 4096
     temperature: float = 0.7

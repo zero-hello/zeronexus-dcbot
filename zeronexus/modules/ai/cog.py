@@ -344,8 +344,8 @@ class AICog(commands.Cog):
                         await quota_service.release_image_quota(img_resv)
                         log.warning(f"Image generation error in secret egg ask_command: {ige}")
         else:
-            # Get active persona & model: User profile > Guild settings > default 'zeronexus'
-            persona_key = "zeronexus"
+            # Get active persona & model: User profile > Guild settings > default 'normal_persona'
+            persona_key = "normal_persona"
             user_model = None
             async with db.session() as session:
                 stmt = select(UserProfile).where(UserProfile.user_id == interaction.user.id)
@@ -1003,7 +1003,9 @@ class AICog(commands.Cog):
         await InteractionResponder.safe_send(interaction, card=card)
 
     PERSONA_NAMES: dict[str, str] = {
-        "zeronexus": "ZeroNexus (預設管家)",
+        "normal_persona": "ZeroNexus (官方預設 normal_persona)",
+        "zeronexus": "ZeroNexus (官方預設)",
+        "shy_catgirl": "害羞貓娘 (shy_catgirl)",
         "01_cat": "可愛貓咪",
         "02_asian_parents": "亞洲長輩",
         "03_mage": "奇幻法師",
@@ -1021,10 +1023,11 @@ class AICog(commands.Cog):
         "15_consultant": "戰略顧問",
     }
 
-    @ai_group.command(name="切換人格", description="切換 AI 互動人格角色 (共 16 款)")
+    @ai_group.command(name="切換人格", description="切換 AI 互動人格角色 (共 17 款)")
     @app_commands.describe(人格="選擇想要切換的人格", 套用範圍="設定為個人偏好（所有與您的對話/AI頻道），或是全伺服器預設（需管理員）")
     @app_commands.choices(人格=[
-        app_commands.Choice(name="ZeroNexus (官方預設)", value="zeronexus"),
+        app_commands.Choice(name="ZeroNexus (官方預設 normal_persona)", value="normal_persona"),
+        app_commands.Choice(name="害羞貓娘 (害羞軟萌、溫柔治癒)", value="shy_catgirl"),
         app_commands.Choice(name="可愛貓咪", value="01_cat"),
         app_commands.Choice(name="亞洲長輩", value="02_asian_parents"),
         app_commands.Choice(name="奇幻法師", value="03_mage"),
@@ -1128,14 +1131,15 @@ class AICog(commands.Cog):
         )
         await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
-    @ai_group.command(name="人格清單", description="瀏覽 16 款內建人格特色與世界觀")
+    @ai_group.command(name="人格清單", description="瀏覽 17 款內建人格特色與世界觀")
     @command_guard("ai")
     async def persona_list_command(self, interaction: discord.Interaction) -> None:
         await InteractionResponder.safe_defer(interaction)
         card = ZNCard(
-            title="ZeroNexus 16 款深度內建人格清單",
+            title="ZeroNexus 17 款深度內建人格清單",
             description=(
-                "0. **ZeroNexus** (`zeronexus`) — 官方旗艦管家，溫暖理智、清晰嚴謹的全能夥伴\n"
+                "0. **ZeroNexus 官方預設** (`normal_persona`) — 官方旗艦預設管家，開朗可愛、清晰嚴謹的全能夥伴\n"
+                "🐾. **害羞貓娘** (`shy_catgirl`) — 極度害羞容易臉紅、軟萌純真、溫柔治癒力破表\n"
                 "1. **可愛貓咪** (`01_cat`) — 親近活潑、輕快傲嬌\n"
                 "2. **亞洲長輩** (`02_asian_parents`) — 關心健康作息、實用碎念、溫暖有力\n"
                 "3. **奇幻法師** (`03_mage`) — 宏大世界觀、奇幻魔法修辭、答案精準\n"

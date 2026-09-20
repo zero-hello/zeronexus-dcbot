@@ -1472,7 +1472,7 @@ class ZeroNexusBot(commands.Bot):
             except Exception as pe:
                 log.warning(f"Failed to lookup UserProfile preferences: {pe}")
 
-            persona = user_persona or (settings.ai_persona if settings else None) or "zeronexus"
+            persona = user_persona or (settings.ai_persona if settings else None) or "normal_persona"
             active_model = user_model or (settings.ai_model if settings else None) or model_registry.get_active_default_model()
 
             # Process attachments (multimodal: images, docs, code/text, audio, general)
