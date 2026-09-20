@@ -93,6 +93,7 @@ class MusicCog(commands.Cog):
         self.node_manager = NodePoolManager.get_instance(bot)
         self._dashboards: dict[int, NowPlayingView] = {}
         self._ticker_tasks: dict[int, asyncio.Task] = {}
+        self._afk_leave_tasks: dict[int, asyncio.Task] = {}
 
     async def cog_load(self) -> None:
         """Cog 載入時非同步初始化 Lavalink 節點池並優化日誌過濾。"""
@@ -100,6 +101,18 @@ class MusicCog(commands.Cog):
         # 抑制 Wavelink 底層 TrackException 冗長之 Java StackTrace 終端刷屏
         logging.getLogger("TrackException").setLevel(logging.CRITICAL)
         self.bot.loop.create_task(self.node_manager.initialize(self.bot))
+
+    def cog_unload(self) -> None:
+        """Cog 卸載時清理所有背景進度條刷新任務與無人自動退出計時任務。"""
+        for task in self._ticker_tasks.values():
+            if task and not task.done():
+                task.cancel()
+        self._ticker_tasks.clear()
+
+        for task in self._afk_leave_tasks.values():
+            if task and not task.done():
+                task.cancel()
+        self._afk_leave_tasks.clear()
 
     def _start_ticker(self, guild_id: int, player: wavelink.Player) -> None:
         """啟動該伺服器控制面板進度條背景刷新任務 (每 5 秒平滑更新並自動巡檢播畢狀態)。"""
@@ -162,6 +175,78 @@ class MusicCog(commands.Cog):
         if task and not task.done():
             task.cancel()
 
+    def _cancel_afk_timer(self, guild_id: int) -> None:
+        """取消指定伺服器之無人語音頻道自動退出倒數計時。"""
+        task = self._afk_leave_tasks.pop(guild_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    def _start_afk_timer(self, guild_id: int, timeout_seconds: float = 300.0) -> None:
+        """啟動語音頻道無真人使用者自動退出倒數計時 (預設 5 分鐘 / 300 秒)。"""
+        existing = self._afk_leave_tasks.get(guild_id)
+        if existing and not existing.done():
+            return
+
+        async def _afk_leave_coro() -> None:
+            try:
+                log.info(f"[MusicCog] 伺服器 {guild_id} 語音頻道內無真人使用者，已啟動 {int(timeout_seconds)} 秒自動退出倒數...")
+                await asyncio.sleep(timeout_seconds)
+
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    return
+                player: Optional[wavelink.Player] = getattr(guild, "voice_client", None)
+                if not player or not player.connected:
+                    return
+
+                channel = player.channel
+                if not channel:
+                    return
+
+                # 再次驗證頻道內是否依然無真人使用者（排除機器人）
+                human_members = [m for m in channel.members if not m.bot]
+                if len(human_members) > 0:
+                    log.info(f"[MusicCog] 伺服器 {guild_id} 語音頻道檢測到已有真人使用者回到頻道，取消自動退出。")
+                    return
+
+                log.info(f"[MusicCog] 伺服器 {guild_id} 語音頻道連續 {int(timeout_seconds)} 秒無真人，自動中斷連線並釋放資源。")
+                self._stop_ticker(guild_id)
+
+                leave_card = ZNCard(
+                    title="👋 已自動退出語音頻道",
+                    description="語音頻道已連續 5 分鐘沒有真人使用者，ZeroNexus 已自動退出以釋放系統與伺服器頻寬資源。\n下次想聽音樂時隨時點播即可重新加入唷！",
+                    status_pill=ZNStatusPill.INFO,
+                    color=ZNColor.MUTED,
+                    footer_text="⚡ ZeroNexus 智慧節能與資源回收機制",
+                )
+
+                dashboard = self._dashboards.pop(guild_id, None)
+                if dashboard and dashboard.message:
+                    try:
+                        await dashboard.message.edit(embed=leave_card.to_embed(), view=None)
+                    except Exception:
+                        pass
+                else:
+                    text_ch_id = getattr(dashboard, "text_channel_id", None) if dashboard else None
+                    target_ch = self.bot.get_channel(text_ch_id) if text_ch_id else None
+                    if not target_ch and hasattr(channel, "send"):
+                        target_ch = channel
+                    if target_ch:
+                        try:
+                            await target_ch.send(embed=leave_card.to_embed())
+                        except Exception:
+                            pass
+
+                await player.disconnect(force=True)
+            except asyncio.CancelledError:
+                log.info(f"[MusicCog] 伺服器 {guild_id} 無人自動退出倒數計時已取消。")
+            except Exception as ex:
+                log.warning(f"[MusicCog] 執行無人自動退出例外: {ex}")
+            finally:
+                self._afk_leave_tasks.pop(guild_id, None)
+
+        self._afk_leave_tasks[guild_id] = self.bot.loop.create_task(_afk_leave_coro())
+
     # --------------------------------------------------------------------------
     # 輔助函式：取得或連線語音播放器 (具備斷線殭屍播放器自我修復)
     # --------------------------------------------------------------------------
@@ -213,6 +298,15 @@ class MusicCog(commands.Cog):
             except Exception as ex:
                 await InteractionResponder.safe_send(interaction, f"❌ 無法加入語音頻道：`{ex}`", ephemeral=True)
                 return None
+
+        # 連線完成後立即評估語音房真人成員狀態
+        if player and player.channel:
+            human_count = len([m for m in player.channel.members if not m.bot])
+            guild_id = interaction.guild_id or 0
+            if human_count == 0:
+                self._start_afk_timer(guild_id, timeout_seconds=300.0)
+            else:
+                self._cancel_afk_timer(guild_id)
 
         return player
 
@@ -617,6 +711,14 @@ class MusicCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "⏹️ 音樂已停止播放並清空待播隊列。", ephemeral=True)
         else:
             await InteractionResponder.safe_send(interaction, card=card, view=ended_view)
+
+        # 停止後檢查頻道真人狀態，若頻道無人則啟動 5 分鐘自動退出倒數
+        if player.channel:
+            human_count = len([m for m in player.channel.members if not m.bot])
+            if human_count == 0:
+                self._start_afk_timer(guild_id, timeout_seconds=300.0)
+            else:
+                self._cancel_afk_timer(guild_id)
 
     # --------------------------------------------------------------------------
     # 5. 跳過指令 /音樂 跳過
@@ -1119,6 +1221,53 @@ class MusicCog(commands.Cog):
                     log.info(f"[MusicCog] 成功於頻道 {target_ch.id} 發送播畢待機卡片")
                 except Exception as e:
                     log.warning(f"[MusicCog] 播畢備援發送待機卡片失敗: {e}")
+
+        # 播畢轉待機後，檢查語音頻道是否已無真人，若是則啟動 5 分鐘自動退出倒數
+        if player.channel:
+            human_count = len([m for m in player.channel.members if not m.bot])
+            if human_count == 0:
+                self._start_afk_timer(guild_id, timeout_seconds=300.0)
+            else:
+                self._cancel_afk_timer(guild_id)
+
+    # --------------------------------------------------------------------------
+    # 事件監聽：語音狀態異動 (Voice State Update) - 語音頻道無真人 5 分鐘自動退出
+    # --------------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        """監聽語音狀態異動：當語音頻道內無真人成員時啟動 5 分鐘自動退出倒數。"""
+        guild = member.guild
+        if not guild:
+            return
+
+        # 若異動成員為機器人本身且離開了語音頻道，立即清理所有定時器與控制面板
+        if self.bot.user and member.id == self.bot.user.id and after.channel is None:
+            self._stop_ticker(guild.id)
+            self._cancel_afk_timer(guild.id)
+            self._dashboards.pop(guild.id, None)
+            return
+
+        player: Optional[wavelink.Player] = getattr(guild, "voice_client", None)
+        if not player or not player.connected or not player.channel:
+            self._cancel_afk_timer(guild.id)
+            return
+
+        bot_channel = player.channel
+        # 若事件與機器人當前所在的語音頻道無關，則忽略
+        if before.channel != bot_channel and after.channel != bot_channel:
+            return
+
+        # 統計機器人所在語音頻道內的真人成員（排除機器人）
+        human_members = [m for m in bot_channel.members if not m.bot]
+        if len(human_members) == 0:
+            self._start_afk_timer(guild.id, timeout_seconds=300.0)
+        else:
+            self._cancel_afk_timer(guild.id)
 
 
 async def setup(bot: commands.Bot) -> None:
