@@ -7,8 +7,9 @@
 [![Discord.py 2.5+](https://img.shields.io/badge/Discord.py-2.5%2B-5865F2?logo=discord&logoColor=white)](https://discordpy.readthedocs.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Async%20Event--Driven-blueviolet)](#-系統架構)
 [![AI Gateway](https://img.shields.io/badge/AI%20Gateway-Gemini%20%7C%20DeepSeek%20%7C%20Qwen-FF6F00)](#-三階模型智慧閘道)
-[![Slash Commands](https://img.shields.io/badge/Slash%20Commands-210%2B%20Registered-success)](#-指令全字典)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Terms of Service](https://img.shields.io/badge/Terms%20of%20Service-TOS-blue)](TERMS_OF_SERVICE.md)
+[![Privacy Policy](https://img.shields.io/badge/Privacy%20Policy-Policy-green)](PRIVACY_POLICY.md)
 
 ---
 
@@ -165,6 +166,14 @@ python3 update.py
 - 🎵 [輕量音訊與音樂試聽子系統 (docs/AUDIO_SYSTEM.md)](docs/AUDIO_SYSTEM.md)
 - 🛡️ [多級安全與權限設計 (docs/PERMISSIONS.md)](docs/PERMISSIONS.md)
 - 🚢 [正式生產環境部署手冊 (docs/DEPLOYMENT.md)](docs/DEPLOYMENT.md)
+
+---
+
+## ⚖️ 服務條款與隱私權保護 (Terms & Privacy)
+
+ZeroNexus 嚴格恪守 Discord 開發者條款、臺灣《個人資料保護法》(PDPA) 與歐盟 GDPR 規範：
+- 📜 **服務條款 (Terms of Service)**：詳見 [TERMS_OF_SERVICE.md](./TERMS_OF_SERVICE.md)
+- 🔒 **隱私權政策 (Privacy Policy)**：詳見 [PRIVACY_POLICY.md](./PRIVACY_POLICY.md)
 
 ---
 
