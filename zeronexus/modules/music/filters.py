@@ -5,7 +5,30 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import wavelink
+
+
+# 專業 Hi-Fi 純淨高保真聽感補償曲線 (15-Band Equalizer)
+# 保留原始音調 1.0x、原始速度 1.0x，純粹修飾頻率曲線提升通透度與人聲細節
+HIFI_BANDS: list[dict[str, Any]] = [
+    {"band": 0, "gain": 0.0},     # 25 Hz: 極低頻自然
+    {"band": 1, "gain": 0.02},    # 40 Hz: 超低音微增
+    {"band": 2, "gain": 0.035},   # 63 Hz: 重低音凝聚力
+    {"band": 3, "gain": 0.03},    # 100 Hz: 鼓點扎實度
+    {"band": 4, "gain": 0.0},     # 160 Hz: 自然過渡
+    {"band": 5, "gain": -0.04},   # 250 Hz: 關鍵！去除 YouTube 塑料箱音混濁發悶感
+    {"band": 6, "gain": -0.03},   # 400 Hz: 消除中低頻轟鳴感
+    {"band": 7, "gain": 0.0},     # 630 Hz: 中頻基石
+    {"band": 8, "gain": 0.015},   # 1.0 kHz: 人聲主體浮凸
+    {"band": 9, "gain": 0.035},   # 1.6 kHz: 清澈度提升
+    {"band": 10, "gain": 0.045},  # 2.5 kHz: 咬字清晰與樂器分離度
+    {"band": 11, "gain": 0.04},   # 4.0 kHz: 歌手穿透力強化
+    {"band": 12, "gain": 0.05},   # 6.3 kHz: 高頻樂器泛音與空氣感
+    {"band": 13, "gain": 0.04},   # 10.0 kHz: 細膩度提升
+    {"band": 14, "gain": 0.02},   # 16.0 kHz: 極高頻光澤
+]
 
 
 class MusicFilters:
@@ -52,7 +75,24 @@ class MusicFilters:
         return gain
 
     @classmethod
+    async def apply_hifi(cls, player: wavelink.Player) -> None:
+        """套用純淨高保真 Hi-Fi 等化補償曲線。"""
+        filters: wavelink.Filters = player.filters or wavelink.Filters()
+        filters.equalizer.set(bands=HIFI_BANDS)
+        await player.set_filters(filters)
+        setattr(player, "_hifi_enabled", True)
+
+    @classmethod
+    async def apply_flat(cls, player: wavelink.Player) -> None:
+        """重設等化器為 Flat 原音直通模式。"""
+        filters: wavelink.Filters = player.filters or wavelink.Filters()
+        filters.equalizer.reset()
+        await player.set_filters(filters)
+        setattr(player, "_hifi_enabled", False)
+
+    @classmethod
     async def reset_all(cls, player: wavelink.Player) -> None:
         """重設所有音訊濾鏡為預設平坦狀態。"""
         filters = wavelink.Filters()
         await player.set_filters(filters)
+        setattr(player, "_hifi_enabled", False)

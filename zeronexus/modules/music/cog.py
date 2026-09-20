@@ -61,6 +61,7 @@ class MusicModule(BaseModule):
             ("音量", "調整音樂播放音量 (0% ~ 300%)", ZNPermissionLevel.EVERYONE),
             ("音高", "調整音樂音高濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
             ("重低音", "調整重低音強化濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
+            ("音質", "切換純淨高保真 Hi-Fi 增強模式 (提升人聲清澈度與通透感)", ZNPermissionLevel.EVERYONE),
         ]
         for name, desc, perm in commands_list:
             self.registered_commands.append(
@@ -77,6 +78,7 @@ class MusicModule(BaseModule):
 
     async def shutdown(self) -> None:
         self.set_state(ModuleState.DISABLED, "音樂模組安全關退")
+
 
 
 class MusicCog(commands.Cog):
@@ -117,7 +119,8 @@ class MusicCog(commands.Cog):
                     break
                 except Exception as ex:
                     log.debug(f"[MusicCog] 進度條定時刷新例外: {ex}")
-                    break
+                    await asyncio.sleep(2.0)
+                    continue
 
         self._ticker_tasks[guild_id] = self.bot.loop.create_task(_ticker_loop())
 
@@ -157,6 +160,15 @@ class MusicCog(commands.Cog):
                 except Exception:
                     pass
 
+        best_node = self.node_manager.get_best_node()
+        if player is not None and isinstance(player, wavelink.Player):
+            # 若播放器閒置且所在節點並非最優健康節點，主動遷移至最優節點以確保點播品質
+            if best_node and player.node != best_node and best_node.status is wavelink.NodeStatus.CONNECTED and not player.playing:
+                try:
+                    await player.switch_node(best_node)
+                except Exception:
+                    pass
+
         if player is None or not isinstance(player, wavelink.Player):
             try:
                 player = await user_voice.channel.connect(
@@ -164,7 +176,6 @@ class MusicCog(commands.Cog):
                     self_deaf=True,
                     self_mute=False,
                 )
-                best_node = self.node_manager.get_best_node()
                 if best_node and player.node != best_node and best_node.status is wavelink.NodeStatus.CONNECTED:
                     try:
                         await player.switch_node(best_node)
@@ -193,12 +204,12 @@ class MusicCog(commands.Cog):
         if preferred_node and preferred_node.status is wavelink.NodeStatus.CONNECTED and preferred_node not in all_nodes:
             all_nodes.append(preferred_node)
 
-        # 優先排入具備 yt-sosor 或 millo / serenetia 之優質節點
+        # 優先排入健康之優質節點 (如 serenetia)
         for n in getattr(wavelink.Pool, "nodes", {}).values():
             if n.status is wavelink.NodeStatus.CONNECTED and n not in all_nodes:
                 ident_low = n.identifier.lower()
                 uri_low = str(getattr(n, "uri", "")).lower()
-                if any(k in ident_low or k in uri_low for k in ("millo", "serenetia")):
+                if any(k in ident_low or k in uri_low for k in ("serenetia", "trinium")):
                     all_nodes.insert(1 if best_node in all_nodes else 0, n)
                 else:
                     all_nodes.append(n)
@@ -256,6 +267,11 @@ class MusicCog(commands.Cog):
         if not player.playing:
             # 當前未播歌，直接開播並帶上持久化音量
             await player.set_volume(volume)
+            # 全自動套用 Hi-Fi 純淨高保真等化補償濾鏡
+            try:
+                await MusicFilters.apply_hifi(player)
+            except Exception as f_ex:
+                log.debug(f"[MusicCog] 自動套用 Hi-Fi 濾鏡略過: {f_ex}")
             await player.play(track, volume=volume)
 
             dashboard = NowPlayingView(
@@ -454,6 +470,8 @@ class MusicCog(commands.Cog):
         guild_id = interaction.guild_id or 0
         self._stop_ticker(guild_id)
         player.queue.clear()
+        await player.stop()
+
         vol = self.node_manager.get_guild_volume(guild_id)
         card = ZNCard(
             title="🏁 目前沒有正在播放的音樂 (待機中)",
@@ -464,13 +482,19 @@ class MusicCog(commands.Cog):
         )
         ended_view = TrackEndedView(self._create_on_add_song(player))
         dashboard = self._dashboards.get(guild_id)
+        updated = False
         if dashboard and dashboard.message:
             try:
                 lv = card.to_layout_view(extra_view=ended_view)
                 await dashboard.message.edit(view=lv, embed=None)
+                updated = True
             except Exception:
                 pass
-        await InteractionResponder.safe_send(interaction, card=card, view=ended_view)
+
+        if updated:
+            await InteractionResponder.safe_send(interaction, "⏹️ 音樂已停止播放並清空待播隊列。", ephemeral=True)
+        else:
+            await InteractionResponder.safe_send(interaction, card=card, view=ended_view)
 
     # --------------------------------------------------------------------------
     # 5. 跳過指令 /音樂 跳過
@@ -623,6 +647,58 @@ class MusicCog(commands.Cog):
         await InteractionResponder.safe_send(interaction, card=card)
 
     # --------------------------------------------------------------------------
+    # 11. 音質指令 /音樂 音質
+    # --------------------------------------------------------------------------
+    @music_group.command(name="音質", description="設定純淨 Hi-Fi 高保真補償或原音直通 (消除悶濁塑料箱音、提亮人聲)")
+    @app_commands.describe(模式="選擇音質處理模式 (預設為純淨高保真 Hi-Fi)")
+    @app_commands.choices(
+        模式=[
+            app_commands.Choice(name="✨ 純淨高保真 (Hi-Fi 增強：消除中低頻悶濁箱音、提亮人聲與高頻細節)", value="hifi"),
+            app_commands.Choice(name="🎵 原音直通 (Flat 標準：還原純平坦無等化原始聲音)", value="flat"),
+        ]
+    )
+    @command_guard("music", required_level=ZNPermissionLevel.EVERYONE)
+    async def quality_command(
+        self,
+        interaction: discord.Interaction,
+        模式: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
+        if not player or not player.connected:
+            await InteractionResponder.safe_send(interaction, "❌ 目前播放器未連線至語音頻道。", ephemeral=True)
+            return
+
+        current_is_hifi = getattr(player, "_hifi_enabled", True)
+        target_mode = 模式.value if 模式 else ("flat" if current_is_hifi else "hifi")
+
+        if target_mode == "hifi":
+            await MusicFilters.apply_hifi(player)
+            card = ZNCard(
+                title="✨ 音質模式已切換：純淨高保真 (Hi-Fi)",
+                description=(
+                    "已套用專業 **Hi-Fi 15 頻段純淨等化補償曲線**：\n"
+                    "• 📉 **消除悶音 (-0.04)**：精準修除 YouTube 250Hz~400Hz 常見的塑料混濁箱音\n"
+                    "• 📈 **通透提亮 (+0.05)**：增強 1.6kHz~10kHz 人聲咬字細節與樂器空間空氣感\n"
+                    "• 保持 1.0x 原始速度與音調，零破音、不失真，享受最清澈透亮的純粹好聲音！"
+                ),
+                status_pill=ZNStatusPill.SUCCESS,
+                color=ZNColor.PRIMARY,
+            )
+        else:
+            await MusicFilters.apply_flat(player)
+            card = ZNCard(
+                title="🎵 音質模式已切換：原音直通 (Flat)",
+                description=(
+                    "已關閉所有等化補償濾鏡，切換為 **Flat 標準原音直通模式**。\n"
+                    "音樂將完全依照音訊來源原始頻率曲線平直輸出。"
+                ),
+                status_pill=ZNStatusPill.INFO,
+                color=ZNColor.SECONDARY,
+            )
+
+        await InteractionResponder.safe_send(interaction, card=card)
+
+    # --------------------------------------------------------------------------
     # 事件監聽：歌曲播放開始 (Track Start)
     # --------------------------------------------------------------------------
     @commands.Cog.listener()
@@ -727,6 +803,27 @@ class MusicCog(commands.Cog):
         # 若待播隊列中還有歌曲，自動推進播放下一首
         if len(player.queue) > 0:
             await player.skip(force=True)
+        else:
+            # 隊列無剩餘歌曲，停止播放器並將控制面板原地轉換為待機卡片
+            guild_id = player.guild.id if player.guild else 0
+            self._stop_ticker(guild_id)
+            await player.stop()
+            vol = self.node_manager.get_guild_volume(guild_id)
+            idle_card = ZNCard(
+                title="🏁 目前沒有正在播放的音樂 (待機中)",
+                description="剛才的歌曲受到 YouTube 存取限制無法取得串流。您可以點擊下方「➕ 添加歌曲」按鈕點播其他歌曲唷～",
+                status_pill=ZNStatusPill.INFO,
+                color=ZNColor.PRIMARY,
+                footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
+            )
+            ended_view = TrackEndedView(self._create_on_add_song(player))
+            lv = idle_card.to_layout_view(extra_view=ended_view)
+            dashboard = self._dashboards.get(guild_id)
+            if dashboard and dashboard.message:
+                try:
+                    await dashboard.message.edit(view=lv, embed=None)
+                except Exception:
+                    pass
 
     # --------------------------------------------------------------------------
     # 事件監聽：語音 WebSocket 關閉 (Websocket Closed)
@@ -764,23 +861,24 @@ class MusicCog(commands.Cog):
         )
 
         ended_view = TrackEndedView(self._create_on_add_song(player))
+        lv = card.to_layout_view(extra_view=ended_view)
         dashboard = self._dashboards.get(guild_id)
 
         updated = False
         if dashboard and dashboard.message:
             try:
-                await dashboard.message.edit(embed=card.to_embed(), view=ended_view)
+                await dashboard.message.edit(view=lv, embed=None)
                 updated = True
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"[MusicCog] 播畢原地更新控制面板失敗: {e}")
 
         if not updated:
             channel = player.channel
             if channel and isinstance(channel, discord.TextChannel):
                 try:
-                    await channel.send(embed=card.to_embed(), view=ended_view)
-                except Exception:
-                    pass
+                    await channel.send(view=lv)
+                except Exception as e:
+                    log.warning(f"[MusicCog] 播畢發送待機卡片失敗: {e}")
 
 
 async def setup(bot: commands.Bot) -> None:
