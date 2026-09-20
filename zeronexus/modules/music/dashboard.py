@@ -179,7 +179,7 @@ class NowPlayingView(discord.ui.View):
     def _sync_buttons(self) -> None:
         """依播放器狀態更新按鈕樣式與標籤。"""
         is_paused = getattr(self.player, "paused", False)
-        self.btn_pause_resume.label = "▶️ 繼續" if is_paused else "⏸️ 暫停"
+        self.btn_pause_resume.label = "▶️ 播放" if is_paused else "⏸️ 暫停"
         self.btn_pause_resume.style = discord.ButtonStyle.success if is_paused else discord.ButtonStyle.primary
 
         mode = getattr(self.player.queue, "mode", wavelink.QueueMode.normal)
@@ -211,41 +211,62 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(label="⏸️ 暫停", style=discord.ButtonStyle.primary, row=0)
     async def btn_pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
         is_paused = getattr(self.player, "paused", False)
-        await self.player.pause(not is_paused)
-        await self.refresh_dashboard()
+        new_paused = not is_paused
+        await self.player.pause(new_paused)
+
+        button.label = "▶️ 播放" if new_paused else "⏸️ 暫停"
+        button.style = discord.ButtonStyle.success if new_paused else discord.ButtonStyle.primary
+        self.btn_pause_resume.label = button.label
+        self.btn_pause_resume.style = button.style
+
+        vol = NodePoolManager.get_instance().get_guild_volume(self.guild_id)
+        card = build_now_playing_card(self.player, vol)
+        lv = card.to_layout_view(extra_view=self)
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(view=lv, embed=None)
+        else:
+            await self.refresh_dashboard()
 
     @discord.ui.button(label="⏹️ 停止", style=discord.ButtonStyle.danger, row=0)
     async def btn_stop(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
         self.player.queue.clear()
         await self.player.stop()
+
+        vol = NodePoolManager.get_instance().get_guild_volume(self.guild_id)
         card = ZNCard(
-            title="⏹️ 音樂已停止",
-            description="已停止音樂播放並清空待播隊列。",
-            status_pill=ZNStatusPill.WARNING,
-            color=ZNColor.ERROR,
+            title="🏁 目前沒有正在播放的音樂 (待機中)",
+            description="音樂已停止播放並清空待播隊列。您可以點擊下方「➕ 添加歌曲」按鈕繼續點播新歌曲唷～",
+            status_pill=ZNStatusPill.INFO,
+            color=ZNColor.PRIMARY,
+            footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
         )
-        if self.message:
+        ended_view = TrackEndedView(self.on_add_song) if self.on_add_song else None
+        lv = card.to_layout_view(extra_view=ended_view)
+
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(view=lv, embed=None)
+        elif self.message:
             try:
-                await self.message.edit(embed=card.to_embed(), view=None)
+                await self.message.edit(view=lv, embed=None)
             except Exception:
                 pass
 
     @discord.ui.button(label="⏮️ 上一首", style=discord.ButtonStyle.secondary, row=0)
     async def btn_prev(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
         await self.player.seek(0)
-        await self.refresh_dashboard()
+        vol = NodePoolManager.get_instance().get_guild_volume(self.guild_id)
+        card = build_now_playing_card(self.player, vol)
+        lv = card.to_layout_view(extra_view=self)
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(view=lv, embed=None)
+        else:
+            await self.refresh_dashboard()
 
     @discord.ui.button(label="⏭️ 下一首", style=discord.ButtonStyle.primary, row=0)
     async def btn_next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            await interaction.response.defer(thinking=False)
         await self.player.skip(force=True)
 
     @discord.ui.button(label="🔊 音量", style=discord.ButtonStyle.secondary, row=0)
@@ -255,8 +276,6 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(label="🔁 循環：關閉", style=discord.ButtonStyle.secondary, row=1)
     async def btn_loop(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer()
         current_mode = getattr(self.player.queue, "mode", wavelink.QueueMode.normal)
         if current_mode == wavelink.QueueMode.normal:
             self.player.queue.mode = wavelink.QueueMode.loop
@@ -264,7 +283,15 @@ class NowPlayingView(discord.ui.View):
             self.player.queue.mode = wavelink.QueueMode.loop_all
         else:
             self.player.queue.mode = wavelink.QueueMode.normal
-        await self.refresh_dashboard()
+
+        self._sync_buttons()
+        vol = NodePoolManager.get_instance().get_guild_volume(self.guild_id)
+        card = build_now_playing_card(self.player, vol)
+        lv = card.to_layout_view(extra_view=self)
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(view=lv, embed=None)
+        else:
+            await self.refresh_dashboard()
 
     @discord.ui.button(label="➕ 添加歌曲", style=discord.ButtonStyle.success, row=1)
     async def btn_add_song(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:

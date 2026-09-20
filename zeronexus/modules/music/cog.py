@@ -451,20 +451,23 @@ class MusicCog(commands.Cog):
         guild_id = interaction.guild_id or 0
         self._stop_ticker(guild_id)
         player.queue.clear()
-        await player.stop()
+        vol = self.node_manager.get_guild_volume(guild_id)
         card = ZNCard(
-            title="⏹️ 音樂已停止",
-            description="已停止音樂播放並清空待播隊列。",
-            status_pill=ZNStatusPill.WARNING,
-            color=ZNColor.ERROR,
+            title="🏁 目前沒有正在播放的音樂 (待機中)",
+            description="音樂已停止播放並清空待播隊列。您可以點擊下方「➕ 添加歌曲」按鈕繼續點播新歌曲唷～",
+            status_pill=ZNStatusPill.INFO,
+            color=ZNColor.PRIMARY,
+            footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
         )
+        ended_view = TrackEndedView(self._create_on_add_song(player))
         dashboard = self._dashboards.get(guild_id)
         if dashboard and dashboard.message:
             try:
-                await dashboard.message.edit(embed=card.to_embed(), view=None)
+                lv = card.to_layout_view(extra_view=ended_view)
+                await dashboard.message.edit(view=lv, embed=None)
             except Exception:
                 pass
-        await InteractionResponder.safe_send(interaction, card=card)
+        await InteractionResponder.safe_send(interaction, card=card, view=ended_view)
 
     # --------------------------------------------------------------------------
     # 5. 跳過指令 /音樂 跳過
