@@ -167,6 +167,7 @@ class NowPlayingView(discord.ui.View):
         guild_id: int,
         message: Optional[discord.Message] = None,
         on_add_song: Optional[Callable[[discord.Interaction, str], Coroutine[Any, Any, None]]] = None,
+        text_channel_id: Optional[int] = None,
     ) -> None:
         super().__init__(timeout=None)
         self.player = player
@@ -174,6 +175,7 @@ class NowPlayingView(discord.ui.View):
         self.guild_id = guild_id
         self.message = message
         self.on_add_song = on_add_song
+        self.text_channel_id = text_channel_id
         self._sync_buttons()
 
     def _sync_buttons(self) -> None:
@@ -201,13 +203,11 @@ class NowPlayingView(discord.ui.View):
         card = build_now_playing_card(self.player, vol)
         if self.message:
             try:
-                lv = card.to_layout_view(extra_view=self)
+                lv = card.to_layout_view(extra_view=self, timeout=None)
                 await self.message.edit(view=lv, embed=None)
-            except Exception:
-                try:
-                    await self.message.edit(embed=card.to_embed(), view=self)
-                except Exception:
-                    pass
+            except Exception as ex:
+                from zeronexus.core.logger import log
+                log.warning(f"[MusicDashboard] 刷新控制面板失敗: {ex}")
 
     @discord.ui.button(label="⏸️ 暫停", style=discord.ButtonStyle.primary, row=0)
     async def btn_pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -379,7 +379,7 @@ class TrackEndedView(discord.ui.View):
     """全部曲目播放完畢後之待機面板 View。"""
 
     def __init__(self, on_add_song: Callable[[discord.Interaction, str], Coroutine[Any, Any, None]]) -> None:
-        super().__init__(timeout=180.0)
+        super().__init__(timeout=None)
         self.on_add_song = on_add_song
 
     @discord.ui.button(label="➕ 添加歌曲", style=discord.ButtonStyle.success)

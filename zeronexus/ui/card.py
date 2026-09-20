@@ -177,7 +177,7 @@ class ZNCard:
     def to_layout_view(
         self,
         extra_view: Optional[Union[discord.ui.View, discord.ui.LayoutView]] = None,
-        timeout: Optional[float] = 180.0,
+        timeout: Optional[float] = None,
     ) -> ZNLayoutView:
         """Renders this card as an authentic Discord Components V2 LayoutView.
         
@@ -194,7 +194,14 @@ class ZNCard:
             ActionRow (Buttons / Selects from extra_view)
         ]
         """
-        layout_view = ZNLayoutView(timeout=timeout)
+        # 若 extra_view 指定了超時（例如 None 代表永久在線），優先繼承 extra_view 的超時設定
+        actual_timeout = timeout
+        if extra_view is not None:
+            actual_timeout = getattr(extra_view, "timeout", None)
+        elif timeout is None:
+            actual_timeout = 180.0
+
+        layout_view = ZNLayoutView(timeout=actual_timeout)
         layout_view.card = self
         layout_view.extra_view = extra_view
         container = discord.ui.Container(accent_color=self.color)

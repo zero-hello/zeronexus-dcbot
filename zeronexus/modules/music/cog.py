@@ -100,25 +100,54 @@ class MusicCog(commands.Cog):
         self.bot.loop.create_task(self.node_manager.initialize(self.bot))
 
     def _start_ticker(self, guild_id: int, player: wavelink.Player) -> None:
-        """啟動該伺服器控制面板進度條背景刷新任務 (每 6 秒平滑更新)。"""
+        """啟動該伺服器控制面板進度條背景刷新任務 (每 5 秒平滑更新並自動巡檢播畢狀態)。"""
         self._stop_ticker(guild_id)
 
         async def _ticker_loop() -> None:
+            idle_ticks = 0
             while True:
-                await asyncio.sleep(6.0)
+                await asyncio.sleep(5.0)
                 try:
-                    if not player or not player.connected or not player.playing:
+                    if not player or not player.connected:
                         break
-                    # 若暫停中則略過該次編輯以節省 API 資源
-                    if getattr(player, "paused", False):
-                        continue
+
                     dashboard = self._dashboards.get(guild_id)
-                    if dashboard and dashboard.message:
+                    if not dashboard or not dashboard.message:
+                        continue
+
+                    if player.playing:
+                        idle_ticks = 0
+                        if getattr(player, "paused", False):
+                            continue
                         await dashboard.refresh_dashboard()
+                    else:
+                        # 未在播放中，巡檢隊列是否已播畢清空
+                        if len(player.queue) == 0:
+                            idle_ticks += 1
+                            # 連續兩次巡檢 (約 10 秒) 均非播放狀態且隊列為空，主動執行播畢轉換待機面板
+                            if idle_ticks >= 2:
+                                vol = self.node_manager.get_guild_volume(guild_id)
+                                idle_card = ZNCard(
+                                    title="🏁 待播隊列已播放完畢 (待機中)",
+                                    description="隊列中的歌曲已全部播放完畢！您可以點擊下方「➕ 添加歌曲」按鈕繼續點播新歌曲唷～",
+                                    status_pill=ZNStatusPill.INFO,
+                                    color=ZNColor.PRIMARY,
+                                    footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
+                                )
+                                ended_view = TrackEndedView(self._create_on_add_song(player))
+                                lv = idle_card.to_layout_view(extra_view=ended_view, timeout=None)
+                                try:
+                                    await dashboard.message.edit(view=lv, embed=None)
+                                    log.info(f"[MusicCog] 背景巡檢主動將伺服器 {guild_id} 控制面板原地轉換為待機卡片")
+                                except Exception as e:
+                                    log.warning(f"[MusicCog] 背景巡檢更新待機卡片例外: {e}")
+                                break
+                        else:
+                            idle_ticks = 0
                 except asyncio.CancelledError:
                     break
                 except Exception as ex:
-                    log.debug(f"[MusicCog] 進度條定時刷新例外: {ex}")
+                    log.warning(f"[MusicCog] 進度條定時刷新例外: {ex}")
                     await asyncio.sleep(2.0)
                     continue
 
@@ -176,11 +205,6 @@ class MusicCog(commands.Cog):
                     self_deaf=True,
                     self_mute=False,
                 )
-                if best_node and player.node != best_node and best_node.status is wavelink.NodeStatus.CONNECTED:
-                    try:
-                        await player.switch_node(best_node)
-                    except Exception:
-                        pass
             except Exception as ex:
                 await InteractionResponder.safe_send(interaction, f"❌ 無法加入語音頻道：`{ex}`", ephemeral=True)
                 return None
@@ -279,6 +303,7 @@ class MusicCog(commands.Cog):
                 volume=volume,
                 guild_id=guild_id,
                 on_add_song=self._create_on_add_song(player),
+                text_channel_id=interaction.channel_id,
             )
             self._dashboards[guild_id] = dashboard
 
@@ -351,6 +376,7 @@ class MusicCog(commands.Cog):
                                 volume=vol,
                                 guild_id=inter.guild_id or 0,
                                 on_add_song=self._create_on_add_song(player),
+                                text_channel_id=inter.channel_id,
                             )
                             self._dashboards[inter.guild_id or 0] = dashboard
                             card = build_now_playing_card(player, vol)
@@ -707,8 +733,10 @@ class MusicCog(commands.Cog):
         player = payload.player
         if not player or not player.guild:
             return
-        setattr(player, "_failover_count", 0)
         guild_id = player.guild.id
+        track_title = getattr(payload.track, "title", "未知曲目")
+        log.info(f"[MusicCog] 歌曲開始播放: {track_title} (伺服器 ID: {guild_id})")
+        setattr(player, "_failover_count", 0)
         self._start_ticker(guild_id, player)
         dashboard = self._dashboards.get(guild_id)
         if dashboard:
@@ -844,6 +872,10 @@ class MusicCog(commands.Cog):
             return
 
         guild_id = player.guild.id
+        track_title = getattr(payload.track, "title", "未知曲目")
+        reason = getattr(payload, "reason", "finished")
+        log.info(f"[MusicCog] 歌曲播放結束: {track_title}, reason={reason}, 隊列剩餘: {len(player.queue)}")
+
         self._stop_ticker(guild_id)
 
         # 若隊列還有歌，Wavelink 會自動播放下一首
@@ -861,7 +893,7 @@ class MusicCog(commands.Cog):
         )
 
         ended_view = TrackEndedView(self._create_on_add_song(player))
-        lv = card.to_layout_view(extra_view=ended_view)
+        lv = card.to_layout_view(extra_view=ended_view, timeout=None)
         dashboard = self._dashboards.get(guild_id)
 
         updated = False
@@ -869,16 +901,21 @@ class MusicCog(commands.Cog):
             try:
                 await dashboard.message.edit(view=lv, embed=None)
                 updated = True
+                log.info(f"[MusicCog] 成功原地更新伺服器 {guild_id} 控制面板為播畢待機卡片")
             except Exception as e:
                 log.warning(f"[MusicCog] 播畢原地更新控制面板失敗: {e}")
 
         if not updated:
-            channel = player.channel
-            if channel and isinstance(channel, discord.TextChannel):
+            text_ch_id = getattr(dashboard, "text_channel_id", None)
+            target_ch = self.bot.get_channel(text_ch_id) if text_ch_id else None
+            if not target_ch and hasattr(player.channel, "send"):
+                target_ch = player.channel
+            if target_ch:
                 try:
-                    await channel.send(view=lv)
+                    await target_ch.send(view=lv)
+                    log.info(f"[MusicCog] 成功於頻道 {target_ch.id} 發送播畢待機卡片")
                 except Exception as e:
-                    log.warning(f"[MusicCog] 播畢發送待機卡片失敗: {e}")
+                    log.warning(f"[MusicCog] 播畢備援發送待機卡片失敗: {e}")
 
 
 async def setup(bot: commands.Bot) -> None:

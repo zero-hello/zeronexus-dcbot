@@ -97,7 +97,7 @@ class NodePoolManager:
                     log.warning(f"[NodePoolManager] 公共節點抓取失敗: {ex}")
 
             # 黑名單防禦：主動過濾已知 IP 被 YouTube 封鎖或頻繁 524 逾時之節點
-            blocked_keywords = {"triniumhost"}
+            blocked_keywords = {"triniumhost", "millohost", "millo"}
             candidate_nodes = [
                 n for n in candidate_nodes
                 if not any(b in n["host"].lower() or b in n.get("name", "").lower() for b in blocked_keywords)
@@ -111,8 +111,9 @@ class NodePoolManager:
                 p for p in probe_results
                 if p.is_online and p.is_v4 and not any(b in p.host.lower() for b in blocked_keywords)
             ]
-            # 優先排序準則：1. SSL 安全通道 2. 具備 yt-sosor 抗封鎖外掛 3. 支援 YouTube 4. 連線延遲最低
+            # 優先排序準則：1. Serenetia 優先 2. SSL 安全通道 3. 具備 yt-sosor 抗封鎖外掛 4. 支援 YouTube 5. 連線延遲最低
             valid_probes.sort(key=lambda p: (
+                "serenetia" not in p.host.lower() and "serenetia" not in getattr(p, "identifier", "").lower(),
                 not p.secure,
                 not getattr(p, "has_yt_sosor", False),
                 not p.supports_youtube,
