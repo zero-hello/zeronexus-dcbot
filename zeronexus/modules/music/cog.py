@@ -156,13 +156,17 @@ class MusicCog(commands.Cog):
 
         if player is None or not isinstance(player, wavelink.Player):
             try:
-                best_node = self.node_manager.get_best_node()
                 player = await user_voice.channel.connect(
                     cls=wavelink.Player,
                     self_deaf=True,
                     self_mute=False,
-                    node=best_node,
                 )
+                best_node = self.node_manager.get_best_node()
+                if best_node and player.node != best_node and best_node.status is wavelink.NodeStatus.CONNECTED:
+                    try:
+                        await player.switch_node(best_node)
+                    except Exception:
+                        pass
             except Exception as ex:
                 await InteractionResponder.safe_send(interaction, f"❌ 無法加入語音頻道：`{ex}`", ephemeral=True)
                 return None
