@@ -201,10 +201,13 @@ class NowPlayingView(discord.ui.View):
         card = build_now_playing_card(self.player, vol)
         if self.message:
             try:
-                embed = card.to_embed()
-                await self.message.edit(embed=embed, view=self)
+                lv = card.to_layout_view(extra_view=self)
+                await self.message.edit(view=lv, embed=None)
             except Exception:
-                pass
+                try:
+                    await self.message.edit(embed=card.to_embed(), view=self)
+                except Exception:
+                    pass
 
     @discord.ui.button(label="⏸️ 暫停", style=discord.ButtonStyle.primary, row=0)
     async def btn_pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:

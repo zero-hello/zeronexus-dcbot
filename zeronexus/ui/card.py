@@ -252,14 +252,18 @@ class ZNCard:
 
         # 7. Attach Interactive Elements (from extra_view or attached buttons)
         if extra_view is not None:
-            interactive_items = []
+            from collections import defaultdict
+            rows_dict = defaultdict(list)
             for item in getattr(extra_view, "children", []):
                 if isinstance(item, (discord.ui.Button, discord.ui.Select)):
-                    interactive_items.append(item)
+                    row_idx = getattr(item, "row", 0) or 0
+                    rows_dict[row_idx].append(item)
 
-            if interactive_items:
-                row = discord.ui.ActionRow(*interactive_items[:5])
-                container.add_item(row)
+            if rows_dict:
+                for r_idx in sorted(rows_dict.keys()):
+                    items = rows_dict[r_idx]
+                    for i in range(0, len(items), 5):
+                        container.add_item(discord.ui.ActionRow(*items[i:i+5]))
 
         layout_view.add_item(container)
         return layout_view
