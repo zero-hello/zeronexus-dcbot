@@ -887,6 +887,76 @@ class ZeroNexusBot(commands.Bot):
         except Exception as te:
             log.debug(f"typing_indicator_error: {te}")
 
+    async def _handle_first_time_user_onboarding(
+        self,
+        message: discord.Message,
+        effective_channel: discord.abc.Messageable,
+        channel_override: Optional[discord.abc.Messageable],
+        req_ctx: RequestContext,
+    ) -> None:
+        """新用戶首次見面專屬歡迎與導覽卡片（固定模板，內容由 AI 動態生動組織，不回應原問題）。
+        發送後自動記錄互動次數，使接下來的對話恢復正常的 AI 互動。
+        """
+        user_name = req_ctx.author_name
+        welcome_greeting = f"嗨嗨 {user_name}！太開心能在這裡遇見你啦～✨ 我是你的次世代智慧夥伴 ZeroNexus！"
+        try:
+            from zeronexus.ai_gateway.gateway import ai_gateway
+            ai_res, _ = await ai_gateway.generate_response(
+                system_instruction=(
+                    "你是 ZeroNexus，一個充滿活力、可愛、開朗且聰明的 Discord 智慧夥伴。\n"
+                    "現在有一位新朋友第一次跟你說話，請用 2~3 句道地臺灣繁體中文向他熱情打招呼，展現滿滿的活力與歡迎，"
+                    "【絕對不要】回答對方剛才可能問的具體問題，純粹做溫暖可愛的見面問候即可！"
+                ),
+                messages=[{"role": "user", "content": f"哈囉！我是 {user_name}，很高興認識你！"}],
+                override_model="gemini-3.1-flash-lite",
+                allow_fallback=True,
+            )
+            if ai_res and ai_res.text:
+                welcome_greeting = ai_res.text.strip()
+        except Exception as ge:
+            log.debug(f"Dynamic welcome greeting generation fallback: {ge}")
+
+        card = ZNCard(
+            title=f"🌱 歡迎來到 ZeroNexus！新朋友啟航指南 ➔ {user_name}",
+            description=(
+                f"{welcome_greeting}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"### 💡 【快速上手指南・你可以這樣和我玩】\n"
+                f"1. 💬 **隨時開聊**：直接在頻道 `@ZeroNexus` 或在專屬頻道說話，生活瑣事、知識解惑、文案企劃我都在！\n"
+                f"2. ⛽ **臺灣民生即時情報**：直接問我中油油價預測、統一發票中獎號碼、雙鐵火車高鐵班次，或台美股市即時行情。\n"
+                f"3. 🎨 **AI 影像創作**：輸入 `/image` 每天享有免費高畫質生圖配額。\n"
+                f"4. 🔄 **頂尖模型隨心換**：輸入 `/ai_model` 或直接對我說「切換到 deepseek / qwen」，秒級切換不同思維。\n"
+                f"5. ⚖️ **賽博法庭主持公道**：群友吵架意見不合？直接 `@ZeroNexus 誰有理`，我會自動回溯現場敲槌主持公道！\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✨ **專屬提示**：現在你已經解鎖所有功能囉！直接再次 `@ZeroNexus` 跟我說話，就可以正式開始我們的聊天啦～"
+            ),
+            status_pill=ZNStatusPill.SUCCESS,
+            color=ZNColor.PURPLE,
+            footer_text="ZeroNexus 次世代智慧中樞 • 新用戶初次見面禮",
+        )
+
+        try:
+            if channel_override is not None:
+                await effective_channel.send(embed=card.to_embed())
+            else:
+                await message.reply(embed=card.to_embed(), mention_author=False)
+        except Exception:
+            try:
+                await effective_channel.send(embed=card.to_embed())
+            except Exception as se:
+                log.warning(f"Failed to send first time onboarding card: {se}")
+
+        # 立即記錄互動次數，使接下來的對話恢復正常 AI
+        try:
+            from zeronexus.engines.affinity_engine import affinity_engine
+            await affinity_engine.record_interaction(
+                user_id=message.author.id,
+                user_text="[首次見面完成新手導覽]",
+                is_private_thread=False,
+            )
+        except Exception as re:
+            log.warning(f"Failed to record onboarding interaction: {re}")
+
     async def _trace_dispute_context(self, message: discord.Message) -> Optional[str]:
         """賽博法庭爭端脈絡追溯器：
         1. 若使用者有引用回覆（Reply）某則訊息：精準抓取自被引用起點訊息至當前訊息之對話序列。
@@ -1312,6 +1382,22 @@ class ZeroNexusBot(commands.Bot):
                 except Exception:
                     pass
             return
+
+        # 1.2. 新用戶初次對話專屬獨立迎新卡片（固定模板，內容由 AI 動態生成，不回應原問題）
+        if not is_secret_easter_egg:
+            try:
+                from zeronexus.engines.affinity_engine import affinity_engine
+                is_first_chat = await affinity_engine.is_new_user(message.author.id)
+                if is_first_chat:
+                    await self._handle_first_time_user_onboarding(
+                        message=message,
+                        effective_channel=effective_channel,
+                        channel_override=channel_override,
+                        req_ctx=req_ctx,
+                    )
+                    return
+            except Exception as n_err:
+                log.debug(f"Failed to handle first-time user onboarding: {n_err}")
 
         # 1.5. Natural Language Private Heart Thread Intent Check (自然語言意圖觸發私密討論串)
         if (
@@ -1750,28 +1836,6 @@ class ZeroNexusBot(commands.Bot):
             dispute_context = await self._trace_dispute_context(message)
             if dispute_context:
                 system_instruction += "\n\n" + dispute_context
-
-            # 新用戶首次對話偵測與歡迎教學導覽注入
-            try:
-                from zeronexus.engines.affinity_engine import affinity_engine
-                is_first_chat = await affinity_engine.is_new_user(message.author.id)
-                if is_first_chat:
-                    new_user_onboarding_guide = (
-                        f"\n\n【🌱 新朋友首次見面歡迎與快速上手導覽指令 (First-Time Onboarding)】：\n"
-                        f"這是使用者「{message.author.display_name}」與你的【第一次對話】！\n"
-                        f"請在回答其問題的最開頭，先以熱情、開朗、可愛且富有活力的口吻，送上一小段溫暖的「歡迎使用與快速上手教學導覽」：\n"
-                        f"1. ✨ 熱情迎接新朋友來到 ZeroNexus 智慧社群！\n"
-                        f"2. 💡 簡單告訴對方能怎麼和你玩：\n"
-                        f"   - 💬 隨時 @我 暢聊生活瑣事或專業解惑\n"
-                        f"   - ⛽ 生活實時情報：直接問我油價、發票中獎、火車高鐵班次或股市即時行情\n"
-                        f"   - 🎨 AI 繪圖：輸入 `/image` 每天享有免費高畫質生圖配額\n"
-                        f"   - 🔄 切換心智模型：輸入 `/ai_model` 或直接跟我說「切換到 deepseek」\n"
-                        f"   - ⚖️ 賽博法庭：群友吵架時直接 @我 或回覆訊息問「誰有理」，我會敲槌主持公道！\n"
-                        f"3. 隨後自然過渡，全力且詳細地回答對方剛才提出的具體問題！"
-                    )
-                    system_instruction += new_user_onboarding_guide
-            except Exception as nue:
-                log.debug(f"Failed to check new user onboarding: {nue}")
 
             is_model_inquiry = not (switch_req and switch_req.is_switch_intent and switch_req.matched_model) and (
                 any(kw in user_prompt.lower() for kw in ["模型清單", "有哪些模型", "有什麼模型", "支援什麼模型", "支援哪些模型", "模型有哪些", "推薦模型", "所有模型", "模型列表", "介紹模型", "列出"])
