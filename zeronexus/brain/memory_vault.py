@@ -56,6 +56,8 @@ class EncryptedMemoryVault:
         self.diary_dir = diary_dir or DEFAULT_DIARY_DIR
         self._init_encryption_key(secret_key)
         self._init_db()
+        # 情感記憶召回冷卻防護網 (recall cooldown & influence cap)
+        self._recall_history: dict[int, dict[str, float]] = {}
 
     def _init_encryption_key(self, secret_key: Optional[str]) -> None:
         """從環境變數或本地種子衍生出 256-bit AES 金鑰"""
@@ -141,6 +143,57 @@ class EncryptedMemoryVault:
         except Exception as e:
             log.error(f"提取情節記憶失敗: {e}")
         return records
+
+    def evaluate_emotional_recall(
+        self,
+        memory: MemoryRecord,
+        cooldown_seconds: float = 300.0,
+        max_recalls_per_session: int = 3,
+        influence_cap: float = 0.05,
+    ) -> Optional[dict[str, float]]:
+        """情感記憶喚醒評估器 (依據計畫書第 9 條規範)：
+        
+        記憶不可因為重複召回而無限累積情緒。
+        1. 檢查 recall cooldown (預設 300 秒冷卻期)。
+        2. 檢查 recall limit (單會話最多召回 3 次)。
+        3. 透過 influence cap (預設上限 ±0.05) 嚴格箝制單次情緒影響力。
+        """
+        now = time.time()
+        meta = self._recall_history.get(memory.id, {"last_recalled": 0.0, "count": 0})
+
+        # 冷卻期檢測
+        if (now - meta["last_recalled"]) < cooldown_seconds:
+            return None
+
+        # 召回次數上限檢測
+        if meta["count"] >= max_recalls_per_session:
+            return None
+
+        # 記錄召回
+        meta["last_recalled"] = now
+        meta["count"] += 1
+        self._recall_history[memory.id] = meta
+
+        # 依記憶情緒標籤映射微幅情感喚醒 (Emotional Recall)
+        tag = (memory.emotion_tag or "").lower()
+        deltas: dict[str, float] = {}
+
+        if any(w in tag for w in ["喜悅", "開懷", "感動", "歡欣"]):
+            deltas["happiness"] = min(influence_cap, 0.03 * (memory.importance / 3.0))
+            deltas["trust"] = min(influence_cap, 0.02)
+        elif any(w in tag for w in ["悲傷", "難過", "失落", "疲憊"]):
+            deltas["sadness"] = min(influence_cap, 0.025 * (memory.importance / 3.0))
+            deltas["calmness"] = -0.01
+        elif any(w in tag for w in ["溫暖", "信任", "安心", "親切"]):
+            deltas["trust"] = min(influence_cap, 0.04)
+            deltas["happiness"] = min(influence_cap, 0.02)
+        elif any(w in tag for w in ["挫折", "困惑", "焦慮"]):
+            deltas["frustration"] = min(influence_cap, 0.02)
+            deltas["curiosity"] = min(influence_cap, 0.03)
+        else:
+            deltas["curiosity"] = min(influence_cap, 0.02)
+
+        return deltas
 
     def save_conscious_diary(self, date_str: str, diary_content: str) -> bool:
         """加密儲存當天的心智反思日記 (AES-256-GCM)"""

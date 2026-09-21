@@ -20,6 +20,11 @@ from zeronexus.brain.emotion_projector import EmotionAnalysisResult, HighDimensi
 from zeronexus.brain.memory_vault import EncryptedMemoryVault
 from zeronexus.brain.neuro_transmitters import NeuroTransmitterEngine
 from zeronexus.brain.physics_modulator import DynamicGenerationParameters, PhysicsParameterModulator
+from zeronexus.brain.emotion_state_engine import emotion_state_engine
+from zeronexus.brain.event_system import EventDetector, event_history_logger
+from zeronexus.brain.relationship_layer import relationship_layer
+from zeronexus.evolution.smart_collector import smart_collector
+from zeronexus.evolution.dataset_builder import dataset_builder
 
 log = logging.getLogger("ZeroNexus.Brain.Core")
 
@@ -64,11 +69,26 @@ class BioBrainCore:
         # 1. 三大離線神經模型陣列集成情緒投影分析
         analysis = self.emotion_projector.analyze_text(message_text)
 
-        # 2. 考量生物晝夜節律之精力調節
+        # 2. 語意事件檢測與歷史事件隊列紀錄 (依據計畫書第 8 條)
+        semantic_evt = EventDetector.detect_event_from_text(
+            text=message_text,
+            user_id=str(user_id),
+        )
+        event_history_logger.log_event(semantic_evt)
+
+        # 3. 人際關係層與時間流逝感知 (依據計畫書第 10、11 條)
+        relationship_layer.record_interaction(
+            user_id=str(user_id),
+            user_name=user_name,
+            quality_score=max(0.3, analysis.intensity),
+            event_type=semantic_evt.event_type,
+        )
+
+        # 4. 考量生物晝夜節律之精力調節
         circadian = self.circadian_engine.get_current_phase()
         energy_cost = 1.2 / circadian["energy_modifier"]
 
-        # 3. 推動神經遞質與親密度更新
+        # 5. 推動神經遞質與親密度更新 (保留 4 大生化遞質相容)
         new_chem = self.neuro_engine.stimulate(
             user_id=str(user_id),
             delta_dopamine=analysis.delta_dopamine,
@@ -78,7 +98,7 @@ class BioBrainCore:
             energy_cost=energy_cost,
         )
 
-        # 4. 個人羈絆雷達：自動提取飲食、生活作息、口癖與專屬暱稱
+        # 6. 個人羈絆雷達：自動提取飲食、生活作息、口癖與專屬暱稱
         self.attachment_engine.update_from_conversation(
             user_id=str(user_id),
             user_name=user_name,
@@ -86,7 +106,23 @@ class BioBrainCore:
             oxytocin=new_chem["oxytocin"]
         )
 
-        # 5. 若為重要情緒起伏或重要自我揭露，自動記錄入情節記憶
+        # 7. 情節記憶情感喚醒 (Emotional Recall) 與冷卻上限防護 (依據計畫書第 9 條)
+        combined_deltas = dict(semantic_evt.emotional_effect)
+        memories = self.memory_vault.retrieve_relevant_memories(str(user_id), limit=2)
+        for m in memories:
+            recall_deltas = self.memory_vault.evaluate_emotional_recall(m)
+            if recall_deltas:
+                for k, v in recall_deltas.items():
+                    combined_deltas[k] = combined_deltas.get(k, 0.0) + v
+
+        # 8. 推進 11 維度連續性情緒狀態演進 (依據計畫書第 3、5、12 條)
+        emotion_state_engine.update_state(
+            deltas=combined_deltas,
+            source=f"event_{semantic_evt.event_type}",
+            importance=semantic_evt.importance,
+        )
+
+        # 9. 若為重要情緒起伏或重要自我揭露，自動記錄入情節記憶
         if analysis.intensity > 0.65 or abs(analysis.valence) > 0.6:
             self.memory_vault.record_memory(
                 user_id=str(user_id),
@@ -96,6 +132,42 @@ class BioBrainCore:
             )
 
         return analysis, new_chem
+
+    def record_interaction_turn(
+        self,
+        user_prompt: str,
+        ai_response: str,
+        context_turns: Optional[list[dict[str, str]]] = None,
+        is_user_correction: bool = False,
+    ) -> None:
+        """在完成一輪完整對話後，由 Smart Data Collector 進行多維度品質評估，
+        若達標則沉澱入獨立 Dataset Artifact (依據計畫書第 16、18 條)。
+        """
+        try:
+            snap = emotion_state_engine.get_snapshot()["emotions"]
+            candidate = smart_collector.evaluate_and_collect(
+                user_prompt=user_prompt,
+                ai_response=ai_response,
+                context_turns=context_turns or [],
+                event_type="conversation_turn",
+                emotion_deltas={"happiness": snap["happiness"], "curiosity": snap["curiosity"]},
+                is_user_correction=is_user_correction,
+            )
+            if candidate and candidate.status in ("ACCEPTED", "NEEDS_REVIEW"):
+                # 加入當前獨立資料集工件 (如 zero_dataset_001)
+                dataset_builder.add_sample_to_current(
+                    sample_dict={
+                        "sample_id": candidate.sample_id,
+                        "timestamp": candidate.timestamp,
+                        "user_prompt": candidate.user_prompt,
+                        "ai_response": candidate.ai_response,
+                        "quality_score": candidate.quality_score,
+                        "needs_review": candidate.needs_review,
+                        "status": candidate.status,
+                    }
+                )
+        except Exception as e:
+            log.warning(f"智慧資料採集沉澱至資料集工件失敗: {e}")
 
     def get_prompt_capsule(self, user_id: str, user_name: str = "") -> str:
         """組裝最高位階之【不可抗拒大腦即時生理狀態膠囊】"""

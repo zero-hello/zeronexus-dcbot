@@ -85,6 +85,7 @@ class AIModule(BaseModule):
             ("翻譯助理", "多語系上下文高精確度翻譯", ZNPermissionLevel.EVERYONE),
             ("炸裂功能", "瀏覽 22 款全新 AI 炸裂對話功能與玩法示範", ZNPermissionLevel.EVERYONE),
             ("好感度", "檢視你與 ZeroNexus 之間的心靈羈絆、隱性好感度與專屬印象評價", ZNPermissionLevel.EVERYONE),
+            ("大腦狀態", "檢視 ZeroNexus 11 維度連續情緒狀態、事件歷史與模型血統總覽", ZNPermissionLevel.EVERYONE),
         ]
         for name, desc, perm in commands_list:
             is_guild_only = name in ("設定頻道", "移除頻道", "頻道記憶重置", "重設額度")
@@ -1269,6 +1270,54 @@ class AICog(commands.Cog):
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
         from zeronexus.engines.affinity_engine import affinity_engine
         card = await affinity_engine.build_affinity_card(interaction.user.id, interaction.user.display_name)
+        await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
+
+    @ai_group.command(name="大腦狀態", description="檢視 ZeroNexus 11 維度連續情緒狀態、事件歷史與模型血統總覽")
+    @command_guard("ai")
+    async def brain_status_command(self, interaction: discord.Interaction) -> None:
+        await InteractionResponder.safe_defer(interaction, ephemeral=True)
+        from zeronexus.brain.emotion_state_engine import emotion_state_engine
+        from zeronexus.brain.event_system import event_history_logger
+        from zeronexus.brain.relationship_layer import relationship_layer
+        from zeronexus.evolution.smart_collector import smart_collector
+        from zeronexus.evolution.model_registry import model_registry
+
+        snap = emotion_state_engine.get_snapshot()["emotions"]
+        recent_evts = event_history_logger.format_recent_events_text(limit=3)
+        user_rel = relationship_layer.get_or_create_profile(str(interaction.user.id), interaction.user.display_name)
+        q_stats = smart_collector.get_queue_statistics()
+        current_model = model_registry.registry_data.get("current_production_model") or "Hexa-ONNX 離線神經矩陣"
+
+        desc = (
+            f"### 🧠 【11 維度連續心智情緒指標】\n"
+            f"✨ **愉悅**: `{snap['happiness']:.2f}` | 🕊️ **平靜**: `{snap['calmness']:.2f}` | ⚡ **興奮**: `{snap['excitement']:.2f}`\n"
+            f"🔍 **好奇**: `{snap['curiosity']:.2f}` | 🤝 **信任**: `{snap['trust']:.2f}` | 🔋 **精力**: `{snap['energy']:.2f}`\n"
+            f"🌧️ **悲傷**: `{snap['sadness']:.2f}` | 💢 **憤怒**: `{snap['anger']:.2f}` | 🧗 **挫折**: `{snap['frustration']:.2f}`\n"
+            f"🥀 **孤單**: `{snap['loneliness']:.2f}` | 👥 **社交渴望**: `{snap['social_need']:.2f}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"### 🤝 【個人人際羈絆深度 ➔ {interaction.user.display_name}】\n"
+            f"- **熟稔度 (Familiarity)**: `{user_rel.familiarity:.2f}` | **信任深度 (Trust)**: `{user_rel.trust:.2f}`\n"
+            f"- **有效互動累積**: `{user_rel.total_valid_interactions}` 次 | **溝通風格**: `{user_rel.communication_style}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"### 📜 【近期神經事件序列 (Recent Events)】\n"
+            f"```text\n{recent_evts}\n```\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"### 📦 【智慧資料集採集統計 (Smart Collector)】\n"
+            f"- 候選樣本總量: `{q_stats['total_candidates']}` | 已採納合格: `{q_stats['accepted']}`\n"
+            f"- 人工審核佇列: `{q_stats['needs_review']}` | 樣本平均品質分: `{q_stats['average_quality']}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"### 🏛️ 【線上模型血統 (Model Lineage)】\n"
+            f"- **當前 Production 模型**: `{current_model}`\n"
+            f"- **訓練框架與推論引擎**: `PyTorch / ONNX Runtime (CPU 毫秒級推論)`\n"
+        )
+
+        card = ZNCard(
+            title="🧬 ZeroNexus 連續情緒狀態與演進中樞報告",
+            description=desc,
+            status_pill=ZNStatusPill.AI,
+            color=ZNColor.PURPLE,
+            footer_text="ZeroNexus Continuous Learning & Neural Emotion System",
+        )
         await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
     @ai_group.command(name="自訂人格", description="透過表單建立您專屬的客製化人格")

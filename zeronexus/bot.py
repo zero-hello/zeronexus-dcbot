@@ -924,8 +924,8 @@ class ZeroNexusBot(commands.Bot):
                 f"### 💡 【快速上手指南・你可以這樣和我玩】\n"
                 f"1. 💬 **隨時開聊**：直接在頻道 `@ZeroNexus` 或在專屬頻道說話，生活瑣事、知識解惑、文案企劃我都在！\n"
                 f"2. ⛽ **臺灣民生即時情報**：直接問我中油油價預測、統一發票中獎號碼、雙鐵火車高鐵班次，或台美股市即時行情。\n"
-                f"3. 🎨 **AI 影像創作**：輸入 `/image` 每天享有免費高畫質生圖配額。\n"
-                f"4. 🔄 **頂尖模型隨心換**：輸入 `/ai_model` 或直接對我說「切換到 deepseek / qwen」，秒級切換不同思維。\n"
+                f"3. 🎨 **AI 影像創作**：輸入 `/人工智慧 生圖` 每天享有免費高畫質生圖配額。\n"
+                f"4. 🔄 **頂尖模型隨心換**：輸入 `/人工智慧 切換模型` 或直接對我說「切換到 deepseek / qwen」，秒級切換不同思維。\n"
                 f"5. ⚖️ **賽博法庭主持公道**：群友吵架意見不合？直接 `@ZeroNexus 誰有理`，我會自動回溯現場敲槌主持公道！\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"✨ **專屬提示**：現在你已經解鎖所有功能囉！直接再次 `@ZeroNexus` 跟我說話，就可以正式開始我們的聊天啦～"
@@ -2581,6 +2581,18 @@ class ZeroNexusBot(commands.Bot):
                 user_text=user_prompt,
                 is_private_thread=is_heart_thread_turn,
             ))
+
+            # 依據演進計畫書第 16、18 條：由 Smart Data Collector 智慧採集高價值樣本並沉澱至獨立 Dataset Artifact
+            try:
+                from zeronexus.brain.core import bio_brain
+                bio_brain.record_interaction_turn(
+                    user_prompt=user_prompt,
+                    ai_response=clean_answer,
+                    context_turns=[{"role": "user", "content": user_prompt}, {"role": "assistant", "content": clean_answer}],
+                    is_user_correction=any(kw in user_prompt for kw in ["不對", "錯了", "更正", "修正", "搞錯了"]),
+                )
+            except Exception as e_col:
+                log.debug(f"Smart data collection hook error: {e_col}")
 
             # 多模態視覺創作歷史萃取與記憶保存
             if draw_intent and (generated_image_url or generated_image_bytes):
