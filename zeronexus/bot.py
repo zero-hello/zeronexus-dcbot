@@ -888,57 +888,72 @@ class ZeroNexusBot(commands.Bot):
             log.debug(f"typing_indicator_error: {te}")
 
     async def _trace_dispute_context(self, message: discord.Message) -> Optional[str]:
-        """賽博法庭爭端脈絡追溯器：當使用者引用回覆（Reply）某則歷史訊息時，
-        自動抓取自被引用訊息（事件/爭吵起點）至當前訊息之完整歷史對話（包含發言者、時間與內容）。
-        完全不依賴特定關鍵字，提供全案完整脈絡給 AI 進行客觀評理或一般解答。
+        """賽博法庭爭端脈絡追溯器：
+        1. 若使用者有引用回覆（Reply）某則訊息：精準抓取自被引用起點訊息至當前訊息之對話序列。
+        2. 若使用者未引用、直接在頻道 @ 提問：自動往前回溯頻道歷史（讀取充足脈絡深度，不設 20 則死板限制），
+           讓百萬級上下文大模型自身完全掌握案發現場的所有前因後果與言論細節！
+        完全不依賴特定關鍵字，AI 自動自然理解意圖。
         """
-        ref = message.reference
-        if not ref or not ref.message_id:
-            return None
-
-        ref_id = ref.message_id
         channel = message.channel
         if not hasattr(channel, "history"):
             return None
 
+        tz_tw = datetime.timezone(datetime.timedelta(hours=8))
+        chronological_msgs = []
+
         try:
-            # 1. 取得被引用之起始訊息
-            ref_msg = None
-            if hasattr(ref, "resolved") and isinstance(ref.resolved, discord.Message):
-                ref_msg = ref.resolved
-            else:
+            ref = message.reference
+            if ref and ref.message_id:
+                # 模式一：引用回覆（精準錨定爭端起點）
+                ref_id = ref.message_id
+                ref_msg = None
+                if hasattr(ref, "resolved") and isinstance(ref.resolved, discord.Message):
+                    ref_msg = ref.resolved
+                else:
+                    try:
+                        ref_msg = await channel.fetch_message(ref_id)
+                    except Exception as fe:
+                        log.debug(f"Could not fetch referenced message {ref_id}: {fe}")
+
                 try:
-                    ref_msg = await channel.fetch_message(ref_id)
-                except Exception as fe:
-                    log.debug(f"Could not fetch referenced message {ref_id}: {fe}")
+                    async for h_msg in channel.history(
+                        limit=50,
+                        after=discord.Object(id=ref_id - 1),
+                        before=discord.Object(id=message.id + 1),
+                        oldest_first=True,
+                    ):
+                        chronological_msgs.append(h_msg)
+                except Exception as he:
+                    log.debug(f"Error fetching channel history after {ref_id}: {he}")
 
-            # 2. 抓取從 ref_id 到當前 message.id 之間發生的訊息序列（最多 35 則）
-            chronological_msgs = []
-            try:
-                async for h_msg in channel.history(
-                    limit=35,
-                    after=discord.Object(id=ref_id - 1),
-                    before=discord.Object(id=message.id + 1),
-                    oldest_first=True,
-                ):
-                    chronological_msgs.append(h_msg)
-            except Exception as he:
-                log.debug(f"Error fetching channel history between {ref_id} and {message.id}: {he}")
+                if not chronological_msgs and ref_msg:
+                    chronological_msgs = [ref_msg, message]
+            else:
+                # 模式二：直接 @ 提問（免點回覆，自動回溯頻道近期充分現場歷史）
+                raw_history = []
+                try:
+                    async for h_msg in channel.history(limit=40, before=message.id):
+                        raw_history.append(h_msg)
+                except Exception as he:
+                    log.debug(f"Error fetching channel history before {message.id}: {he}")
 
-            # 若 history 抓取為空但 ref_msg 存在，至少包含 ref_msg 與當前 message
-            if not chronological_msgs and ref_msg:
-                chronological_msgs = [ref_msg, message]
+                # 排除機器人自身的純過渡思考中卡片，反轉為時間由舊到新
+                raw_history.reverse()
+                chronological_msgs = [
+                    m for m in raw_history
+                    if not (m.author.id == getattr(self.user, "id", 0) and "正在思考中" in (m.content or ""))
+                ]
+                chronological_msgs.append(message)
 
-            if not chronological_msgs:
+            if not chronological_msgs or len(chronological_msgs) <= 1:
                 return None
 
-            # 3. 結構化案發現場對話時序
-            tz_tw = datetime.timezone(datetime.timedelta(hours=8))
+            # 結構化案發現場對話時序
             trace_lines = []
-            trace_lines.append("【📜 案發現場爭論歷史脈絡（自被引用訊息起至當前提請訊息）】：")
+            trace_lines.append("【📜 案發現場爭論與頻道現場對話歷史脈絡（真實時間序）】：")
             trace_lines.append("────────────────────────────────────────────────────────────")
 
-            for m in chronological_msgs:
+            for idx, m in enumerate(chronological_msgs):
                 author_name = getattr(m.author, "display_name", str(m.author))
                 m_dt = m.created_at.astimezone(tz_tw) if m.created_at.tzinfo else m.created_at.replace(tzinfo=datetime.timezone.utc).astimezone(tz_tw)
                 ts = m_dt.strftime("%H:%M:%S")
@@ -948,15 +963,15 @@ class ZeroNexusBot(commands.Bot):
                 elif not text:
                     text = "（空白或僅包含特殊組件）"
 
-                if m.id == ref_id:
-                    trace_lines.append(f"🚩 【爭論/事件起點】[{ts}] 👤 {author_name}: {text}")
-                elif m.id == message.id:
-                    trace_lines.append(f"📢 【當前提請審理】[{ts}] 👤 {author_name}: {text}")
+                if m.id == message.id:
+                    trace_lines.append(f"📢 【當前提請審理/詢問】[{ts}] 👤 {author_name}: {text}")
+                elif idx == 0:
+                    trace_lines.append(f"🚩 【對話回溯起點】[{ts}] 👤 {author_name}: {text}")
                 else:
                     trace_lines.append(f"- [{ts}] 👤 {author_name}: {text}")
 
             trace_lines.append("────────────────────────────────────────────────────────────")
-            trace_lines.append("【法官審理指引】：以上為爭議發生至今之真實對話順序。若使用者的提問涉及吵架、評判對錯、詢問誰有理、分析爭論或請求評理，請嚴格按照『賽博法庭至高審理憲法』給出超炸裂、超豐富的五大板塊判決書；若僅為普通引述詢問，請自然針對該話題完整作答。")
+            trace_lines.append("【法官審理與認知指引】：以上為頻道現場完整對話脈絡。若使用者的提問涉及吵架、評判對錯、詢問誰有理、分析爭論或請求評理，請嚴格按照『賽博法庭至高審理憲法』給出超炸裂、超豐富的五大板塊判決書；若僅為普通引述或日常聊天，請自然針對該話題完整作答。")
             return "\n".join(trace_lines)
         except Exception as e:
             log.warning(f"Failed to trace dispute context for message {message.id}: {e}")
@@ -1731,10 +1746,32 @@ class ZeroNexusBot(commands.Bot):
             if attachment_notes:
                 system_instruction += "\n\n【使用者附加檔案內容與資訊】：\n" + "\n\n".join(attachment_notes)
 
-            # 賽博法庭爭端脈絡追溯：若為引用回覆訊息，自動追溯起點至當前之案發現場完整時序對話
+            # 賽博法庭爭端脈絡追溯：若為引用回覆或直接在頻道提問，自動追溯現場對話脈絡供 AI 裁決
             dispute_context = await self._trace_dispute_context(message)
             if dispute_context:
                 system_instruction += "\n\n" + dispute_context
+
+            # 新用戶首次對話偵測與歡迎教學導覽注入
+            try:
+                from zeronexus.engines.affinity_engine import affinity_engine
+                is_first_chat = await affinity_engine.is_new_user(message.author.id)
+                if is_first_chat:
+                    new_user_onboarding_guide = (
+                        f"\n\n【🌱 新朋友首次見面歡迎與快速上手導覽指令 (First-Time Onboarding)】：\n"
+                        f"這是使用者「{message.author.display_name}」與你的【第一次對話】！\n"
+                        f"請在回答其問題的最開頭，先以熱情、開朗、可愛且富有活力的口吻，送上一小段溫暖的「歡迎使用與快速上手教學導覽」：\n"
+                        f"1. ✨ 熱情迎接新朋友來到 ZeroNexus 智慧社群！\n"
+                        f"2. 💡 簡單告訴對方能怎麼和你玩：\n"
+                        f"   - 💬 隨時 @我 暢聊生活瑣事或專業解惑\n"
+                        f"   - ⛽ 生活實時情報：直接問我油價、發票中獎、火車高鐵班次或股市即時行情\n"
+                        f"   - 🎨 AI 繪圖：輸入 `/image` 每天享有免費高畫質生圖配額\n"
+                        f"   - 🔄 切換心智模型：輸入 `/ai_model` 或直接跟我說「切換到 deepseek」\n"
+                        f"   - ⚖️ 賽博法庭：群友吵架時直接 @我 或回覆訊息問「誰有理」，我會敲槌主持公道！\n"
+                        f"3. 隨後自然過渡，全力且詳細地回答對方剛才提出的具體問題！"
+                    )
+                    system_instruction += new_user_onboarding_guide
+            except Exception as nue:
+                log.debug(f"Failed to check new user onboarding: {nue}")
 
             is_model_inquiry = not (switch_req and switch_req.is_switch_intent and switch_req.matched_model) and (
                 any(kw in user_prompt.lower() for kw in ["模型清單", "有哪些模型", "有什麼模型", "支援什麼模型", "支援哪些模型", "模型有哪些", "推薦模型", "所有模型", "模型列表", "介紹模型", "列出"])

@@ -102,6 +102,18 @@ def get_tier_info(score: float) -> Tuple[str, str, int]:
 class AffinityEngine:
     """ZeroNexus 隱性好感度與情感羈絆處理引擎。"""
 
+    async def is_new_user(self, user_id: int) -> bool:
+        """檢查該使用者是否為初次與 ZeroNexus 互動的新朋友。"""
+        try:
+            async with db.session() as session:
+                stmt = select(UserAffinityRecord.interactions_count).where(UserAffinityRecord.user_id == user_id)
+                res = await session.execute(stmt)
+                count = res.scalar()
+                return count is None or count == 0
+        except Exception as e:
+            log.debug(f"Failed to check if user {user_id} is new: {e}")
+            return False
+
     async def get_or_create_affinity(self, user_id: int) -> Dict[str, Any]:
         """讀取或初始化指定使用者的好感度紀錄。"""
         async with db.session() as session:
