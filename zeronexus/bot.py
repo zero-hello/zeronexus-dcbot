@@ -887,6 +887,81 @@ class ZeroNexusBot(commands.Bot):
         except Exception as te:
             log.debug(f"typing_indicator_error: {te}")
 
+    async def _trace_dispute_context(self, message: discord.Message) -> Optional[str]:
+        """賽博法庭爭端脈絡追溯器：當使用者引用回覆（Reply）某則歷史訊息時，
+        自動抓取自被引用訊息（事件/爭吵起點）至當前訊息之完整歷史對話（包含發言者、時間與內容）。
+        完全不依賴特定關鍵字，提供全案完整脈絡給 AI 進行客觀評理或一般解答。
+        """
+        ref = message.reference
+        if not ref or not ref.message_id:
+            return None
+
+        ref_id = ref.message_id
+        channel = message.channel
+        if not hasattr(channel, "history"):
+            return None
+
+        try:
+            # 1. 取得被引用之起始訊息
+            ref_msg = None
+            if hasattr(ref, "resolved") and isinstance(ref.resolved, discord.Message):
+                ref_msg = ref.resolved
+            else:
+                try:
+                    ref_msg = await channel.fetch_message(ref_id)
+                except Exception as fe:
+                    log.debug(f"Could not fetch referenced message {ref_id}: {fe}")
+
+            # 2. 抓取從 ref_id 到當前 message.id 之間發生的訊息序列（最多 35 則）
+            chronological_msgs = []
+            try:
+                async for h_msg in channel.history(
+                    limit=35,
+                    after=discord.Object(id=ref_id - 1),
+                    before=discord.Object(id=message.id + 1),
+                    oldest_first=True,
+                ):
+                    chronological_msgs.append(h_msg)
+            except Exception as he:
+                log.debug(f"Error fetching channel history between {ref_id} and {message.id}: {he}")
+
+            # 若 history 抓取為空但 ref_msg 存在，至少包含 ref_msg 與當前 message
+            if not chronological_msgs and ref_msg:
+                chronological_msgs = [ref_msg, message]
+
+            if not chronological_msgs:
+                return None
+
+            # 3. 結構化案發現場對話時序
+            tz_tw = datetime.timezone(datetime.timedelta(hours=8))
+            trace_lines = []
+            trace_lines.append("【📜 案發現場爭論歷史脈絡（自被引用訊息起至當前提請訊息）】：")
+            trace_lines.append("────────────────────────────────────────────────────────────")
+
+            for m in chronological_msgs:
+                author_name = getattr(m.author, "display_name", str(m.author))
+                m_dt = m.created_at.astimezone(tz_tw) if m.created_at.tzinfo else m.created_at.replace(tzinfo=datetime.timezone.utc).astimezone(tz_tw)
+                ts = m_dt.strftime("%H:%M:%S")
+                text = (m.clean_content or "").strip()
+                if not text and m.attachments:
+                    text = f"（傳送了附加檔案/圖片：{', '.join(a.filename for a in m.attachments)}）"
+                elif not text:
+                    text = "（空白或僅包含特殊組件）"
+
+                if m.id == ref_id:
+                    trace_lines.append(f"🚩 【爭論/事件起點】[{ts}] 👤 {author_name}: {text}")
+                elif m.id == message.id:
+                    trace_lines.append(f"📢 【當前提請審理】[{ts}] 👤 {author_name}: {text}")
+                else:
+                    trace_lines.append(f"- [{ts}] 👤 {author_name}: {text}")
+
+            trace_lines.append("────────────────────────────────────────────────────────────")
+            trace_lines.append("【法官審理指引】：以上為爭議發生至今之真實對話順序。若使用者的提問涉及吵架、評判對錯、詢問誰有理、分析爭論或請求評理，請嚴格按照『賽博法庭至高審理憲法』給出超炸裂、超豐富的五大板塊判決書；若僅為普通引述詢問，請自然針對該話題完整作答。")
+            return "\n".join(trace_lines)
+        except Exception as e:
+            log.warning(f"Failed to trace dispute context for message {message.id}: {e}")
+            return None
+
     def _on_background_task_done(self, task: asyncio.Task[Any]) -> None:
         """Ensures unhandled exceptions from background tasks are logged and discarded."""
         self._background_tasks.discard(task)
@@ -1361,6 +1436,10 @@ class ZeroNexusBot(commands.Bot):
                 if attachment_notes:
                     system_instruction += "\n\n【使用者附加檔案內容與資訊】：\n" + "\n\n".join(attachment_notes)
 
+                dispute_context = await self._trace_dispute_context(message)
+                if dispute_context:
+                    system_instruction += "\n\n" + dispute_context
+
                 draw_intent = image_gen_engine.detect_draw_intent(user_prompt)
                 generated_image_url: Optional[str] = None
                 generated_image_bytes: Optional[bytes] = None
@@ -1651,6 +1730,11 @@ class ZeroNexusBot(commands.Bot):
                 system_instruction += switch_instruction
             if attachment_notes:
                 system_instruction += "\n\n【使用者附加檔案內容與資訊】：\n" + "\n\n".join(attachment_notes)
+
+            # 賽博法庭爭端脈絡追溯：若為引用回覆訊息，自動追溯起點至當前之案發現場完整時序對話
+            dispute_context = await self._trace_dispute_context(message)
+            if dispute_context:
+                system_instruction += "\n\n" + dispute_context
 
             is_model_inquiry = not (switch_req and switch_req.is_switch_intent and switch_req.matched_model) and (
                 any(kw in user_prompt.lower() for kw in ["模型清單", "有哪些模型", "有什麼模型", "支援什麼模型", "支援哪些模型", "模型有哪些", "推薦模型", "所有模型", "模型列表", "介紹模型", "列出"])

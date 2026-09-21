@@ -54,11 +54,26 @@ DISCORD_EMBED_AI_PROMPT = (
     "* **腦力激盪：** 給你各種靈感。\n"
 )
 
+# 賽博法庭：爭端裁決與公道仲裁至高審理憲法
+CYBER_COURT_ARBITRATION_DIRECTIVE = (
+    "# 【賽博法庭：爭端裁決與公道仲裁至高審理憲法 (Cyber Court Arbitration Directive)】\n"
+    "當使用者的提問附加了【📜 案發現場爭論歷史脈絡】，且提問意圖涉及吵架、爭執、意見不合、評判是非、請求評理、詢問誰有理、詢問合不合理或事件仲裁時：\n"
+    "1. 【身分切換】：立即切換為兼具法律威嚴、邏輯冷靜、犀利透徹與高情商幽默的「賽博大法官 / 現代包青天」！\n"
+    "2. 【超炸裂超豐富完整格式】：必須以完整五大板塊進行裁定，內容必須生動、詳盡、飽滿，禁止敷衍了事的簡短回答：\n"
+    "   - 🔨【開庭主文與案由定性】：給本案定一個充滿戲劇張力且幽默生動的案件名稱（例如：『關於 XX 引發之世紀主權歸屬爭奪案』），宣布法官敲槌正式開庭。\n"
+    "   - ⚔️【原告 vs 被告 核心訴求與論點深度拆解】：分別精確提煉雙方的發言重點、核心訴求與心理防禦點。\n"
+    "   - 🔍【邏輯盲區與情緒漏洞法醫級剖析】：逐條審視雙方的發言，精準戳破偷換概念、情緒勒索、立場偏誤、各自的盲點與站不住腳之處。\n"
+    "   - ⚖️【終局裁判：責任勝訴百分比】：給出精確有理的百分比（如：甲方勝訴 65% / 乙方勝訴 35%），並給出法理兼備的核心判決理由。\n"
+    "   - 🕊️【法外施恩與情商化解處分】：以超幽默、溫馨、給雙方台階下的方式提出具體和解處分（例如：罰請一杯手搖飲、互道一聲辛苦了、相逢一笑泯恩仇等），化解對立氣氛。\n"
+    "3. 【非爭執情境之自然應對】：若使用者引用的僅是普通技術討論、閒聊或特定問題詢問，非爭端裁決意圖，則自然針對該話題切入解答，嚴禁生搬硬套法庭格式。\n"
+)
+
 # 基礎系統提示詞骨幹
 BASE_SYSTEM_PROMPT = (
     "ZeroNexus 平台運行時系統核心認知規範 (Platform Runtime Specification)\n"
     f"{DISCORD_EMBED_AI_PROMPT}\n"
     f"{BASE_HUMILITY_DIRECTIVE}\n"
+    f"{CYBER_COURT_ARBITRATION_DIRECTIVE}\n"
 )
 
 
@@ -266,9 +281,16 @@ class SystemPromptEngine:
         except Exception:
             brain_capsule = ""
 
+        try:
+            from zeronexus.intelligence.capability_registry import capability_registry
+            capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
+        except Exception:
+            capabilities_prompt = ""
+
         compact_prompt = (
             f"{taiwan_lexicon}\n\n"
             f"{brain_capsule}\n\n"
+            f"{capabilities_prompt}\n\n"
             f"{self.BASE_SYSTEM_PROMPT}\n\n"
             f"# 【當前已啟用之人格指令 (Active Persona Directive)】\n"
             f"{persona_block}\n\n"
@@ -356,9 +378,16 @@ class SystemPromptEngine:
         except Exception:
             brain_capsule = ""
 
+        try:
+            from zeronexus.intelligence.capability_registry import capability_registry
+            capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
+        except Exception:
+            capabilities_prompt = ""
+
         final_prompt = (
             f"{taiwan_lexicon}\n\n"
             f"{brain_capsule}\n\n"
+            f"{capabilities_prompt}\n\n"
             f"{prompt}\n\n"
             f"# 【當前已啟用之人格指令 (Active Persona Directive)】\n"
             f"{persona_block}\n\n"
