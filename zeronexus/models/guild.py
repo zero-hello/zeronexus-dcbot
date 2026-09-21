@@ -42,7 +42,7 @@ class GuildSettings(Base):
     # AI Channel
     ai_channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     ai_daily_limit: Mapped[int] = mapped_column(Integer, default=50)
-    ai_persona: Mapped[str] = mapped_column(String(64), default="01_cat")
+    ai_persona: Mapped[str] = mapped_column(String(64), default="normal_persona")
     ai_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     @property

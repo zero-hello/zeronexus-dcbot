@@ -117,6 +117,16 @@ class RateLimiter:
             self._violations_total += 1
         return limited, retry_after
 
+    def check_ai_message_rate(self, user_id: int, max_requests: int = 5, window_seconds: float = 60.0) -> Tuple[bool, float]:
+        """檢查特定使用者於滑動視窗內是否傳送過多訊息給 AI（預設 1 分鐘上限 5 則）。
+        若超過上限則回傳 (True, retry_after_seconds)，否則記錄請求時間並回傳 (False, 0.0)。
+        """
+        key = f"ai_msg_rate:{user_id}"
+        limited, retry_after = self._limiter.is_rate_limited(key, max_requests=max_requests, window_seconds=window_seconds)
+        if limited:
+            self._violations_total += 1
+        return limited, retry_after
+
     async def check_and_consume_ai_quota(self, user_id: int, max_daily_override: int | None = None) -> Tuple[bool, int, int]:
         """Convenience method for command callers to atomically reserve and commit AI quota."""
         allowed, res, used, limit = await self.quota_service.reserve_quota(user_id, max_daily_override)

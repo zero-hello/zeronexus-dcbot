@@ -63,6 +63,8 @@ class AIGateway:
         allow_tools: bool = True,
         tool_executor: Optional[Callable[[str, Dict[str, Any]], Coroutine[Any, Any, Any]]] = None,
         max_tool_rounds: int = 3,
+        thinking_budget: Optional[int] = None,
+        **kwargs: Any,
     ) -> Tuple[AIResult, Optional[str]]:
         """Executes inference through fallback chain: Gemini -> DeepSeek -> OpenRouter.
         When images are provided, reorders to prioritize vision models: Gemini -> OpenRouter -> DeepSeek.
@@ -253,6 +255,8 @@ class AIGateway:
                     tool_executor=tool_executor,
                     max_tool_rounds=max_tool_rounds,
                     free_only=is_fallback_key,
+                    thinking_budget=thinking_budget,
+                    **kwargs,
                 )
 
                 latency = (time.perf_counter() - start_ts) * 1000

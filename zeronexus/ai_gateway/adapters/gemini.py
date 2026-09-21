@@ -106,12 +106,29 @@ class GeminiAdapter(BaseAIAdapter):
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        # 針對 Gemini 2.5/3.x 系列啟用原生深度思考 (含完整思維鏈輸出與 4096 tokens 思維預算)
-        if any(v in model.lower() for v in ["2.5", "3.", "flash", "pro", "exp", "thinking"]):
+        # 思考設定：日常對話預設關閉思考 (thinkingBudget: 0) 以達到毫秒級極速回覆並節省 90%+ Token，避免 API 額度瞬間見底
+        thinking_budget = kwargs.get("thinking_budget")
+        if thinking_budget is not None:
+            if thinking_budget > 0:
+                gen_config["thinkingConfig"] = {
+                    "includeThoughts": True,
+                    "thinkingBudget": thinking_budget,
+                }
+            else:
+                gen_config["thinkingConfig"] = {
+                    "thinkingBudget": 0,
+                }
+        elif any(v in model.lower() for v in ["thinking", "r1", "reasoner"]):
             gen_config["thinkingConfig"] = {
                 "includeThoughts": True,
-                "thinkingBudget": 4096,
+                "thinkingBudget": 2048,
             }
+        else:
+            # 預設日常模式針對支援 thinkingConfig 的模型顯式指定 thinkingBudget: 0 停用思考，加速直出
+            if any(v in model.lower() for v in ["2.5", "3.", "flash"]):
+                gen_config["thinkingConfig"] = {
+                    "thinkingBudget": 0,
+                }
 
         payload: Dict[str, Any] = {
             "contents": contents,

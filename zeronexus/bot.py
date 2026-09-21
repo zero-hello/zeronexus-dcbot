@@ -910,6 +910,7 @@ class ZeroNexusBot(commands.Bot):
                 messages=[{"role": "user", "content": f"哈囉！我是 {user_name}，很高興認識你！"}],
                 override_model="gemini-3.1-flash-lite",
                 allow_fallback=True,
+                thinking_budget=0,
             )
             if ai_res and ai_res.text:
                 welcome_greeting = ai_res.text.strip()
@@ -1357,6 +1358,32 @@ class ZeroNexusBot(commands.Bot):
             user_prompt=user_prompt,
         )
 
+        # 0. AI 頻率防護機制（每位使用者 1 分鐘最多發送 5 則訊息給 AI，超過立即攔截並防護 API 額度）
+        from zeronexus.security.ratelimit import rate_limiter
+        is_spammed, retry_after = rate_limiter.check_ai_message_rate(message.author.id, max_requests=5, window_seconds=60.0)
+        if is_spammed:
+            cooldown_card = ZNCard(
+                title=f"⏳ 請稍候片刻 ➔ {req_ctx.author_name}",
+                description=(
+                    f"為了確保全體成員享有流暢穩定的 AI 互動品質，系統設有發言保護機制。\n\n"
+                    f"⚠️ **發言頻率過高**：每人每分鐘上限為 **5 則訊息**。\n"
+                    f"請稍候 **{retry_after:.1f} 秒** 後再次與 AI 對話。"
+                ),
+                status_pill=ZNStatusPill.WARNING,
+                color=ZNColor.WARNING,
+            )
+            try:
+                if channel_override is not None:
+                    await effective_channel.send(embed=cooldown_card.to_embed())
+                else:
+                    await message.reply(embed=cooldown_card.to_embed(), mention_author=False)
+            except (discord.NotFound, discord.HTTPException):
+                try:
+                    await effective_channel.send(embed=cooldown_card.to_embed())
+                except Exception:
+                    pass
+            return
+
         # 1. Natural Language Quota Inquiry check (Direct quota read, zero AI cost, zero burn)
         if quota_service.is_quota_inquiry(user_prompt):
             q_info = await quota_service.get_user_quota_info(message.author.id)
@@ -1587,6 +1614,7 @@ class ZeroNexusBot(commands.Bot):
                     override_model=active_model,
                     images=images if images else None,
                     disable_safety=True,
+                    thinking_budget=0,
                 )
                 pipeline_metrics.provider_request_ms = (time.perf_counter() - t_prov0) * 1000.0
                 pipeline_metrics.model_total_ms = pipeline_metrics.provider_request_ms
@@ -2513,6 +2541,7 @@ class ZeroNexusBot(commands.Bot):
                     images=images if images else None,
                     allow_tools=allow_tools_for_query,
                     tool_executor=dynamic_tool_executor,
+                    thinking_budget=4096 if is_deep_thinking_active else 0,
                 ),
                 timeout=call_timeout,
             )
