@@ -1618,8 +1618,21 @@ class ZeroNexusBot(commands.Bot):
                 elif attachment_tool_results:
                     user_prompt = "（使用者上傳了附加檔案，請詳細閱讀並解析檔案內容）"
 
+            # 啟動生物大腦邊緣神經中樞：感知使用者情感語意並推動神經遞質波動
+            from zeronexus.brain import bio_brain
+            bio_brain.perceive(
+                user_id=str(message.author.id),
+                user_name=str(message.author.display_name),
+                message_text=user_prompt,
+            )
+
             # Check for Model Catalog Inquiries: inject natural knowledge context
-            system_instruction = prompt_engine.compile_full_prompt(active_persona_key=persona, target_model=active_model)
+            system_instruction = prompt_engine.compile_full_prompt(
+                active_persona_key=persona,
+                target_model=active_model,
+                user_id=str(message.author.id),
+                user_name=str(message.author.display_name),
+            )
             from zeronexus.intelligence.identity_anchor import identity_anchor
             system_instruction = identity_anchor.build_identity_system_prompt(current_persona=persona) + "\n\n" + system_instruction
 

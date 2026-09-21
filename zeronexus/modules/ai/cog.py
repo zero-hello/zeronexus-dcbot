@@ -366,7 +366,19 @@ class AICog(commands.Cog):
                         if g_settings.ai_model:
                             user_model = g_settings.ai_model
 
-            system_instruction = prompt_engine.compile_full_prompt(active_persona_key=persona_key, target_model=user_model)
+            from zeronexus.brain import bio_brain
+            bio_brain.perceive(
+                user_id=str(interaction.user.id),
+                user_name=str(interaction.user.display_name),
+                message_text=問題,
+            )
+
+            system_instruction = prompt_engine.compile_full_prompt(
+                active_persona_key=persona_key,
+                target_model=user_model,
+                user_id=str(interaction.user.id),
+                user_name=str(interaction.user.display_name),
+            )
             is_model_inquiry = any(kw in 問題.lower() for kw in ["模型清單", "有哪些模型", "有什麼模型", "支援什麼模型", "支援哪些模型", "模型有哪些"]) or ("模型" in 問題 and model_catalog.find_category_by_name(問題))
             if is_model_inquiry:
                 system_instruction += "\n\n" + model_catalog.get_natural_knowledge_context()

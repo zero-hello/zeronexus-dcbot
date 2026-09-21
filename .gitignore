@@ -45,6 +45,8 @@ htmlcov/
 data/
 logs/
 *.log
+*.onnx
+*.enc
 
 # Archives & Backups
 *.zip
