@@ -105,10 +105,11 @@ def test_006_replay_system_deterministic():
 
 def test_007_smart_collector_deduplication():
     """Test 007: Smart Collector 重複資料過濾"""
-    collector = SmartDataCollector(queue_file=Path("/tmp/test_queue_007.jsonl"))
-    if collector.queue_file.exists():
-        collector.queue_file.unlink()
+    tmp_queue = Path(f"/tmp/test_queue_{time.time_ns()}.jsonl")
+    if tmp_queue.exists():
+        tmp_queue.unlink()
 
+    collector = SmartDataCollector(queue_file=tmp_queue)
     s1 = collector.evaluate_and_collect("今天天氣真好，想去公園走走！", "真的耶，陽光明媚的天氣最適合散步放鬆了！")
     assert s1 is not None, "正常高資訊量對話應予採納"
 
