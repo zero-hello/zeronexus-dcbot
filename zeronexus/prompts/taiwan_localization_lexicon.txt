@@ -27,9 +27,11 @@
 軟件 -> 軟體
 硬件 -> 軟體 / 硬體
 接口 -> 介面 / 端點 (API Endpoint 稱端點，UI/程式介面稱介面)
-接口類 -> 介面類別
-包 -> 套件 (Package)
-庫 -> 函式庫 (Library)
+軟件包 -> 軟體套件 (Package)
+安裝包 -> 安裝套件
+依賴包 -> 相依套件
+函數庫 -> 函式庫 (Library)
+第三方庫 -> 第三方函式庫
 函數 -> 函式 (Function)
 變量 -> 變數 (Variable)
 常量 -> 常數 (Constant)
@@ -38,11 +40,14 @@
 字符串 -> 字串 (String)
 字符 -> 字元 (Character)
 字節 -> 位元組 (Byte)
-位 -> 位元 (Bit)
+比特 -> 位元 (Bit)
 鏈表 -> 鏈結串列 (Linked List)
-棧 -> 堆疊 (Stack)
+調用棧 -> 呼叫堆疊 (Call Stack)
+技術棧 -> 技術堆疊 (Tech Stack)
+棧內存 -> 堆疊記憶體
 隊列 -> 佇列 (Queue)
-堆 -> 堆積 (Heap)
+堆內存 -> 堆積記憶體 (Heap Memory)
+二叉堆 -> 二元堆積 (Binary Heap)
 二叉樹 -> 二元樹 (Binary Tree)
 哈希 / 散列 -> 雜湊 (Hash)
 哈希表 / 散列表 -> 雜湊表 (Hash Table)
@@ -72,8 +77,13 @@
 面向對象 -> 物件導向 (OOP)
 面向過程 -> 程序導向 (Procedural)
 實例化 -> 實體化 (Instantiate)
-實例 -> 實體 / 實例 (Instance)
-類 -> 類別 (Class)
+基類 -> 基底類別
+派生類 -> 衍生類別
+父類 -> 父類別
+子類 -> 子類別
+抽象類 -> 抽象類別
+實體類 -> 實體類別
+類對象 -> 類別物件
 對象 -> 物件 (Object)
 屬性 -> 屬性 (Property / Attribute)
 方法 -> 方法 (Method)
@@ -82,7 +92,9 @@
 泛型 -> 泛型 (Generics)
 模塊 -> 模組 (Module)
 組件 -> 元件 / 組件 (Component)
-宏 -> 巨集 (Macro)
+宏定義 -> 巨集定義 (Macro Definition)
+宏替換 -> 巨集替換
+宏命令 -> 巨集指令
 內聯 -> 行內 (Inline)
 併發 -> 並行 / 併發 (Concurrency)
 並行 -> 平行 / 並行 (Parallelism)
@@ -273,7 +285,7 @@ U盤 / 優盤 -> 隨身碟 (USB Flash Drive)
 氪金 -> 課金 (In-app Purchase / Microtransaction)
 二維碼 -> QR Code
 表情包 -> 貼圖 / 迷因梗圖 (Stickers / Memes)
-梗 -> 梗 / 笑點 (Meme / Punchline)
+玩梗 -> 玩梗 / 玩迷因
 鬼畜 -> 迷因惡搞 / MAD
 破防 -> 破防 / 心態崩潰
 帶節奏 -> 帶風向

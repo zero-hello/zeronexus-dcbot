@@ -58,11 +58,14 @@ class TaiwanTranslator:
                             parts = line.split("->", 1)
                             src = parts[0].strip()
                             dst = parts[1].strip()
+                            # 嚴格防護：絕對禁止長度小於 2 的單字全域替換，杜絕單字破壞語意（如「位」->「位元」導致「各位元」、「那位元元」）
+                            if len(src) < 2:
+                                continue
                             # 清除說明備註（例如括號）
                             dst = re.sub(r"\(.*?\)", "", dst).strip()
                             if "/" in dst:
                                 dst = dst.split("/")[0].strip()
-                            if src and dst and src != dst:
+                            if src and dst and src != dst and len(dst) >= 1:
                                 pairs.append((src, dst))
             except Exception as e:
                 log.warning(f"Failed to load lexicon from {LEXICON_FILE}: {e}")
@@ -168,6 +171,11 @@ class TaiwanTranslator:
             return ""
         if not self._initialized:
             self.initialize()
+
+        # 0. 防衛性修復：自動修正因歷史單字錯誤替換而殘留的「位元元+」或量詞位元污染
+        text = re.sub(r"位元{2,}", "位", text)
+        text = re.sub(r"(那|這|各|哪|每|一|幾|第[一二三四五六七八九十0-9]+|兩)位元(?![組率位長運])", r"\1位", text)
+        text = re.sub(r"數位元(?![組率位長運])", "數位", text)
 
         segments = re.split(r"(```[\s\S]*?```|`[^`\n]+`)", text)
         result = []
