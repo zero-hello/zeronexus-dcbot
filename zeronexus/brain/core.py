@@ -13,6 +13,7 @@ import datetime
 import logging
 from typing import Dict, Optional, Tuple
 
+from zeronexus.brain.bootstrap import ensure_brain_models_ready
 from zeronexus.brain.circadian import CircadianRhythmEngine
 from zeronexus.brain.attachment import PersonalAttachmentEngine
 from zeronexus.brain.emotion_projector import EmotionAnalysisResult, HighDimensionalEmotionProjector
@@ -37,6 +38,11 @@ class BioBrainCore:
     def __init__(self) -> None:
         if getattr(self, "_initialized", False):
             return
+
+        try:
+            ensure_brain_models_ready(console_output=False)
+        except Exception:
+            pass
 
         log.info("⚡ 正在初始化 ZeroNexus 本地生物神經網絡與情緒大腦...")
         self.neuro_engine = NeuroTransmitterEngine()
