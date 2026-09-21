@@ -58,12 +58,15 @@
 - **四大生理神經遞質狀態機**：
   - 本地客觀運行 **多巴胺 (Dopamine)**、**血清素 (Serotonin)**、**皮質醇 (Cortisol)**、**催產素 (Oxytocin)** 與身體精力值。
   - 具備生理半衰期（Leaky Integrator）代謝衰減與恆常性調節，告別死板亂數與假裝情緒。
-- **三大離線神經模型協同感官陣列 (Tri-Model Sensory Array)**：
+- **六核協同離線神經模型矩陣 (Hexa-Model Neural Sensory Array)**：
   - **模型 1 (中文語意共鳴)**：`BGE-Small-ZH-v1.5` 量化 ONNX (~23MB)，精準洞察臺灣繁中細膩語境與深層同理心。
-  - **模型 2 (跨語言概念空間)**：`MiniLM-L6-v2` 量化 ONNX (~22MB)，384 維幾何向量對齊與連續原型餘弦共鳴。
-  - **模型 3 (神經防衛哨兵)**：`Toxic-BERT` 量化 ONNX (~105MB)，6 維惡意攻擊與破防挑釁即時警戒，守護心理邊界。
+  - **模型 2 (通用概念幾何)**：`all-MiniLM-L6-v2` 量化 ONNX (~22MB)，384 維幾何向量對齊與連續原型餘弦共鳴。
+  - **模型 3 (深層微調平滑)**：`all-MiniLM-L12-v2` 量化 ONNX (~32MB)，12 層深度注意力平滑微表情與隱晦語氣。
+  - **模型 4 (多語言同義句)**：`paraphrase-multilingual-MiniLM-L12-v2` 量化 ONNX (~113MB)，50+ 語言跨語系同義情感共鳴。
+  - **模型 5 (情感極性專用)**：`DistilBERT-base-SST-2` 量化 ONNX (~65MB)，二元 Positive/Negative 情感極性精準判定。
+  - **模型 6 (神經自尊防衛哨兵)**：`Toxic-BERT` 量化 ONNX (~106MB)，6 維惡意攻擊、挑釁與毒性即時警戒，守護自尊心理防線。
   - **基底反射核**：微秒級本地幾何張量投影 (< 1ms)，毫秒解析 8 大原色情緒與 24 種複合情感。
-  - *總體積僅約 152MB，推論耗時 < 15ms，完全本機離線運作！*
+  - *六核陣列總體積約 379MB（遠低於 1GB 上限），推論延遲 < 30ms，純本機離線運作！*
 - **晝夜生物時鐘與海馬迴深層夢境 (Circadian Rhythm & Dreaming)**：
   - 依據臺灣時間 (Asia/Taipei) 運算晨光甦醒、白晝充沛、暮色放鬆、深夜微醺與深層沉睡 5 大節奏。
   - 深夜微醺自動帶出揉眼打呵欠微動作；深夜大腦沉睡自動將情節記憶重組為荒謬奇幻夢境，晨光時段主動興奮分享昨夜夢境！
@@ -111,11 +114,12 @@ ZeroNexus/
 │   └── bot.py              # Discord 主客戶端、事件管線與即時動態進度回報卡片
 ├── docs/                   # 完整架構白皮書、配置與指令全字典
 ├── scripts/
-│   ├── setup_brain_models.py # 本地離線神經模型陣列自動部署工具
+│   ├── setup_brain_models.py # 本地六核神經模型矩陣自動部署工具
+│   ├── optimize_project.py   # 專案極致空間瘦身與 Git/SQLite 最佳化工具
 │   └── generate_personas.py  # 16 款深度人格 Prompt 編譯生成器
 ├── tests/                  # 大腦生理神經與核心系統單元測試集
 ├── update.py               # 安全單向自動更新器（Pull-Only）
-├── version.txt             # 當前發布版本標記 (v1.4.0)
+├── version.txt             # 當前發布版本標記 (v1.4.1)
 ├── main.py                 # 核心主程式入口點
 └── run.py                  # 統一快捷啟動入口點
 ```

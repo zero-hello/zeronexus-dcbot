@@ -1,14 +1,20 @@
-"""ZeroNexus 本地三大離線神經模型陣列 (Tri-Model Neural Sensory Array)
+"""ZeroNexus 本地六核離線神經模型矩陣 (Hexa-Model Neural Sensory Array)
 
-三大協同模型架構：
-1. 模型 1: 中文專屬高精確語意與同理心模型 (BGE-Small-ZH-v1.5 量化 ONNX ~23MB)
-   - 專精繁體中文生活用語、語境細微差異、情緒高維向量投影。
-2. 模型 2: 跨語言概念空間幾何模型 (MiniLM-L6 量化 ONNX ~22MB)
-   - 專精跨語言概念空間對齊、多維語意餘弦相似度。
-3. 模型 3: 神經防衛與自尊哨兵模型 (Toxic-BERT 量化 ONNX ~105MB)
-   - 6 維人身攻擊、蓄意挑釁、毒性警戒 (Toxic, Threat, Insult, etc.)，守護心理防線。
-4. 基底層: 微秒級高維幾何張量反射模型 (Fast Geometric Reflex Kernel, 14KB, < 1ms)
-   - 臺灣在地網路俚語、生活情緒符號極速反射。
+六大協同離線神經模型陣列架構：
+1. 模型 1 (中文語意共鳴): BGE-Small-ZH-v1.5 (~23MB)
+   - 專精繁體中文生活語境、細膩情緒語意與同理心空間。
+2. 模型 2 (通用概念幾何): all-MiniLM-L6-v2 (~22MB)
+   - 跨語言極速概念幾何空間映射與情感原型對齊。
+3. 模型 3 (深層微調幾何): all-MiniLM-L12-v2 (~32MB)
+   - 12 層深度注意力，平滑微表情與隱晦語氣捕捉。
+4. 模型 4 (多語言同義共鳴): paraphrase-multilingual-MiniLM-L12-v2 (~113MB)
+   - 50+ 語言跨語系同義情感共鳴（中英日韓混雜無縫理解）。
+5. 模型 5 (情感極性分類): DistilBERT-base-SST-2 (~65MB)
+   - 專門輸出明確 Positive/Negative 情感極性對數機率。
+6. 模型 6 (神經防衛哨兵): Toxic-BERT (~106MB)
+   - 6 維人身攻擊、威脅、侮辱與挑釁毒性警戒，守護心理防線。
+7. 基底層 (毫秒級反射核): Fast Geometric Reflex Kernel (14KB, < 1ms)
+   - 臺灣在地網路俚語、生活情緒符號微秒級極速反射。
 """
 
 import os
@@ -25,12 +31,12 @@ try:
     HAS_ONNX = True
 except ImportError:
     HAS_ONNX = False
-    log.warning("未檢測到 onnxruntime 或 tokenizers，多模型陣列將以純幾何反射核心運行。")
+    log.warning("未檢測到 onnxruntime 或 tokenizers，陣列將以純幾何反射核心運行。")
 
 
 @dataclass
 class FusedSensoryOutput:
-    """三大模型陣列集成感知輸出"""
+    """六核模型矩陣集成感知輸出"""
     valence: float  # 愉悅度 (-1.0 ~ 1.0)
     arousal: float  # 喚醒激動度 (0.0 ~ 1.0)
     dominant_emotion: str  # 主導情緒
@@ -47,7 +53,7 @@ class FusedSensoryOutput:
 
 
 class HierarchicalNeuralArray:
-    """三大離線神經模型協同感知陣列"""
+    """六核協同離線神經模型矩陣"""
 
     def __init__(self, models_dir: Optional[str] = None) -> None:
         if models_dir is None:
@@ -56,21 +62,49 @@ class HierarchicalNeuralArray:
         else:
             self.models_dir = models_dir
 
-        # 模型 1: 中文 BGE 模型
+        # 模型 1: 中文 BGE
         self.bge_session = None
         self.bge_tokenizer = None
-        self._bge_proto_embeddings: Dict[str, np.ndarray] = {}
+        self._bge_protos: Dict[str, np.ndarray] = {}
 
-        # 模型 2: 跨語言 MiniLM 模型
-        self.semantic_session = None
-        self.semantic_tokenizer = None
-        self._sem_proto_embeddings: Dict[str, np.ndarray] = {}
+        # 模型 2: MiniLM-L6
+        self.l6_session = None
+        self.l6_tokenizer = None
+        self._l6_protos: Dict[str, np.ndarray] = {}
 
-        # 模型 3: Toxic-BERT 防衛哨兵
+        # 模型 3: MiniLM-L12
+        self.l12_session = None
+        self.l12_tokenizer = None
+        self._l12_protos: Dict[str, np.ndarray] = {}
+
+        # 模型 4: 多語言 Multilingual-L12
+        self.multi_session = None
+        self.multi_tokenizer = None
+        self._multi_protos: Dict[str, np.ndarray] = {}
+
+        # 模型 5: DistilBERT-SST-2 (情感極性分類器)
+        self.sst2_session = None
+        self.sst2_tokenizer = None
+
+        # 模型 6: Toxic-BERT 防衛哨兵
         self.sentinel_session = None
         self.sentinel_tokenizer = None
 
         self._init_neural_engines()
+
+    def _load_model(self, folder: str, opts) -> Tuple[Optional[any], Optional[any]]:
+        m_path = os.path.join(self.models_dir, folder, "onnx", "model_quantized.onnx")
+        t_path = os.path.join(self.models_dir, folder, "tokenizer.json")
+        if os.path.exists(m_path) and os.path.exists(t_path):
+            try:
+                sess = ort.InferenceSession(m_path, sess_options=opts, providers=["CPUExecutionProvider"])
+                tok = Tokenizer.from_file(t_path)
+                tok.enable_padding(length=128)
+                tok.enable_truncation(max_length=128)
+                return sess, tok
+            except Exception as e:
+                log.warning(f"載入模型 {folder} 失敗: {e}")
+        return None, None
 
     def _init_neural_engines(self) -> None:
         if not HAS_ONNX:
@@ -81,46 +115,39 @@ class HierarchicalNeuralArray:
         opts.inter_op_num_threads = 1
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-        # 1. 載入模型 1：中文 BGE-small-zh
-        bge_model_path = os.path.join(self.models_dir, "bge_small_zh", "onnx", "model_quantized.onnx")
-        bge_tok_path = os.path.join(self.models_dir, "bge_small_zh", "tokenizer.json")
-        if os.path.exists(bge_model_path) and os.path.exists(bge_tok_path):
-            try:
-                self.bge_session = ort.InferenceSession(bge_model_path, sess_options=opts, providers=["CPUExecutionProvider"])
-                self.bge_tokenizer = Tokenizer.from_file(bge_tok_path)
-                self.bge_tokenizer.enable_padding(length=128)
-                self.bge_tokenizer.enable_truncation(max_length=128)
-                log.info("✓ 模型 1【中文高精確 BGE-ZH 語意共情引擎】載入成功")
-                self._precompute_bge_prototypes()
-            except Exception as e:
-                log.warning(f"BGE 模型載入失敗: {e}")
+        # 1. BGE-Small-ZH
+        self.bge_session, self.bge_tokenizer = self._load_model("bge_small_zh", opts)
+        if self.bge_session:
+            log.info("✓ [1/6] 中文 BGE 語意引擎載入成功")
+            self._precompute_bge_prototypes()
 
-        # 2. 載入模型 2：跨語言 MiniLM-L6
-        sem_model_path = os.path.join(self.models_dir, "semantic_extractor", "onnx", "model_quantized.onnx")
-        sem_tok_path = os.path.join(self.models_dir, "semantic_extractor", "tokenizer.json")
-        if os.path.exists(sem_model_path) and os.path.exists(sem_tok_path):
-            try:
-                self.semantic_session = ort.InferenceSession(sem_model_path, sess_options=opts, providers=["CPUExecutionProvider"])
-                self.semantic_tokenizer = Tokenizer.from_file(sem_tok_path)
-                self.semantic_tokenizer.enable_padding(length=128)
-                self.semantic_tokenizer.enable_truncation(max_length=128)
-                log.info("✓ 模型 2【跨語言概念空間 MiniLM 引擎】載入成功")
-                self._precompute_sem_prototypes()
-            except Exception as e:
-                log.warning(f"MiniLM 模型載入失敗: {e}")
+        # 2. MiniLM-L6
+        self.l6_session, self.l6_tokenizer = self._load_model("semantic_extractor", opts)
+        if self.l6_session:
+            log.info("✓ [2/6] 通用概念 MiniLM-L6 載入成功")
+            self._precompute_l6_prototypes()
 
-        # 3. 載入模型 3：Toxic-BERT 防衛哨兵
-        sen_model_path = os.path.join(self.models_dir, "hostility_sentinel", "onnx", "model_quantized.onnx")
-        sen_tok_path = os.path.join(self.models_dir, "hostility_sentinel", "tokenizer.json")
-        if os.path.exists(sen_model_path) and os.path.exists(sen_tok_path):
-            try:
-                self.sentinel_session = ort.InferenceSession(sen_model_path, sess_options=opts, providers=["CPUExecutionProvider"])
-                self.sentinel_tokenizer = Tokenizer.from_file(sen_tok_path)
-                self.sentinel_tokenizer.enable_padding(length=128)
-                self.sentinel_tokenizer.enable_truncation(max_length=128)
-                log.info("✓ 模型 3【防衛與毒性哨兵 Toxic-BERT 引擎】載入成功")
-            except Exception as e:
-                log.warning(f"哨兵模型載入失敗: {e}")
+        # 3. MiniLM-L12
+        self.l12_session, self.l12_tokenizer = self._load_model("minilm_l12", opts)
+        if self.l12_session:
+            log.info("✓ [3/6] 深層平滑 MiniLM-L12 載入成功")
+            self._precompute_l12_prototypes()
+
+        # 4. Multilingual-L12
+        self.multi_session, self.multi_tokenizer = self._load_model("multilingual_l12", opts)
+        if self.multi_session:
+            log.info("✓ [4/6] 多語言 Multilingual-L12 載入成功")
+            self._precompute_multi_prototypes()
+
+        # 5. DistilBERT-SST-2
+        self.sst2_session, self.sst2_tokenizer = self._load_model("sentiment_sst2", opts)
+        if self.sst2_session:
+            log.info("✓ [5/6] 情感極性 DistilBERT-SST-2 載入成功")
+
+        # 6. Toxic-BERT 哨兵
+        self.sentinel_session, self.sentinel_tokenizer = self._load_model("hostility_sentinel", opts)
+        if self.sentinel_session:
+            log.info("✓ [6/6] 防衛哨兵 Toxic-BERT 載入成功")
 
     def _extract_embedding(self, session, tokenizer, text: str) -> Optional[np.ndarray]:
         if not session or not tokenizer:
@@ -130,8 +157,12 @@ class HierarchicalNeuralArray:
             inputs = {
                 "input_ids": np.array([enc.ids], dtype=np.int64),
                 "attention_mask": np.array([enc.attention_mask], dtype=np.int64),
-                "token_type_ids": np.array([enc.type_ids], dtype=np.int64),
             }
+            # 部分模型需要 token_type_ids
+            input_names = [i.name for i in session.get_inputs()]
+            if "token_type_ids" in input_names:
+                inputs["token_type_ids"] = np.array([enc.type_ids], dtype=np.int64)
+
             outputs = session.run(None, inputs)
             last_hidden_state = outputs[0][0]
             mask = np.array(enc.attention_mask)[:, None]
@@ -156,24 +187,65 @@ class HierarchicalNeuralArray:
         for emo, text in prototypes.items():
             emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, text)
             if emb is not None:
-                self._bge_proto_embeddings[emo] = emb
+                self._bge_protos[emo] = emb
 
-    def _precompute_sem_prototypes(self) -> None:
+    def _precompute_l6_prototypes(self) -> None:
         prototypes = {
-            "喜悅": "I am so happy, delighted, thrilled and joyful!",
-            "悲傷": "I feel deeply sad, depressed, exhausted and heartbroken.",
+            "喜悅": "I am overjoyed, thrilled, happy and delighted!",
+            "悲傷": "I feel deeply heartbroken, sad, depressed and exhausted.",
             "信任": "Thank you so much for your trust, companionship and warmth.",
-            "厭惡": "That is absolutely disgusting, vile, nauseating and despicable.",
-            "恐懼": "I am so scared, terrified, anxious and stressed out.",
-            "憤怒": "I am furious, enraged and extremely mad!",
-            "期待": "I look forward to this with high anticipation and excitement!",
+            "憤怒": "I am extremely angry, furious and indignant!",
+            "期待": "I eagerly anticipate and look forward to this exciting journey!",
         }
         for emo, text in prototypes.items():
-            emb = self._extract_embedding(self.semantic_session, self.semantic_tokenizer, text)
+            emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, text)
             if emb is not None:
-                self._sem_proto_embeddings[emo] = emb
+                self._l6_protos[emo] = emb
+
+    def _precompute_l12_prototypes(self) -> None:
+        prototypes = {
+            "喜悅": "Wonderful celebration, happiness, pure joy and gratefulness.",
+            "悲傷": "Grief, helplessness, sorrow, crying and emotional pain.",
+            "信任": "Reliable friendship, mutual respect, understanding and bond.",
+        }
+        for emo, text in prototypes.items():
+            emb = self._extract_embedding(self.l12_session, self.l12_tokenizer, text)
+            if emb is not None:
+                self._l12_protos[emo] = emb
+
+    def _precompute_multi_prototypes(self) -> None:
+        prototypes = {
+            "喜悅": "這真的太棒了，非常開心，超喜歡！",
+            "悲傷": "心裡好難受，好失落好沮喪，覺得好累。",
+            "信任": "有你真好，謝謝你的陪伴，辛苦了！",
+        }
+        for emo, text in prototypes.items():
+            emb = self._extract_embedding(self.multi_session, self.multi_tokenizer, text)
+            if emb is not None:
+                self._multi_protos[emo] = emb
+
+    def _predict_sst2_polarity(self, text: str) -> Tuple[float, float]:
+        """模型 5: SST-2 輸出 (負向機率, 正向機率)"""
+        if not self.sst2_session or not self.sst2_tokenizer:
+            return 0.5, 0.5
+        try:
+            enc = self.sst2_tokenizer.encode(text)
+            inputs = {
+                "input_ids": np.array([enc.ids], dtype=np.int64),
+                "attention_mask": np.array([enc.attention_mask], dtype=np.int64),
+            }
+            outputs = self.sst2_session.run(None, inputs)
+            logits = outputs[0][0]
+            # Softmax
+            exp_l = np.exp(logits - np.max(logits))
+            probs = exp_l / np.sum(exp_l)
+            # label 0: NEGATIVE, label 1: POSITIVE
+            return float(probs[0]), float(probs[1])
+        except Exception:
+            return 0.5, 0.5
 
     def _predict_sentinel_threat(self, text: str) -> Tuple[float, Dict[str, float]]:
+        """模型 6: Toxic-BERT 6 維度毒性機率"""
         if not self.sentinel_session or not self.sentinel_tokenizer:
             return 0.0, {}
         try:
@@ -196,13 +268,12 @@ class HierarchicalNeuralArray:
                 + detail.get("insult", 0.0) * 0.5
                 + detail.get("obscene", 0.0) * 0.3
             )
-            threat_score = max(0.0, min(1.0, round(threat_score, 3)))
-            return threat_score, detail
+            return max(0.0, min(1.0, round(threat_score, 3))), detail
         except Exception:
             return 0.0, {}
 
     def perceive(self, text: str, reflex_output) -> FusedSensoryOutput:
-        """三大離線神經模型集成融合感知"""
+        """六核離線神經模型矩陣全維度集成融合感知"""
         active_layers = ["L1_GeometricReflex"]
         cleaned = text.strip()
 
@@ -218,36 +289,63 @@ class HierarchicalNeuralArray:
         delta_cor = reflex_output.delta_cortisol
         delta_oxy = reflex_output.delta_oxytocin
 
-        # 1. 執行模型 1 (中文 BGE-ZH 高精確共情)
-        if self.bge_session and self._bge_proto_embeddings:
+        # 1. 執行模型 1 (中文 BGE-ZH 共情)
+        if self.bge_session and self._bge_protos:
             active_layers.append("M1_BGE_ZH")
-            bge_emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, cleaned)
-            if bge_emb is not None:
-                bge_scores = {emo: float(np.dot(bge_emb, proto)) for emo, proto in self._bge_proto_embeddings.items()}
-                top_bge = max(bge_scores.items(), key=lambda x: x[1])
-                if top_bge[1] > 0.50:
-                    if top_bge[0] in ("喜悅", "期待", "信任"):
-                        val = round(val * 0.6 + 0.4 * top_bge[1], 3)
-                    elif top_bge[0] in ("悲傷", "恐懼", "厭惡", "憤怒"):
-                        val = round(val * 0.6 - 0.4 * top_bge[1], 3)
+            b_emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, cleaned)
+            if b_emb is not None:
+                b_scores = {e: float(np.dot(b_emb, p)) for e, p in self._bge_protos.items()}
+                top_b = max(b_scores.items(), key=lambda x: x[1])
+                if top_b[1] > 0.50:
+                    delta = 0.35 * top_b[1]
+                    val = val * 0.65 + (delta if top_b[0] in ("喜悅", "期待", "信任") else -delta)
 
-        # 2. 執行模型 2 (跨語言 MiniLM 概念空間幾何)
-        if self.semantic_session and self._sem_proto_embeddings:
-            active_layers.append("M2_MiniLM")
-            sem_emb = self._extract_embedding(self.semantic_session, self.semantic_tokenizer, cleaned)
-            if sem_emb is not None:
-                sem_scores = {emo: float(np.dot(sem_emb, proto)) for emo, proto in self._sem_proto_embeddings.items()}
-                top_sem = max(sem_scores.items(), key=lambda x: x[1])
-                if top_sem[1] > 0.45:
-                    if top_sem[0] in ("喜悅", "期待", "信任"):
-                        val = round(val * 0.8 + 0.2 * top_sem[1], 3)
-                    elif top_sem[0] in ("悲傷", "恐懼", "厭惡", "憤怒"):
-                        val = round(val * 0.8 - 0.2 * top_sem[1], 3)
+        # 2. 執行模型 2 (通用概念 MiniLM-L6)
+        if self.l6_session and self._l6_protos:
+            active_layers.append("M2_MiniLM_L6")
+            l6_emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, cleaned)
+            if l6_emb is not None:
+                l6_scores = {e: float(np.dot(l6_emb, p)) for e, p in self._l6_protos.items()}
+                top_l6 = max(l6_scores.items(), key=lambda x: x[1])
+                if top_l6[1] > 0.45:
+                    delta = 0.20 * top_l6[1]
+                    val = val * 0.80 + (delta if top_l6[0] in ("喜悅", "期待", "信任") else -delta)
 
-        # 3. 執行模型 3 (Toxic-BERT 防衛哨兵)
+        # 3. 執行模型 3 (深層平滑 MiniLM-L12)
+        if self.l12_session and self._l12_protos:
+            active_layers.append("M3_MiniLM_L12")
+            l12_emb = self._extract_embedding(self.l12_session, self.l12_tokenizer, cleaned)
+            if l12_emb is not None:
+                l12_scores = {e: float(np.dot(l12_emb, p)) for e, p in self._l12_protos.items()}
+                top_l12 = max(l12_scores.items(), key=lambda x: x[1])
+                if top_l12[1] > 0.45:
+                    intensity = max(intensity, float(top_l12[1]))
+
+        # 4. 執行模型 4 (多語言 Multilingual-L12)
+        if self.multi_session and self._multi_protos:
+            active_layers.append("M4_Multi_L12")
+            m_emb = self._extract_embedding(self.multi_session, self.multi_tokenizer, cleaned)
+            if m_emb is not None:
+                m_scores = {e: float(np.dot(m_emb, p)) for e, p in self._multi_protos.items()}
+                top_m = max(m_scores.items(), key=lambda x: x[1])
+                if top_m[1] > 0.50 and top_m[0] == "信任":
+                    delta_oxy += 3.0
+                    delta_ser += 2.0
+
+        # 5. 執行模型 5 (情感極性 DistilBERT-SST-2)
+        if self.sst2_session:
+            active_layers.append("M5_DistilBERT_SST2")
+            neg_p, pos_p = self._predict_sst2_polarity(cleaned)
+            # 若正向機率壓倒性 (> 0.85) 或負向壓倒性 (> 0.85)，微調 Valence
+            if pos_p > 0.85:
+                val = max(val, 0.4)
+            elif neg_p > 0.85:
+                val = min(val, -0.4)
+
+        # 6. 執行模型 6 (Toxic-BERT 哨兵)
         threat_level = 0.0
         if self.sentinel_session:
-            active_layers.append("M3_HostilitySentinel")
+            active_layers.append("M6_ToxicSentinel")
             threat_level, _ = self._predict_sentinel_threat(cleaned)
             if threat_level > 0.3:
                 sentinel_cor = round(threat_level * 35.0, 2)
@@ -259,8 +357,11 @@ class HierarchicalNeuralArray:
                 dom_emo = "憤怒"
                 sec_emo = "厭惡"
 
+        val = max(-1.0, min(1.0, round(val, 3)))
+        aro = max(0.1, min(1.0, round(aro, 3)))
+
         summary = (
-            f"三大離線模型陣列集成【{comp_sent}】(愉悅: {val:+0.2f}, 激動: {aro:0.2f}, "
+            f"六核神經模型矩陣集成【{comp_sent}】(愉悅: {val:+0.2f}, 激動: {aro:0.2f}, "
             f"威脅: {threat_level:0.2f} | 啟動層: {','.join(active_layers)})"
         )
 
@@ -270,7 +371,7 @@ class HierarchicalNeuralArray:
             dominant_emotion=dom_emo,
             secondary_emotion=sec_emo,
             composite_sentiment=comp_sent,
-            intensity=intensity,
+            intensity=round(intensity, 3),
             threat_level=threat_level,
             summary=summary,
             delta_dopamine=delta_dop,
