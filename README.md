@@ -119,7 +119,7 @@ ZeroNexus/
 │   └── generate_personas.py  # 16 款深度人格 Prompt 編譯生成器
 ├── tests/                  # 大腦生理神經與核心系統單元測試集
 ├── update.py               # 安全單向自動更新器（Pull-Only）
-├── version.txt             # 當前發布版本標記 (v1.4.1)
+├── version.txt             # 當前發布版本標記 (v1.5.0)
 ├── main.py                 # 核心主程式入口點
 └── run.py                  # 統一快捷啟動入口點
 ```
