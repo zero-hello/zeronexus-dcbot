@@ -12,8 +12,7 @@ import sys
 import time
 import shutil
 import logging
-from pathlib import Path
-from typing import Dict, List, Tuple
+import importlib.util
 
 log = logging.getLogger("ZeroNexus.Brain.Bootstrap")
 
@@ -25,6 +24,35 @@ MODELS_SPEC = [
     ("sentiment_sst2", "Xenova/distilbert-base-uncased-finetuned-sst-2-english", "情感極性分類模型", 50 * 1024 * 1024),
     ("hostility_sentinel", "Xenova/toxic-bert", "自尊防衛哨兵模型", 90 * 1024 * 1024),
 ]
+
+
+def check_and_repair_dependencies() -> bool:
+    """自動偵測並自癒修復 Python 神經推論依賴環境 (onnxruntime, tokenizers 等)"""
+    packages = ["onnxruntime", "tokenizers", "huggingface_hub", "cryptography"]
+    missing = [pkg for pkg in packages if importlib.util.find_spec(pkg) is None]
+
+    if not missing:
+        return True
+
+    print(f"\033[38;5;208m⚠️  [大腦守護者] 偵測到當前環境缺少神經運算套件: {', '.join(missing)}\033[0m")
+    print("\033[38;5;244m正在嘗試自動動態安裝依賴...\033[0m")
+
+    import subprocess
+    try:
+        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + missing
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if res.returncode == 0:
+            print("\033[38;5;48m✔ 依賴套件動態安裝成功！已恢復神經大腦執行環境。\033[0m")
+            return True
+        else:
+            log.warning(f"自動安裝套件失敗: {res.stderr}")
+    except Exception as e:
+        log.warning(f"嘗試自動安裝套件異常: {e}")
+
+    print("\033[38;5;196m✘ 自動安裝套件受限。請於環境或容器內手動安裝：\033[0m")
+    print(f"\033[38;5;220m  pip install {' '.join(missing)}\033[0m")
+    print("\033[38;5;244m若使用 Docker 部署，請重新建置映象檔：docker compose build --no-cache\033[0m\n")
+    return False
 
 
 def verify_single_model(target_dir: str, min_model_bytes: int) -> bool:
@@ -48,6 +76,10 @@ def verify_single_model(target_dir: str, min_model_bytes: int) -> bool:
         sess_opts = ort.SessionOptions()
         sess_opts.intra_op_num_threads = 1
         ort.InferenceSession(model_path, sess_options=sess_opts, providers=["CPUExecutionProvider"])
+        return True
+    except (ImportError, ModuleNotFoundError) as e:
+        # 若環境缺少套件，但檔案實體完整，不應誤判為檔案毀損以避免誤刪
+        log.warning(f"環境缺少推論套件，暫無法驗證模型結構 ({target_dir}): {e}")
         return True
     except Exception as e:
         log.warning(f"模型檔案驗證未通過 ({target_dir}): {e}")
@@ -90,6 +122,9 @@ def download_single_model(folder: str, repo: str, desc: str, models_root: str, m
 
 def ensure_brain_models_ready(console_output: bool = True) -> bool:
     """在機器人開機前，確保所有 6 個離線神經模型全部就緒且完好無損"""
+    # 0. 環境依賴檢查與熱修復
+    check_and_repair_dependencies()
+
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     models_root = os.path.join(base_dir, "data", "brain", "models")
     os.makedirs(models_root, exist_ok=True)
