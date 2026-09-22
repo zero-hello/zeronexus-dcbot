@@ -73,9 +73,16 @@ class GroqAdapter(BaseAIAdapter):
 
         formatted_messages: List[Dict[str, Any]] = []
         if system_instruction:
-            formatted_messages.append({"role": "system", "content": system_instruction})
+            sys_clean = system_instruction.strip()
+            # 針對 Groq 每分鐘 7,000 輸入 Token 嚴格防護限制進行智慧壓縮提煉
+            if len(sys_clean) > 2600:
+                sys_clean = sys_clean[:2600] + "\n...(以下設定已智慧提煉，請保持活潑、可愛且聰明的態度，並嚴格使用道地臺灣繁體中文回應)"
+            formatted_messages.append({"role": "system", "content": sys_clean})
 
-        for i, msg in enumerate(messages):
+        # 僅保留最近 8 則訊息，避免歷史對話過長導致 413 超限
+        recent_messages = messages[-8:] if len(messages) > 8 else messages
+
+        for i, msg in enumerate(recent_messages):
             raw_content = msg.get("content", "")
             if isinstance(raw_content, list):
                 text_parts = [
@@ -87,7 +94,11 @@ class GroqAdapter(BaseAIAdapter):
             else:
                 content_str = str(raw_content)
 
-            if i == len(messages) - 1 and images:
+            # 若歷史長文過長亦做安全上限保護
+            if len(content_str) > 1500:
+                content_str = content_str[:1500] + "..."
+
+            if i == len(recent_messages) - 1 and images:
                 content_str += " [備註：使用者附加了圖片，若需檢視圖片請使用多模態視覺模型]"
 
             role = msg.get("role", "user")

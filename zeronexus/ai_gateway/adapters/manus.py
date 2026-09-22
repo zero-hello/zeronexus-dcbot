@@ -81,27 +81,35 @@ class ManusAdapter(BaseAIAdapter):
             if not user_prompt:
                 user_prompt = "你好！"
 
-            # 構建結構化自然對話上下文 (避免超過 Manus 5,000 tokens 上限)
+            # 構建結構化自然對話上下文 (嚴格避免超過 Manus 5,000 tokens 上限)
             context_blocks: List[str] = []
             if system_instruction:
                 sys_clean = system_instruction.strip()
-                if len(sys_clean) > 2500:
-                    sys_clean = sys_clean[:2500] + "\n...(以下設定省略)"
+                if len(sys_clean) > 1000:
+                    sys_clean = sys_clean[:1000] + "\n...(以下設定省略，請保持活潑、可愛且聰明的態度，並嚴格使用道地繁體中文回應)"
                 context_blocks.append(f"【角色設定與系統指示】\n{sys_clean}")
 
-            # 附加前文對話歷史 (最近 4 則)
+            # 附加前文對話歷史 (最近 2 則，每則上限 300 字元)
             history_lines: List[str] = []
             for msg in messages[:-1]:
                 m_role = "使用者" if msg.get("role") == "user" else "ZeroNexus"
                 m_content = msg.get("content", "")
                 if isinstance(m_content, str) and m_content.strip():
-                    history_lines.append(f"{m_role}: {m_content.strip()}")
+                    clean_content = m_content.strip()
+                    if len(clean_content) > 300:
+                        clean_content = clean_content[:300] + "..."
+                    history_lines.append(f"{m_role}: {clean_content}")
             if history_lines:
-                context_blocks.append("【前文對話記錄】\n" + "\n".join(history_lines[-4:]))
+                context_blocks.append("【前文對話記錄】\n" + "\n".join(history_lines[-2:]))
 
-            context_blocks.append(f"【使用者最新訊息】\n{user_prompt}")
+            clean_user_prompt = user_prompt.strip()
+            if len(clean_user_prompt) > 800:
+                clean_user_prompt = clean_user_prompt[:800] + "..."
+            context_blocks.append(f"【使用者最新訊息】\n{clean_user_prompt}")
             context_blocks.append("請以道地繁體中文自然流暢、生動有趣地直接回應使用者。")
             full_prompt = "\n\n".join(context_blocks)
+            if len(full_prompt) > 2200:
+                full_prompt = full_prompt[:2200]
 
             target_model = getattr(config.ai, "manus_model", "") or model or "manus-1.6-lite"
             if "max" in target_model.lower():

@@ -939,17 +939,7 @@ class ModelRegistry:
                 message=f"查無相符之模型版本「{query}」，系統不會任意猜測其他版本。",
             )
 
-        # 0.9 Guard: explicitly reject non-supported model families
-        if any(b in q for b in ["gpt", "openai", "o3", "o1", "claude", "claud", "sonnet", "haiku", "anthropic", "llama", "meta", "mistral", "mixtral", "codestral", "glm", "kimi", "moonshot", "grok"]):
-            cands = [self.get("gemini-3.1-flash-lite"), self.get("deepseek/deepseek-v4-flash-vision-exp"), self.get("qwen/qwen-2.5-72b-instruct")]
-            return ResolutionResult(
-                success=False,
-                status="NOT_FOUND",
-                candidates=[c for c in cands if c],
-                message=f"ZeroNexus 目前支援 Qwen、DeepSeek、Gemini 系列與 Manus AI Agent，不支援「{query}」。推薦使用：Gemini 3.1 Flash Lite、DeepSeek V4 Flash 或 Manus。",
-            )
-
-        # 1. Exact model_id match
+        # 1. Exact model_id match (優先最高)
         if q in self._models:
             m = self._models[q]
             if m.status == ModelStatus.RETIRED:
@@ -967,7 +957,7 @@ class ModelRegistry:
         # 2. Exact display_name match (prefer native provider if multiple, e.g. gemini, deepseek)
         matches = [m for m in self._models.values() if m.display_name.lower() == q]
         if matches:
-            m = next((cand for cand in matches if cand.provider in ("gemini", "deepseek")), matches[0])
+            m = next((cand for cand in matches if cand.provider in ("gemini", "deepseek", "groq", "mistral")), matches[0])
             if m.status == ModelStatus.RETIRED:
                 repl = self.get(m.replacement_model_id) if m.replacement_model_id else None
                 repl_name = repl.display_name if repl else "Gemini 3.8 Flash"
@@ -979,6 +969,16 @@ class ModelRegistry:
                     message=f"模型 `{m.display_name}` 已退役 (Retired)。推薦使用新一代 **{repl_name}**。",
                 )
             return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
+
+        # 0.9 Guard: explicitly reject non-supported model families (僅在未註冊時生效)
+        if any(b in q for b in ["o3", "o1", "claude", "claud", "sonnet", "haiku", "anthropic", "glm", "kimi", "moonshot", "grok"]):
+            cands = [self.get("gemini-3.1-flash-lite"), self.get("deepseek/deepseek-v4-flash-vision-exp"), self.get("qwen/qwen-2.5-72b-instruct")]
+            return ResolutionResult(
+                success=False,
+                status="NOT_FOUND",
+                candidates=[c for c in cands if c],
+                message=f"ZeroNexus 目前暫不支援「{query}」。推薦使用：Gemini 3.1 Flash Lite、DeepSeek V4 Flash 或 Groq。",
+            )
 
         # Clean potential conversational prefix for direct registry calls
         clean_q = re.sub(

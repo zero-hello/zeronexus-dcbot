@@ -28,7 +28,8 @@ class CohereService:
     """Cohere API 核心服務類別，支援語意重排與模型呼叫。"""
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        self._api_key: str = (api_key or os.getenv("COHERE_API_KEY", "")).strip()
+        raw_key = api_key if api_key is not None else os.getenv("COHERE_API_KEY", "")
+        self._api_key: str = (raw_key or "").strip()
         self._client: Optional[Any] = None
         self._timeout: float = 8.0  # 預設 8 秒超時防護
 
