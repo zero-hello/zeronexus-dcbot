@@ -1500,7 +1500,14 @@ class ZeroNexusBot(commands.Bot):
                         pass
                 return
 
-        # 3. Send Thinking message immediately (NO typing during thinking!)
+        # 3. Create Cancel View & Send Thinking message immediately (with Red Cancel Button)
+        from zeronexus.ui.views import AICancelView
+        cancel_view = AICancelView(
+            author_id=message.author.id,
+            author_name=req_ctx.author_name,
+            task=asyncio.current_task(),
+        )
+
         if is_secret_easter_egg:
             status_card = ZNCard(
                 title=f"✨ 絕密彩蛋領域 ➔ {req_ctx.author_name}",
@@ -1518,23 +1525,23 @@ class ZeroNexusBot(commands.Bot):
         t_defer0 = time.perf_counter()
         try:
             if channel_override is not None:
-                status_msg = await effective_channel.send(view=status_card.to_layout_view())
+                status_msg = await effective_channel.send(view=status_card.to_layout_view(extra_view=cancel_view))
             else:
-                status_msg = await message.reply(view=status_card.to_layout_view(), mention_author=False)
+                status_msg = await message.reply(view=status_card.to_layout_view(extra_view=cancel_view), mention_author=False)
         except Exception as v2_err:
             log.info(f"Failed to reply with Components V2 LayoutView ({v2_err}), falling back to Embed reply.")
             try:
                 if channel_override is not None:
-                    status_msg = await effective_channel.send(embed=status_card.to_embed())
+                    status_msg = await effective_channel.send(embed=status_card.to_embed(), view=cancel_view)
                 else:
-                    status_msg = await message.reply(embed=status_card.to_embed(), mention_author=False)
+                    status_msg = await message.reply(embed=status_card.to_embed(), view=cancel_view, mention_author=False)
             except (discord.NotFound, discord.HTTPException) as send_err:
                 log.warning(f"Failed to reply to message {message.id} (message may be deleted): {send_err}. Falling back to channel.send.")
                 try:
-                    status_msg = await effective_channel.send(view=status_card.to_layout_view())
+                    status_msg = await effective_channel.send(view=status_card.to_layout_view(extra_view=cancel_view))
                 except Exception:
                     try:
-                        status_msg = await effective_channel.send(embed=status_card.to_embed())
+                        status_msg = await effective_channel.send(embed=status_card.to_embed(), view=cancel_view)
                     except Exception as ch_err:
                         log.error(f"Failed to send thinking placeholder to channel: {ch_err}")
                         if reservation:
@@ -1545,6 +1552,7 @@ class ZeroNexusBot(commands.Bot):
                 if reservation:
                     await quota_service.release_quota(reservation)
                 return
+        cancel_view.status_msg = status_msg
         pipeline_metrics.defer_ms = (time.perf_counter() - t_defer0) * 1000.0
 
         try:
@@ -1651,12 +1659,13 @@ class ZeroNexusBot(commands.Bot):
                 egg_card.add_section("🛡️ 安全防護", "無拘束彩蛋模式", inline=True)
                 egg_card.add_section("💾 獨立記憶庫", "500 句隔離記憶", inline=True)
 
+                cancel_view.stop()
                 await self._trigger_typing_safe(message.channel)
                 t_send = time.perf_counter()
                 if gen_egg_file:
-                    await self._safe_edit_status_message(status_msg, message.channel, card=egg_card, attachments=[gen_egg_file])
+                    await self._safe_edit_status_message(status_msg, message.channel, card=egg_card, view=None, attachments=[gen_egg_file])
                 else:
-                    await self._safe_edit_status_message(status_msg, message.channel, card=egg_card)
+                    await self._safe_edit_status_message(status_msg, message.channel, card=egg_card, view=None)
                 pipeline_metrics.discord_send_ms = (time.perf_counter() - t_send) * 1000.0
                 pipeline_metrics.total_latency_ms = (time.perf_counter() - t0) * 1000.0
                 stats.record_ai_pipeline(pipeline_metrics)
@@ -1889,7 +1898,7 @@ class ZeroNexusBot(commands.Bot):
             # Dynamic Contextual Multi-Step Progress Reporter
             async def report_progress(step: int, total_steps: int, title: str, description: str, icon: str = "⚡") -> None:
                 nonlocal status_msg, status_msg_alive
-                if not status_msg or not status_msg_alive:
+                if not status_msg or not status_msg_alive or cancel_view.is_cancelled:
                     return
                 try:
                     card = ZNCard(
@@ -1898,7 +1907,7 @@ class ZeroNexusBot(commands.Bot):
                         status_pill=ZNStatusPill.PROCESSING,
                         color=ZNColor.AI,
                     )
-                    res = await self._safe_edit_status_message(status_msg, effective_channel, card=card)
+                    res = await self._safe_edit_status_message(status_msg, effective_channel, card=card, view=cancel_view)
                     if res is not None:
                         status_msg = res
                     else:
@@ -2715,6 +2724,7 @@ class ZeroNexusBot(commands.Bot):
                 resp.card.set_image(generated_image_url)
 
             # Final response ready -> Dynamic SmartActionView evaluation
+            cancel_view.stop()
             from zeronexus.engines.community_suite import SmartActionView
             action_view = SmartActionView.evaluate_actions(
                 query=user_prompt,
@@ -2753,6 +2763,7 @@ class ZeroNexusBot(commands.Bot):
 
         except asyncio.CancelledError:
             log.info("AI response generation task cancelled gracefully.")
+            cancel_view.stop()
             if reservation:
                 try:
                     rel_task = asyncio.create_task(quota_service.release_quota(reservation))
@@ -2768,13 +2779,14 @@ class ZeroNexusBot(commands.Bot):
                 except Exception as m_rel_err:
                     log.warning(f"Failed to release model quota reservation on cancel: {m_rel_err}")
             cancel_card = ZNCard(
-                title=f"⚪ AI 請求已取消 ➔ {req_ctx.author_name}",
-                description="本次推論請求已被取消。",
+                title=f"🛑 已取消回應 ➔ {req_ctx.author_name}",
+                description="已成功中斷本次 AI 推論與思考程序，未扣除額度。",
                 status_pill=ZNStatusPill.WARNING,
-                color=ZNColor.DARK,
+                color=ZNColor.ERROR,
+                footer_text="🛑 本次對話已手動取消",
             )
             try:
-                await self._safe_edit_status_message(status_msg, effective_channel, card=cancel_card)
+                await self._safe_edit_status_message(status_msg, effective_channel, card=cancel_card, view=None)
             except Exception:
                 pass
             raise

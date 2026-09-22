@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable, Coroutine, List, Optional, Union
 
@@ -9,7 +10,7 @@ import discord
 
 from zeronexus.ui.components import DebounceGuard
 from zeronexus.ui.responder import InteractionResponder
-from zeronexus.ui.theme import ZNColor
+from zeronexus.ui.theme import ZNColor, ZNStatusPill
 
 log = logging.getLogger("zeronexus.ui.views")
 
@@ -499,3 +500,98 @@ class ZNModal(discord.ui.Modal):
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
         log.error(f"Unhandled error in modal '{self.title}': {error}", exc_info=True)
         await InteractionResponder.safe_error(interaction, error)
+
+
+class AICancelView(discord.ui.View):
+    """AI 思考中取消按鈕 View。
+
+    當 AI 正在思考或調度工具時，提供顯眼的紅色取消按鈕（danger），
+    使用者點擊後立即中斷回應協程，並將狀態卡片無縫編輯為已取消。
+    """
+
+    def __init__(
+        self,
+        author_id: int,
+        author_name: str,
+        task: Optional[asyncio.Task] = None,
+        timeout: float = 180.0,
+        on_cancelled: Optional[Callable[[], Any]] = None,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+        self.author_name = author_name
+        self.task = task
+        self.on_cancelled = on_cancelled
+        self.is_cancelled: bool = False
+        self.cancel_event: asyncio.Event = asyncio.Event()
+        self.status_msg: Optional[discord.Message] = None
+
+        self.cancel_button = discord.ui.Button(
+            label="取消回應",
+            style=discord.ButtonStyle.danger,
+            emoji="🛑",
+            custom_id=f"zn_ai_cancel_{author_id}",
+        )
+        self.cancel_button.callback = self._on_cancel_click
+        self.add_item(self.cancel_button)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await InteractionResponder.safe_send(
+                interaction,
+                "⚠️ 這是一項專屬的操作，只有發起對話的夥伴才可以取消回應喔！",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    async def _on_cancel_click(self, interaction: discord.Interaction) -> None:
+        if self.is_cancelled:
+            await InteractionResponder.safe_send(interaction, "此回應已經被取消了。", ephemeral=True)
+            return
+
+        self.is_cancelled = True
+        self.cancel_event.set()
+        self.cancel_button.disabled = True
+        self.stop()
+
+        from zeronexus.ui.card import ZNCard
+        cancel_card = ZNCard(
+            title=f"🛑 已取消回應 ➔ {self.author_name}",
+            description="已成功中斷本次 AI 推論與思考程序，未扣除額度。",
+            status_pill=ZNStatusPill.WARNING,
+            color=ZNColor.ERROR,
+            footer_text="🛑 本次對話已手動取消",
+        )
+
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(view=cancel_card.to_layout_view())
+            elif interaction.message:
+                await interaction.message.edit(view=cancel_card.to_layout_view())
+        except Exception as edit_err:
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=cancel_card.to_embed(), view=None)
+                elif interaction.message:
+                    await interaction.message.edit(embed=cancel_card.to_embed(), view=None)
+            except Exception:
+                log.warning(f"Failed to edit message in AICancelView: {edit_err}")
+
+        # 取消執行中的協程任務
+        if self.task and not self.task.done():
+            self.task.cancel()
+
+        if self.on_cancelled:
+            try:
+                cb_res = self.on_cancelled()
+                if asyncio.iscoroutine(cb_res):
+                    await cb_res
+            except Exception as cb_err:
+                log.warning(f"Error executing on_cancelled callback: {cb_err}")
+
+    async def on_timeout(self) -> None:
+        """超時後自動停用取消按鈕。"""
+        self.cancel_button.disabled = True
+        self.stop()
+
