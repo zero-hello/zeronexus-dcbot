@@ -16,10 +16,120 @@
 """
 
 import logging
+import math
+import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger("ZeroNexus.Brain.Emotion")
+
+
+@dataclass
+class NeurotransmitterDynamics:
+    """神經遞質時間衰減與滯後平滑動力學模型 (Temporal Decay & Hysteresis Dynamics)
+
+    1. 指數半衰期衰減公式：
+       Level_t = Level_{t-1} * exp(-lambda * delta_t) + Impact_t * alpha
+       其中 lambda = ln(2) / half_life
+    2. 滯後阻尼平滑機制：
+       Output_t = (1 - alpha) * PrevOutput + alpha * NewInput
+    3. 防止單次極端輸入造成心境鋸齒狀劇烈跳變 (Anti-Jittering)。
+    """
+
+    half_lives: Dict[str, float] = field(
+        default_factory=lambda: {
+            "serotonin": 300.0,  # 血清素：衰減慢 (~300s)，長效心理韌性與沉穩感
+            "oxytocin": 300.0,   # 催產素：衰減慢 (~300s)，長效親密感與信任積累
+            "dopamine": 60.0,    # 多巴胺：衰減快 (~60s)，瞬時好奇與探索脈衝
+            "cortisol": 60.0,    # 皮質醇：衰減快 (~60s)，即時壓力警覺但快速退潮平復
+        }
+    )
+    alpha: float = 0.4  # 滯後阻尼平滑係數 (Hysteresis Damping Factor)
+
+    # 4 大核心神經遞質基準值 (範圍 0.0 ~ 1.0)
+    baselines: Dict[str, float] = field(
+        default_factory=lambda: {
+            "dopamine": 0.5,
+            "serotonin": 0.6,
+            "cortisol": 0.1,
+            "oxytocin": 0.4,
+        }
+    )
+    # 當前動態濃度水準 (0.0 ~ 1.0)
+    levels: Dict[str, float] = field(
+        default_factory=lambda: {
+            "dopamine": 0.5,
+            "serotonin": 0.6,
+            "cortisol": 0.1,
+            "oxytocin": 0.4,
+        }
+    )
+
+    # 阻尼平滑後的維度情緒值 (Valence: -1.0 ~ 1.0, Arousal: 0.0 ~ 1.0)
+    smoothed_valence: float = 0.0
+    smoothed_arousal: float = 0.3
+    last_update_timestamp: float = field(default_factory=time.time)
+
+    def decay_and_update(
+        self,
+        impacts: Dict[str, float],
+        instant_valence: float,
+        instant_arousal: float,
+        current_time: Optional[float] = None,
+    ) -> Tuple[Dict[str, float], float, float]:
+        """計算時間衰減與阻尼滯後平滑更新
+
+        Args:
+            impacts: 當次輸入對神經遞質之瞬時衝擊量
+            instant_valence: 當次輸入計算出之瞬間愉悅度 (-1.0 ~ 1.0)
+            instant_arousal: 當次輸入計算出之瞬間激動度 (0.0 ~ 1.0)
+            current_time: 當前時間戳 (若為 None 則使用 time.time())
+
+        Returns:
+            (levels, smoothed_valence, smoothed_arousal)
+        """
+        now = current_time if current_time is not None else time.time()
+        delta_t = max(0.0, now - self.last_update_timestamp)
+        self.last_update_timestamp = now
+
+        # 1. 計算四大神經傳導物質之時間指數衰減與衝擊合成
+        for nt, half_life in self.half_lives.items():
+            current_val = self.levels.get(nt, self.baselines.get(nt, 0.5))
+            baseline = self.baselines.get(nt, 0.5)
+
+            # 指數衰減常數 lambda = ln(2) / half_life
+            decay_lambda = math.log(2) / max(1.0, half_life)
+            decay_factor = math.exp(-decay_lambda * delta_t)
+
+            # 偏離基準線的量遵循指數衰減回到基準線 (Homeostasis)
+            diff = current_val - baseline
+            decayed_diff = diff * decay_factor
+            decayed_level = baseline + decayed_diff
+
+            # 衝擊輸入（Impact 依 alpha 阻尼平滑納入）
+            raw_impact = impacts.get(nt, 0.0)
+            # 若 raw_impact 來自 delta (例如 1.0~30.0 範圍)，做適當比例映射 (scale 0.01)
+            norm_impact = raw_impact * 0.01 if abs(raw_impact) > 1.0 else raw_impact
+
+            # Level_t = Level_{t-1} * e^(-lambda * dt) + Impact_t * alpha
+            new_level = decayed_level + (norm_impact * self.alpha)
+            self.levels[nt] = max(0.0, min(1.0, round(new_level, 4)))
+
+        # 2. 維度情緒之滯後阻尼平滑更新：
+        # 若時間間隔過長（例如超過 300 秒無互動），情緒先自然向中性狀態回落
+        if delta_t > 300.0:
+            neutral_decay = math.exp(-(delta_t - 300.0) / 300.0)
+            self.smoothed_valence *= neutral_decay
+            self.smoothed_arousal = 0.3 + (self.smoothed_arousal - 0.3) * neutral_decay
+
+        # Output_t = (1 - alpha) * PrevOutput + alpha * NewInput
+        self.smoothed_valence = (1.0 - self.alpha) * self.smoothed_valence + self.alpha * instant_valence
+        self.smoothed_arousal = (1.0 - self.alpha) * self.smoothed_arousal + self.alpha * instant_arousal
+
+        self.smoothed_valence = max(-1.0, min(1.0, round(self.smoothed_valence, 3)))
+        self.smoothed_arousal = max(0.0, min(1.0, round(self.smoothed_arousal, 3)))
+
+        return self.levels.copy(), self.smoothed_valence, self.smoothed_arousal
 
 
 @dataclass
@@ -43,6 +153,13 @@ class EmotionAnalysisResult:
     # 多神經模型陣列擴充
     threat_level: float = 0.0  # 敵意與威脅指數 (0.0 ~ 1.0)
     active_layers: List[str] = field(default_factory=lambda: ["L1_GeometricReflex"])
+
+    # 時間衰減與滯後動態追蹤
+    dynamics_levels: Optional[Dict[str, float]] = None
+    raw_valence: float = 0.0
+    raw_arousal: float = 0.0
+    smoothed_valence: float = 0.0
+    smoothed_arousal: float = 0.3
 
 
 class HighDimensionalEmotionProjector:
@@ -82,7 +199,8 @@ class HighDimensionalEmotionProjector:
         ("悲傷", "憤怒"): "受創痛苦與不甘",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, dynamics: Optional[NeurotransmitterDynamics] = None) -> None:
+        self.dynamics = dynamics or NeurotransmitterDynamics()
         self._init_lexical_anchors()
         try:
             from .neural_models import HierarchicalNeuralArray
@@ -134,7 +252,7 @@ class HighDimensionalEmotionProjector:
     def analyze_text(self, text: str) -> EmotionAnalysisResult:
         """對輸入文字進行多維幾何情緒投影運算"""
         if not text or not text.strip():
-            return self._neutral_result()
+            return self._apply_dynamics(self._neutral_result())
 
         cleaned = text.strip()
 
@@ -245,10 +363,11 @@ class HighDimensionalEmotionProjector:
             active_layers=["L1_GeometricReflex"],
         )
 
+        final_res = raw_res
         if self.neural_array:
             try:
                 fused = self.neural_array.perceive(cleaned, raw_res)
-                return EmotionAnalysisResult(
+                final_res = EmotionAnalysisResult(
                     valence=fused.valence,
                     arousal=fused.arousal,
                     dominant_emotion=fused.dominant_emotion,
@@ -266,7 +385,7 @@ class HighDimensionalEmotionProjector:
             except Exception as e:
                 log.warning(f"神經模型陣列集成感知例外，使用第 1 層反射: {e}")
 
-        return raw_res
+        return self._apply_dynamics(final_res)
 
     def _infer_implicit_micro_emotions(self, text: str) -> EmotionAnalysisResult:
         """無明顯情緒詞時之微特徵推斷（如句尾標點、長度、問候語）"""
@@ -306,10 +425,11 @@ class HighDimensionalEmotionProjector:
         else:
             raw_res = self._neutral_result()
 
+        final_res = raw_res
         if self.neural_array:
             try:
                 fused = self.neural_array.perceive(text.strip(), raw_res)
-                return EmotionAnalysisResult(
+                final_res = EmotionAnalysisResult(
                     valence=fused.valence,
                     arousal=fused.arousal,
                     dominant_emotion=fused.dominant_emotion,
@@ -327,7 +447,28 @@ class HighDimensionalEmotionProjector:
             except Exception as e:
                 log.warning(f"微特徵神經陣列推論例外: {e}")
 
-        return raw_res
+        return self._apply_dynamics(final_res)
+
+    def _apply_dynamics(self, res: EmotionAnalysisResult) -> EmotionAnalysisResult:
+        """套用神經遞質時間指數衰減與滯後阻尼平滑機制"""
+        impacts = {
+            "dopamine": res.delta_dopamine,
+            "serotonin": res.delta_serotonin,
+            "cortisol": res.delta_cortisol,
+            "oxytocin": res.delta_oxytocin,
+        }
+        res.raw_valence = res.valence
+        res.raw_arousal = res.arousal
+
+        levels, smoothed_valence, smoothed_arousal = self.dynamics.decay_and_update(
+            impacts=impacts,
+            instant_valence=res.valence,
+            instant_arousal=res.arousal,
+        )
+        res.smoothed_valence = smoothed_valence
+        res.smoothed_arousal = smoothed_arousal
+        res.dynamics_levels = levels
+        return res
 
     def _neutral_result(self) -> EmotionAnalysisResult:
         """中性平和狀態"""

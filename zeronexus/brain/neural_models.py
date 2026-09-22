@@ -34,6 +34,121 @@ except ImportError:
     log.warning("未檢測到 onnxruntime 或 tokenizers，陣列將以純幾何反射核心運行。")
 
 
+# 對立情緒原型對 (Antagonistic Emotion Pairs)
+ANTAGONISTIC_PAIRS = [
+    ("喜悅", "悲傷"),
+    ("信任", "厭惡"),
+    ("期待", "恐懼"),
+    ("喜悅", "憤怒"),
+    ("信任", "憤怒"),
+]
+
+
+def orthogonalize_prototypes(
+    prototypes: Dict[str, np.ndarray],
+    decoupling_factor: float = 0.5,
+    centroid_factor: float = 0.7,
+) -> Dict[str, np.ndarray]:
+    """原型向量正交化與軟對比解耦 (Gram-Schmidt Orthogonalization & Contrastive Decoupling)
+
+    針對語意空間中容易產生沾黏的對立情緒原型（如「喜悅」與「悲傷」、「信任」與「厭惡」）：
+    1. 計算原型矩陣之語意重心（Centroid），剔除通用情感強度的共享共性背景（Centroid Subtraction）。
+    2. 針對成對對立情緒執行 Gram-Schmidt 投影剔除，消除相互重疊成分。
+    3. 全面重新執行 L2 歸一化。
+    """
+    if not prototypes:
+        return {}
+
+    ortho_dict = {k: v.copy() for k, v in prototypes.items()}
+
+    # 1. 重心共性剔除 (Centroid Subtraction)
+    all_vecs = list(ortho_dict.values())
+    if len(all_vecs) >= 2:
+        mean_vec = np.mean(all_vecs, axis=0)
+        mean_norm = np.linalg.norm(mean_vec)
+        if mean_norm > 1e-6:
+            mean_unit = mean_vec / mean_norm
+            for k in ortho_dict:
+                p = ortho_dict[k]
+                p_c = p - centroid_factor * np.dot(p, mean_unit) * mean_unit
+                norm = np.linalg.norm(p_c)
+                if norm > 1e-6:
+                    ortho_dict[k] = p_c / norm
+
+    # 2. 對立原型 Gram-Schmidt 投影剔除
+    for emo_a, emo_b in ANTAGONISTIC_PAIRS:
+        if emo_a in ortho_dict and emo_b in ortho_dict:
+            va = ortho_dict[emo_a]
+            vb = ortho_dict[emo_b]
+
+            sim = float(np.dot(va, vb))
+            if sim > 0.0:
+                va_prime = va - (decoupling_factor * sim * vb)
+                vb_prime = vb - (decoupling_factor * sim * va)
+
+                norm_a = np.linalg.norm(va_prime)
+                norm_b = np.linalg.norm(vb_prime)
+
+                if norm_a > 1e-6:
+                    ortho_dict[emo_a] = va_prime / norm_a
+                if norm_b > 1e-6:
+                    ortho_dict[emo_b] = vb_prime / norm_b
+
+    return ortho_dict
+
+
+def calibrate_prototype_projections(
+    raw_scores: Dict[str, float],
+    temperature: float = 0.07,
+    threshold: float = 0.15,
+) -> Dict[str, float]:
+    """餘弦投影校準 (Cosine Projection Calibration)
+
+    1. 閾值過濾 (Threshold Filtering)：過濾掉低於 threshold 的微弱雜訊分量。
+    2. 溫度縮放 Softmax (Temperature-Scaled Softmax)：
+       z_i = score_i / temperature
+       p_i = exp(z_i - max(z)) / sum(exp(z_j - max(z)))
+    3. 加權校準：保留原始餘弦幅度的同時，透過溫度縮放銳化分佈，使主導情緒突出。
+    """
+    if not raw_scores:
+        return {}
+
+    # 1. 閾值過濾：若相似度低於閾值，視為背景雜訊置零
+    filtered_scores = {}
+    for emo, score in raw_scores.items():
+        if score < threshold:
+            filtered_scores[emo] = 0.0
+        else:
+            filtered_scores[emo] = score
+
+    # 若過濾後全為 0，則保留原始最高分
+    max_raw_val = max(raw_scores.values())
+    if all(v == 0.0 for v in filtered_scores.values()):
+        for emo, score in raw_scores.items():
+            if score == max_raw_val and score > 0:
+                filtered_scores[emo] = score
+
+    # 2. 溫度縮放 Softmax
+    items = list(filtered_scores.items())
+    keys = [k for k, _ in items]
+    vals = np.array([v for _, v in items], dtype=np.float64)
+
+    temp = max(1e-4, temperature)
+    scaled_vals = vals / temp
+    max_s = np.max(scaled_vals)
+    exp_vals = np.exp(scaled_vals - max_s)
+    sum_exp = np.sum(exp_vals)
+
+    probs = exp_vals / sum_exp if sum_exp > 0 else exp_vals
+
+    # 3. 結合原始強度與銳化機率：calibrated_score = prob * val
+    calibrated: Dict[str, float] = {}
+    for idx, emo in enumerate(keys):
+        calibrated[emo] = float(probs[idx] * vals[idx])
+
+    return calibrated
+
+
 @dataclass
 class FusedSensoryOutput:
     """六核模型矩陣集成感知輸出"""
@@ -120,24 +235,28 @@ class HierarchicalNeuralArray:
         if self.bge_session:
             log.info("✓ [1/6] 中文 BGE 語意引擎載入成功")
             self._precompute_bge_prototypes()
+            self._bge_protos = orthogonalize_prototypes(self._bge_protos)
 
         # 2. MiniLM-L6
         self.l6_session, self.l6_tokenizer = self._load_model("semantic_extractor", opts)
         if self.l6_session:
             log.info("✓ [2/6] 通用概念 MiniLM-L6 載入成功")
             self._precompute_l6_prototypes()
+            self._l6_protos = orthogonalize_prototypes(self._l6_protos)
 
         # 3. MiniLM-L12
         self.l12_session, self.l12_tokenizer = self._load_model("minilm_l12", opts)
         if self.l12_session:
             log.info("✓ [3/6] 深層平滑 MiniLM-L12 載入成功")
             self._precompute_l12_prototypes()
+            self._l12_protos = orthogonalize_prototypes(self._l12_protos)
 
         # 4. Multilingual-L12
         self.multi_session, self.multi_tokenizer = self._load_model("multilingual_l12", opts)
         if self.multi_session:
             log.info("✓ [4/6] 多語言 Multilingual-L12 載入成功")
             self._precompute_multi_prototypes()
+            self._multi_protos = orthogonalize_prototypes(self._multi_protos)
 
         # 5. DistilBERT-SST-2
         self.sst2_session, self.sst2_tokenizer = self._load_model("sentiment_sst2", opts)
@@ -294,21 +413,27 @@ class HierarchicalNeuralArray:
             active_layers.append("M1_BGE_ZH")
             b_emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, cleaned)
             if b_emb is not None:
-                b_scores = {e: float(np.dot(b_emb, p)) for e, p in self._bge_protos.items()}
-                top_b = max(b_scores.items(), key=lambda x: x[1])
-                if top_b[1] > 0.50:
-                    delta = 0.35 * top_b[1]
+                raw_b_scores = {e: float(np.dot(b_emb, p)) for e, p in self._bge_protos.items()}
+                calibrated_b = calibrate_prototype_projections(raw_b_scores, temperature=0.07, threshold=0.15)
+                top_b = max(calibrated_b.items(), key=lambda x: x[1])
+                raw_top_b = max(raw_b_scores.items(), key=lambda x: x[1])
+                if raw_top_b[1] > 0.45:
+                    delta = 0.35 * raw_top_b[1]
                     val = val * 0.65 + (delta if top_b[0] in ("喜悅", "期待", "信任") else -delta)
+                    if dom_emo in ("平和", "隨性閒聊", "無") and top_b[1] > 0.10:
+                        dom_emo = top_b[0]
 
         # 2. 執行模型 2 (通用概念 MiniLM-L6)
         if self.l6_session and self._l6_protos:
             active_layers.append("M2_MiniLM_L6")
             l6_emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, cleaned)
             if l6_emb is not None:
-                l6_scores = {e: float(np.dot(l6_emb, p)) for e, p in self._l6_protos.items()}
-                top_l6 = max(l6_scores.items(), key=lambda x: x[1])
-                if top_l6[1] > 0.45:
-                    delta = 0.20 * top_l6[1]
+                raw_l6_scores = {e: float(np.dot(l6_emb, p)) for e, p in self._l6_protos.items()}
+                calibrated_l6 = calibrate_prototype_projections(raw_l6_scores, temperature=0.07, threshold=0.15)
+                top_l6 = max(calibrated_l6.items(), key=lambda x: x[1])
+                raw_top_l6 = max(raw_l6_scores.items(), key=lambda x: x[1])
+                if raw_top_l6[1] > 0.40:
+                    delta = 0.20 * raw_top_l6[1]
                     val = val * 0.80 + (delta if top_l6[0] in ("喜悅", "期待", "信任") else -delta)
 
         # 3. 執行模型 3 (深層平滑 MiniLM-L12)
@@ -316,19 +441,23 @@ class HierarchicalNeuralArray:
             active_layers.append("M3_MiniLM_L12")
             l12_emb = self._extract_embedding(self.l12_session, self.l12_tokenizer, cleaned)
             if l12_emb is not None:
-                l12_scores = {e: float(np.dot(l12_emb, p)) for e, p in self._l12_protos.items()}
-                top_l12 = max(l12_scores.items(), key=lambda x: x[1])
-                if top_l12[1] > 0.45:
-                    intensity = max(intensity, float(top_l12[1]))
+                raw_l12_scores = {e: float(np.dot(l12_emb, p)) for e, p in self._l12_protos.items()}
+                calibrated_l12 = calibrate_prototype_projections(raw_l12_scores, temperature=0.07, threshold=0.15)
+                top_l12 = max(calibrated_l12.items(), key=lambda x: x[1])
+                raw_top_l12 = max(raw_l12_scores.items(), key=lambda x: x[1])
+                if raw_top_l12[1] > 0.40:
+                    intensity = max(intensity, float(raw_top_l12[1]))
 
         # 4. 執行模型 4 (多語言 Multilingual-L12)
         if self.multi_session and self._multi_protos:
             active_layers.append("M4_Multi_L12")
             m_emb = self._extract_embedding(self.multi_session, self.multi_tokenizer, cleaned)
             if m_emb is not None:
-                m_scores = {e: float(np.dot(m_emb, p)) for e, p in self._multi_protos.items()}
-                top_m = max(m_scores.items(), key=lambda x: x[1])
-                if top_m[1] > 0.50 and top_m[0] == "信任":
+                raw_m_scores = {e: float(np.dot(m_emb, p)) for e, p in self._multi_protos.items()}
+                calibrated_m = calibrate_prototype_projections(raw_m_scores, temperature=0.07, threshold=0.15)
+                top_m = max(calibrated_m.items(), key=lambda x: x[1])
+                raw_top_m = max(raw_m_scores.items(), key=lambda x: x[1])
+                if raw_top_m[1] > 0.45 and top_m[0] == "信任":
                     delta_oxy += 3.0
                     delta_ser += 2.0
 
