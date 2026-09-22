@@ -174,6 +174,14 @@ class AIProviderConfig:
     cohere_keys: List[str] = field(default_factory=list)
     cohere_model: str = "command-r-plus-08-2024"
 
+    # Mistral AI API 配置
+    mistral_keys: List[str] = field(default_factory=list)
+    mistral_model: str = "codestral-latest"
+
+    # Groq LPU API 配置
+    groq_keys: List[str] = field(default_factory=list)
+    groq_model: str = "qwen/qwen3.8-27b"
+
     daily_limit_per_user: int = 80
     short_term_memory_limit: int = 400
     memory_ttl_seconds: int = 1800
@@ -265,6 +273,14 @@ class AIProviderConfig:
         # 載入 Cohere API 配置
         self.cohere_keys = parse_keys("COHERE_API_KEYS", "COHERE_API_KEY")
         self.cohere_model = os.getenv("COHERE_MODEL", self.cohere_model).strip() or self.cohere_model
+
+        # 載入 Mistral API 配置
+        self.mistral_keys = parse_keys("MISTRAL_API_KEYS", "MISTRAL_API_KEY")
+        self.mistral_model = os.getenv("MISTRAL_MODEL", self.mistral_model).strip() or self.mistral_model
+
+        # 載入 Groq API 配置
+        self.groq_keys = parse_keys("GROQ_API_KEYS", "GROQ_API_KEY")
+        self.groq_model = os.getenv("GROQ_MODEL", self.groq_model).strip() or self.groq_model
 
 
 @dataclass

@@ -7,6 +7,8 @@ from zeronexus.ai_gateway.adapters.openrouter import OpenRouterAdapter
 from zeronexus.ai_gateway.adapters.huggingface import HuggingFaceAdapter
 from zeronexus.ai_gateway.adapters.manus import ManusAdapter
 from zeronexus.ai_gateway.adapters.cohere import CohereAdapter
+from zeronexus.ai_gateway.adapters.mistral import MistralAdapter
+from zeronexus.ai_gateway.adapters.groq import GroqAdapter
 
 __all__ = [
     "BaseAIAdapter",
@@ -17,5 +19,7 @@ __all__ = [
     "HuggingFaceAdapter",
     "ManusAdapter",
     "CohereAdapter",
+    "MistralAdapter",
+    "GroqAdapter",
 ]
 

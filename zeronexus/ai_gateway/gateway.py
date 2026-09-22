@@ -21,6 +21,8 @@ from zeronexus.ai_gateway.adapters.gemini import GeminiAdapter
 from zeronexus.ai_gateway.adapters.huggingface import HuggingFaceAdapter
 from zeronexus.ai_gateway.adapters.manus import ManusAdapter
 from zeronexus.ai_gateway.adapters.cohere import CohereAdapter
+from zeronexus.ai_gateway.adapters.mistral import MistralAdapter
+from zeronexus.ai_gateway.adapters.groq import GroqAdapter
 from zeronexus.ai_gateway.adapters.openrouter import (
     OPENROUTER_STRICT_FREE_MODELS,
     OpenRouterAdapter,
@@ -45,11 +47,15 @@ class AIGateway:
             "huggingface": HuggingFaceAdapter(),
             "manus": ManusAdapter(),
             "cohere": CohereAdapter(),
+            "mistral": MistralAdapter(),
+            "groq": GroqAdapter(),
         }
 
         hf_keys = getattr(config.ai, "huggingface_keys", None) or ([config.ai.huggingface_token] if config.ai.huggingface_token else [])
         manus_keys = getattr(config.ai, "manus_keys", None) or []
         cohere_keys = getattr(config.ai, "cohere_keys", None) or []
+        mistral_keys = getattr(config.ai, "mistral_keys", None) or []
+        groq_keys = getattr(config.ai, "groq_keys", None) or []
         self.key_pools = {
             "gemini": ProviderKeyPool("gemini", config.ai.gemini_keys),
             "deepseek": ProviderKeyPool("deepseek", config.ai.deepseek_keys),
@@ -57,6 +63,8 @@ class AIGateway:
             "huggingface": ProviderKeyPool("huggingface", hf_keys),
             "manus": ProviderKeyPool("manus", manus_keys),
             "cohere": ProviderKeyPool("cohere", cohere_keys),
+            "mistral": ProviderKeyPool("mistral", mistral_keys),
+            "groq": ProviderKeyPool("groq", groq_keys),
         }
 
     async def generate_response(
@@ -103,6 +111,10 @@ class AIGateway:
                 primary = "manus"
             elif "cohere" in clean_override.lower() or "command-r" in clean_override.lower():
                 primary = "cohere"
+            elif any(k in clean_override.lower() for k in ("mistral", "codestral", "pixtral")):
+                primary = "mistral"
+            elif any(k in clean_override.lower() for k in ("groq", "llama-3.3", "llama-3.1", "deepseek-r1-distill")):
+                primary = "groq"
             else:
                 primary = "openrouter"
 
@@ -135,6 +147,10 @@ class AIGateway:
                     base_chain.append("manus")
                 if self.key_pools.get("cohere") and self.key_pools["cohere"].has_active_keys:
                     base_chain.append("cohere")
+                if self.key_pools.get("groq") and self.key_pools["groq"].has_active_keys:
+                    base_chain.append("groq")
+                if self.key_pools.get("mistral") and self.key_pools["mistral"].has_active_keys:
+                    base_chain.append("mistral")
                 fallback_chain = [primary] + [p for p in base_chain if p != primary]
         elif images:
             fallback_chain = ["gemini", "openrouter", "deepseek"]
@@ -144,6 +160,10 @@ class AIGateway:
                 fallback_chain.append("manus")
             if self.key_pools.get("cohere") and self.key_pools["cohere"].has_active_keys:
                 fallback_chain.append("cohere")
+            if self.key_pools.get("groq") and self.key_pools["groq"].has_active_keys:
+                fallback_chain.append("groq")
+            if self.key_pools.get("mistral") and self.key_pools["mistral"].has_active_keys:
+                fallback_chain.append("mistral")
         else:
             fallback_chain = ["gemini", "deepseek", "openrouter"]
             if self.key_pools["huggingface"].has_active_keys:
@@ -152,6 +172,10 @@ class AIGateway:
                 fallback_chain.append("manus")
             if self.key_pools.get("cohere") and self.key_pools["cohere"].has_active_keys:
                 fallback_chain.append("cohere")
+            if self.key_pools.get("groq") and self.key_pools["groq"].has_active_keys:
+                fallback_chain.append("groq")
+            if self.key_pools.get("mistral") and self.key_pools["mistral"].has_active_keys:
+                fallback_chain.append("mistral")
 
         fallback_notice: Optional[str] = None
         attempted_providers: List[str] = []
@@ -424,6 +448,10 @@ class AIGateway:
             return getattr(config.ai, "manus_model", "manus")
         if provider == "cohere":
             return getattr(config.ai, "cohere_model", "command-r-plus-08-2024")
+        if provider == "mistral":
+            return getattr(config.ai, "mistral_model", "mistral-large-latest")
+        if provider == "groq":
+            return getattr(config.ai, "groq_model", "llama-3.3-70b-versatile")
         if provider == "deepseek":
             return config.ai.deepseek_model
         if provider == "openrouter":

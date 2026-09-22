@@ -58,6 +58,40 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "tag": "低延遲・多語言優化・高性價比 RAG 推理",
     },
 
+    # Groq LPU Ultra-Fast Series (極速超低延遲)
+    {
+        "id": "qwen/qwen3.8-27b",
+        "label": "Groq - Qwen 3.8 27B (超光速 LPU・繁中極速對話)",
+        "emoji": "⚡",
+        "tag": "數百 TPS 超低延遲・通義千問高智能對話旗艦",
+    },
+    {
+        "id": "llama-3.3-70b-versatile",
+        "label": "Groq - Llama 3.3 70B (超光速 LPU・頂級推理)",
+        "emoji": "🏎️",
+        "tag": "數百 TPS 超光速推論・Meta 頂級 70B 開源旗艦",
+    },
+    {
+        "id": "deepseek-r1-distill-llama-70b",
+        "label": "Groq - DeepSeek R1 70B (極速思維鏈推理旗艦)",
+        "emoji": "💡",
+        "tag": "完整思考過程・深度推演・極低延遲推理",
+    },
+
+    # Mistral AI Series (歐洲開源先鋒頂尖旗艦)
+    {
+        "id": "codestral-latest",
+        "label": "Mistral - Codestral (專業代碼與高智慧對話旗艦)",
+        "emoji": "💻",
+        "tag": "精準程式碼生成・專業除錯與架構推導",
+    },
+    {
+        "id": "mistral-large-latest",
+        "label": "Mistral - Large 2 (頂級前沿旗艦・卓越推論)",
+        "emoji": "🌪️",
+        "tag": "128k 上下文・多語言繁中特化與深度推理",
+    },
+
     # Google Gemini Series (Official Active Flagships)
     {
         "id": "gemini-2.5-flash",

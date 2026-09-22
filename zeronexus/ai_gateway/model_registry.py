@@ -408,6 +408,90 @@ class ModelRegistry:
                 description="Cohere 高性價比平衡旗艦，專為高輸送量多語言對話與工作流程設計。",
             ),
 
+            # Mistral AI Series
+            ModelMetadata(
+                model_id="mistral-large-latest",
+                display_name="Mistral Large 2 (Latest)",
+                provider="mistral",
+                vendor="mistral",
+                status=ModelStatus.ACTIVE,
+                context_window=128000,
+                capabilities={"text", "reasoning", "tools"},
+                description="Mistral AI 頂級前沿旗艦，具備 128k 上下文、卓越的多語言推論與程式碼能力。",
+            ),
+            ModelMetadata(
+                model_id="mistral-small-latest",
+                display_name="Mistral Small (Latest)",
+                provider="mistral",
+                vendor="mistral",
+                status=ModelStatus.ACTIVE,
+                context_window=32768,
+                capabilities={"text", "reasoning"},
+                description="Mistral AI 高效能輕量旗艦，兼具極速低延遲與強大推理素質。",
+            ),
+            ModelMetadata(
+                model_id="codestral-latest",
+                display_name="Codestral (Latest)",
+                provider="mistral",
+                vendor="mistral",
+                status=ModelStatus.ACTIVE,
+                context_window=32768,
+                capabilities={"text", "tools", "reasoning"},
+                description="Mistral 專為程式碼開發特化之頂尖程式碼生成與技術推導模型。",
+            ),
+
+            # Groq LPU Ultra-Fast Series
+            ModelMetadata(
+                model_id="qwen/qwen3.8-27b",
+                display_name="Groq - Qwen 3.8 27B (LPU 極速推理)",
+                provider="groq",
+                vendor="groq",
+                status=ModelStatus.ACTIVE,
+                context_window=131072,
+                capabilities={"text", "reasoning", "tools"},
+                description="阿里通義千問 3.8 27B 於 Groq LPU 實現超低延遲極致推演，中文理解與對話反應極快。",
+            ),
+            ModelMetadata(
+                model_id="openai/gpt-oss-120b",
+                display_name="Groq - GPT-OSS 120B (超大參開源旗艦)",
+                provider="groq",
+                vendor="groq",
+                status=ModelStatus.ACTIVE,
+                context_window=131072,
+                capabilities={"text", "reasoning"},
+                description="開源千億參旗艦模型於 Groq LPU 極速推理節點，具備頂尖知識儲備與深度邏輯分析。",
+            ),
+            ModelMetadata(
+                model_id="llama-3.3-70b-versatile",
+                display_name="Groq - Llama 3.3 70B (超高速 LPU)",
+                provider="groq",
+                vendor="groq",
+                status=ModelStatus.ACTIVE,
+                context_window=128000,
+                capabilities={"text", "reasoning", "tools"},
+                description="Meta 頂級 70B 開源旗艦於 Groq LPU 晶片上實現數百 TPS 的極致超光速輸出。",
+            ),
+            ModelMetadata(
+                model_id="deepseek-r1-distill-llama-70b",
+                display_name="Groq - DeepSeek R1 70B (深度推理)",
+                provider="groq",
+                vendor="groq",
+                status=ModelStatus.ACTIVE,
+                context_window=131072,
+                capabilities={"text", "reasoning"},
+                description="Groq LPU 驅動之 DeepSeek-R1 蒸餾推理旗艦，兼具完整思考鏈推演與極致回應速度。",
+            ),
+            ModelMetadata(
+                model_id="llama-3.1-8b-instant",
+                display_name="Groq - Llama 3.1 8B (即時極速)",
+                provider="groq",
+                vendor="groq",
+                status=ModelStatus.ACTIVE,
+                context_window=128000,
+                capabilities={"text"},
+                description="Groq LPU 極速即時超低延遲對話模型，提供毫秒級即時互動反應。",
+            ),
+
             # Retired / Deprecated Gemini Models
             ModelMetadata(
                 model_id="gemini-2.0-flash",
@@ -594,7 +678,7 @@ class ModelRegistry:
         is_free: Optional[bool] = None,
     ) -> List[ModelMetadata]:
         """Returns active models strictly filtered to ONLY: qwen, deepseek, gemini."""
-        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus", "cohere"}
+        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus", "cohere", "mistral", "groq"}
         res = []
         for m in self._models.values():
             if m.status not in (ModelStatus.ACTIVE, ModelStatus.BETA):
@@ -791,7 +875,7 @@ class ModelRegistry:
         """Returns list of currently active models strictly filtered to ONLY qwen, deepseek, gemini,
         with top 3 recommended models (gemini-3.1-flash-lite, deepseek/deepseek-v4-flash-vision-exp, qwen/qwen-2.5-72b-instruct)
         at the very top of the list."""
-        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus", "cohere"}
+        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus", "cohere", "mistral", "groq"}
         result = []
         for m in self._models.values():
             if m.status not in (ModelStatus.ACTIVE, ModelStatus.BETA):
