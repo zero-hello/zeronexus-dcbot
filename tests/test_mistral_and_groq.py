@@ -127,10 +127,18 @@ class TestMistralAndGroqIntegration:
 
         active_models = model_registry.list_active_models()
         active_ids = [m.model_id for m in active_models]
-        assert "mistral-large-latest" in active_ids
         assert "codestral-latest" in active_ids
-        assert "llama-3.3-70b-versatile" in active_ids
-        assert "deepseek-r1-distill-llama-70b" in active_ids
+        assert "ministral-8b-latest" in active_ids
+        assert "qwen/qwen3.8-27b" in active_ids
+        assert "openai/gpt-oss-120b" in active_ids
+        assert "openai/gpt-oss-20b" in active_ids
+
+        from zeronexus.ai_gateway.model_registry import ModelStatus
+        # 驗證退役模型的平滑替換設定
+        assert meta_mistral.status == ModelStatus.RETIRED
+        assert meta_mistral.replacement_model_id == "codestral-latest"
+        assert meta_groq.status == ModelStatus.RETIRED
+        assert meta_groq.replacement_model_id == "openai/gpt-oss-120b"
 
     def test_config_keys_loaded(self) -> None:
         """驗證 config 正確讀取環境變數中的金鑰。"""
@@ -138,3 +146,28 @@ class TestMistralAndGroqIntegration:
         assert config.ai.mistral_keys[0].startswith("mstrl_")
         assert len(config.ai.groq_keys) > 0
         assert config.ai.groq_keys[0].startswith("gsk_")
+
+    @pytest.mark.asyncio
+    async def test_retired_model_auto_redirect_in_gateway(self) -> None:
+        """驗證當請求退役模型時，Gateway 自動平滑重定向為新一代推薦模型。"""
+        gw = AIGateway()
+        # Mock groq adapter generate to capture dispatched model
+        with patch.object(gw.adapters["groq"], "generate", new_callable=AsyncMock) as mock_gen:
+            from zeronexus.ai_gateway.adapters.base import AIResult
+            mock_gen.return_value = AIResult(
+                text="測試成功",
+                provider="groq",
+                model_name="openai/gpt-oss-120b",
+                raw_response={},
+                latency_ms=10.0,
+            )
+
+            result, notice = await gw.generate_response(
+                system_instruction="系統提示",
+                messages=[{"role": "user", "content": "測試"}],
+                override_model="llama-3.3-70b-versatile",
+                allow_fallback=False,
+            )
+            assert result.text == "測試成功"
+            # 驗證傳給 adapter 的 model 已自動升級為 replacement_model_id (openai/gpt-oss-120b)
+            assert mock_gen.call_args[1]["model"] == "openai/gpt-oss-120b"

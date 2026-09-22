@@ -30,7 +30,7 @@ from zeronexus.ai_gateway.adapters.openrouter import (
 )
 from zeronexus.ai_gateway.key_pool import KeyState, ProviderKeyPool
 from zeronexus.core.config import config
-from zeronexus.ai_gateway.model_registry import model_registry
+from zeronexus.ai_gateway.model_registry import model_registry, ModelStatus
 from zeronexus.core.logger import log
 from zeronexus.core.stats import stats
 from zeronexus.security.sanitizer import redact_secrets
@@ -96,6 +96,16 @@ class AIGateway:
         primary: Optional[str] = None
         if clean_override:
             meta = model_registry.get(clean_override)
+            if meta and getattr(meta, "status", None) == ModelStatus.RETIRED and getattr(meta, "replacement_model_id", None):
+                repl_id = meta.replacement_model_id
+                repl = model_registry.get(repl_id)
+                log.info(f"模型 '{clean_override}' 已退役或不可用，自動平滑升級為 '{repl_id}'")
+                if repl:
+                    meta = repl
+                    clean_override = repl.model_id
+                else:
+                    clean_override = repl_id
+
             if meta and meta.provider in self.adapters:
                 primary = meta.provider
                 clean_override = meta.model_id
