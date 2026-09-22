@@ -769,7 +769,7 @@ class ModelRegistry:
         """Returns list of currently active models strictly filtered to ONLY qwen, deepseek, gemini,
         with top 3 recommended models (gemini-3.1-flash-lite, deepseek/deepseek-v4-flash-vision-exp, qwen/qwen-2.5-72b-instruct)
         at the very top of the list."""
-        allowed_vendors = {"qwen", "deepseek", "gemini", "google"}
+        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus"}
         result = []
         for m in self._models.values():
             if m.status not in (ModelStatus.ACTIVE, ModelStatus.BETA):
@@ -840,7 +840,7 @@ class ModelRegistry:
                 success=False,
                 status="NOT_FOUND",
                 candidates=[c for c in cands if c],
-                message=f"ZeroNexus 目前嚴格僅支援 Qwen、DeepSeek 與 Gemini 三大系列模型，不支援「{query}」。推薦使用：Gemini 3.1 Flash Lite、DeepSeek V4 Flash 或 Qwen 2.5 72B。",
+                message=f"ZeroNexus 目前支援 Qwen、DeepSeek、Gemini 系列與 Manus AI Agent，不支援「{query}」。推薦使用：Gemini 3.1 Flash Lite、DeepSeek V4 Flash 或 Manus。",
             )
 
         # 1. Exact model_id match

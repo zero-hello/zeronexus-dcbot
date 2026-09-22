@@ -36,6 +36,14 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "tag": "阿里通義千問・繁中特化最強旗艦",
     },
 
+    # Manus AI Agent (Autonomous Agent)
+    {
+        "id": "manus",
+        "label": "Manus - AI 自主 Agent (深度規劃與全自動執行)",
+        "emoji": "🤖",
+        "tag": "自主代理・多步規劃・每日限額 30 句・用完即止",
+    },
+
     # Google Gemini Series (Official Active Flagships)
     {
         "id": "gemini-2.5-flash",

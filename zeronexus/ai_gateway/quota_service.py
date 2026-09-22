@@ -498,6 +498,10 @@ class QuotaService:
         "openai/gpt-4o": 15,
         "x-ai/grok-4.20": 15,
 
+        # Manus AI 自主 Agent (每日 30 句・用完即止)
+        "manus": 30,
+        "manus.ai/manus": 30,
+
         # 圖像生成模型 (3 次/天)
         "gemini-2.5-flash-image": 3,
     }
@@ -506,6 +510,8 @@ class QuotaService:
     def get_model_default_limit(self, model_id: str) -> int:
         """Determines default daily quota limit for a given model_id."""
         clean_id = (model_id or "").strip().lower()
+        if "manus" in clean_id:
+            return 30
         if clean_id in self.MODEL_DEFAULT_QUOTAS:
             return self.MODEL_DEFAULT_QUOTAS[clean_id]
 
@@ -620,6 +626,16 @@ class QuotaService:
                 await session.flush()
 
             reservation.committed = True
+            self._active_reservations.pop(reservation.reservation_id, None)
+
+    async def release_model_quota(self, reservation: Optional[QuotaReservation]) -> None:
+        """Releases a reserved model quota slot upon failure, rejection, or cancellation."""
+        if not reservation:
+            return
+        async with self._user_locks[reservation.user_id]:
+            if reservation.committed or reservation.released:
+                return
+            reservation.released = True
             self._active_reservations.pop(reservation.reservation_id, None)
 
     async def format_model_quota_desc(self, user_id: int, model_id: str, tag: str = "") -> str:

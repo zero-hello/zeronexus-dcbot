@@ -869,7 +869,7 @@ class ModelCatalogService:
             return True
 
         # 6. Mentions known AI brands or brand typos
-        if any(k in q for k in ["deepseek", "deepseel", "gemini", "gemin", "qwen", "qwq", "qwem", "google"]):
+        if any(k in q for k in ["deepseek", "deepseel", "gemini", "gemin", "qwen", "qwq", "qwem", "google", "manus"]):
             return True
 
         # 7. Exact version patterns (e.g., '3.8', 'v4.1', '2.5')

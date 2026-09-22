@@ -236,6 +236,7 @@ async def switch_model_autocomplete(
         if not choices:
             choices = [
                 app_commands.Choice(name="💎 Google Gemini 3.1 Flash Lite (系統預設)", value="gemini-3.1-flash-lite"),
+                app_commands.Choice(name="🤖 Manus - AI 自主 Agent (深度規劃與執行)", value="manus"),
                 app_commands.Choice(name="⚡ Google Gemini 2.5 Flash", value="gemini-2.5-flash"),
                 app_commands.Choice(name="🧠 Google Gemini 2.5 Pro", value="gemini-2.5-pro"),
                 app_commands.Choice(name="👁️ DeepSeek - V4 Flash Vision Exp", value="deepseek/deepseek-v4-flash-vision-exp"),
@@ -585,6 +586,33 @@ class AICog(commands.Cog):
             is_secret_easter_egg=is_secret_easter_egg,
         )
 
+        model_reservation = None
+        if not is_secret_easter_egg:
+            effective_model = user_model or (getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if images else getattr(config.ai, "normal_text_model", "gemini-3.1-flash-lite"))
+            m_allowed, model_reservation, m_used, m_limit = await quota_service.reserve_model_quota(
+                interaction.user.id, effective_model
+            )
+            if not m_allowed:
+                if reservation:
+                    await quota_service.release_quota(reservation)
+                from zeronexus.ai_gateway.model_registry import model_registry
+                disp = model_registry.get_display_name(effective_model)
+                await InteractionResponder.safe_send(
+                    interaction,
+                    card=ZNCard(
+                        title=f"❌ 模型額度已用罄 ➔ {interaction.user.display_name}",
+                        description=(
+                            f"您今日的 **{disp}** 額度已達上限 (`{m_used}/{m_limit}` 句)。\n"
+                            f"此模型每日限定 {m_limit} 句，用完即止，將於每日 00:00 (Asia/Taipei) 自動重設。\n\n"
+                            f"💡 您可以使用 `/人工智慧 切換模型` 切換為其他模型（如系統預設 Gemini）繼續暢聊！"
+                        ),
+                        status_pill=ZNStatusPill.ERROR,
+                        color=ZNColor.ERROR,
+                    ),
+                    ephemeral=True,
+                )
+                return
+
         try:
             ai_res, fallback_notice = await ai_gateway.generate_response(
                 system_instruction=system_instruction,
@@ -683,10 +711,14 @@ class AICog(commands.Cog):
             # Commit quota upon successful response
             if reservation:
                 await quota_service.commit_quota(reservation)
+            if model_reservation:
+                await quota_service.commit_model_quota(model_reservation)
 
         except Exception:
             if reservation:
                 await quota_service.release_quota(reservation)
+            if model_reservation:
+                await quota_service.release_model_quota(model_reservation)
             err_card = ZNCard(
                 title="AI 思考服務暫時忙碌中",
                 description=(

@@ -1665,6 +1665,7 @@ class ZeroNexusBot(commands.Bot):
             # 4. Resolve active persona & model: User preference takes precedence over guild setting
             user_persona = None
             user_model = None
+            model_reservation = None
             try:
                 from sqlalchemy import select
                 from zeronexus.models.user import UserProfile
@@ -2534,6 +2535,27 @@ class ZeroNexusBot(commands.Bot):
             if draw_intent and (generated_image_url or generated_image_bytes):
                 allow_tools_for_query = False
 
+            # 專屬模型獨立額度檢核 (例如 Manus 每日限定 30 句，用完即止)
+            m_allowed, model_reservation, m_used, m_limit = await quota_service.reserve_model_quota(
+                message.author.id, active_model
+            )
+            if not m_allowed:
+                if reservation:
+                    await quota_service.release_quota(reservation)
+                disp = model_registry.get_display_name(active_model)
+                limit_card = ZNCard(
+                    title=f"❌ 模型額度已用罄 ➔ {req_ctx.author_name}",
+                    description=(
+                        f"您今日的 **{disp}** 額度已達上限 (`{m_used}/{m_limit}` 句)。\n"
+                        f"此模型每日限定 {m_limit} 句，用完即止，將於每日 00:00 (Asia/Taipei) 自動重設。\n\n"
+                        f"💡 您可以使用 `/人工智慧 切換模型` 切換為其他模型（如系統預設 Gemini）繼續暢聊！"
+                    ),
+                    status_pill=ZNStatusPill.ERROR,
+                    color=ZNColor.ERROR,
+                )
+                await self._safe_edit_status_message(status_msg, effective_channel, card=limit_card)
+                return
+
             # Generate response from AI Gateway with autonomous function calling enabled & strict timeout defense
             t_prov0 = time.perf_counter()
             call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
@@ -2723,6 +2745,8 @@ class ZeroNexusBot(commands.Bot):
             # Commit quota upon full success
             if reservation:
                 await quota_service.commit_quota(reservation)
+            if model_reservation:
+                await quota_service.commit_model_quota(model_reservation)
 
             pipeline_metrics.total_latency_ms = (time.perf_counter() - t0) * 1000.0
             stats.record_ai_pipeline(pipeline_metrics)
@@ -2738,6 +2762,11 @@ class ZeroNexusBot(commands.Bot):
                         await rel_task
                 except Exception as rel_err:
                     log.warning(f"Failed to release quota reservation on cancel: {rel_err}")
+            if model_reservation:
+                try:
+                    await quota_service.release_model_quota(model_reservation)
+                except Exception as m_rel_err:
+                    log.warning(f"Failed to release model quota reservation on cancel: {m_rel_err}")
             cancel_card = ZNCard(
                 title=f"⚪ AI 請求已取消 ➔ {req_ctx.author_name}",
                 description="本次推論請求已被取消。",
@@ -2753,6 +2782,8 @@ class ZeroNexusBot(commands.Bot):
             log.warning("AI response generation timed out.")
             if reservation:
                 await quota_service.release_quota(reservation)
+            if model_reservation:
+                await quota_service.release_model_quota(model_reservation)
             timeout_card = ZNCard(
                 title=f"❌ AI 回應逾時 ➔ {req_ctx.author_name}",
                 description="AI 回應逾時，請稍後再試。",
@@ -2767,6 +2798,8 @@ class ZeroNexusBot(commands.Bot):
             log.error(f"Error answering in AI channel: {e}", exc_info=True)
             if reservation:
                 await quota_service.release_quota(reservation)
+            if model_reservation:
+                await quota_service.release_model_quota(model_reservation)
             err_card = ZNCard(
                 title=f"❌ AI 回應異常 ➔ {req_ctx.author_name}",
                 description=f"執行過程中遭遇錯誤：`{e}`",
