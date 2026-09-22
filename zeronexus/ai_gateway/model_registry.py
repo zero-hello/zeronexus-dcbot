@@ -464,7 +464,7 @@ class ModelRegistry:
             ),
             ModelMetadata(
                 model_id="openai/gpt-oss-120b",
-                display_name="Groq - GPT-OSS 120B (超大參開源旗艦)",
+                display_name="Groq - GPT-OSS 120B (超光速 LPU・千億開源頂級旗艦)",
                 provider="groq",
                 vendor="groq",
                 status=ModelStatus.ACTIVE,
@@ -939,6 +939,28 @@ class ModelRegistry:
             return ResolutionResult(success=False, status="NOT_FOUND", message="請輸入欲查詢或切換的模型名稱。")
         q = query.strip().lower()
 
+        # 預先清理 Emoji 與前後符號
+        clean_no_emoji = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf\ufe0f]", "", q).strip()
+
+        # 優先比對 Discord 下拉選單中已註冊之選項（支援帶 Emoji、包含說明文字等完整字串）
+        try:
+            from zeronexus.ui.model_select_view import MODEL_SELECT_ENTRIES
+            for entry in MODEL_SELECT_ENTRIES:
+                e_id = entry["id"].lower()
+                e_lbl = entry["label"].lower()
+                e_emoji_lbl = f"{entry.get('emoji', '')} {entry['label']}".strip().lower()
+                clean_e_lbl = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf\ufe0f]", "", e_lbl).strip()
+                if q in (e_id, e_lbl, e_emoji_lbl) or clean_no_emoji in (e_id, clean_e_lbl):
+                    q = e_id
+                    break
+                # 若輸入為選單項目的主要前綴標題（例如去除括號後）
+                core_e_lbl = re.sub(r"\(.*?\)|（.*?）", "", clean_e_lbl).strip()
+                if core_e_lbl and (core_e_lbl in clean_no_emoji or clean_no_emoji in core_e_lbl):
+                    q = e_id
+                    break
+        except Exception:
+            pass
+
         # 0. Check random / arbitrary selection intent
         if q in ("隨便", "都可以", "任選", "任意", "隨便挑", "隨便選", "隨便一個", "random", "隨機"):
             return ResolutionResult(
@@ -1147,16 +1169,6 @@ class ModelRegistry:
             if m:
                 return ResolutionResult(success=True, model=m, status="EXACT_MATCH")
 
-        # Guard: explicitly reject non-supported model families
-        if any(b in q for b in ["gpt", "openai", "o3", "o1", "claude", "claud", "sonnet", "haiku", "anthropic", "llama", "meta", "mistral", "mixtral", "codestral", "glm", "kimi", "moonshot", "grok"]):
-            cands = [self.get("gemini-3.1-flash-lite"), self.get("deepseek/deepseek-v4-flash-vision-exp"), self.get("qwen/qwen-2.5-72b-instruct")]
-            return ResolutionResult(
-                success=False,
-                status="NOT_FOUND",
-                candidates=[c for c in cands if c],
-                message=f"ZeroNexus 目前嚴格僅支援 Qwen、DeepSeek 與 Gemini 三大系列模型，不支援「{query}」。推薦使用：Gemini 3.1 Flash Lite、DeepSeek V4 Flash 或 Qwen 2.5 72B。",
-            )
-
         # 5. Active candidate filtering
         active_models = [m for m in self._models.values() if m.status in (ModelStatus.ACTIVE, ModelStatus.BETA)]
         candidates = [m for m in active_models if q in m.display_name.lower() or q in m.model_id.lower()]
@@ -1179,12 +1191,12 @@ class ModelRegistry:
                 message=f"找到多個相符模型，請指明具體型號：{', '.join([c.display_name for c in filtered_cands[:4]])}",
             )
 
-        cands = [self.get("gemini-3.1-flash-lite"), self.get("deepseek/deepseek-v4-flash-vision-exp"), self.get("qwen/qwen-2.5-72b-instruct")]
+        cands = [self.get("gemini-3.1-flash-lite"), self.get("qwen/qwen3.8-27b"), self.get("openai/gpt-oss-120b"), self.get("deepseek/deepseek-v4-flash-vision-exp")]
         return ResolutionResult(
             success=False,
             status="NOT_FOUND",
             candidates=[c for c in cands if c],
-            message=f"查無相符模型「{query}」。ZeroNexus 支援 Qwen、DeepSeek 與 Gemini 三大系列，您可以嘗試切換至 Gemini 3.1 Flash Lite、DeepSeek V4 Flash 或 Qwen 2.5 72B。",
+            message=f"查無相符模型「{query}」。推薦使用：Gemini 3.1 Flash Lite、Groq Qwen 3.8、GPT-OSS 120B 或 DeepSeek V4 Flash。",
         )
 
 
