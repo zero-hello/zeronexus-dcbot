@@ -44,6 +44,20 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "tag": "自主代理・多步規劃・每日限額 30 句・用完即止",
     },
 
+    # Cohere Command Series (Official Active Flagships)
+    {
+        "id": "command-r-plus-08-2024",
+        "label": "Cohere - Command R+ (企業級長文本與強大 RAG 旗艦)",
+        "emoji": "🌐",
+        "tag": "多語言長文本・企業級檢索增強與邏輯推理",
+    },
+    {
+        "id": "command-r-08-2024",
+        "label": "Cohere - Command R (平衡型極速多語言推理旗艦)",
+        "emoji": "🏎️",
+        "tag": "低延遲・多語言優化・高性價比 RAG 推理",
+    },
+
     # Google Gemini Series (Official Active Flagships)
     {
         "id": "gemini-2.5-flash",

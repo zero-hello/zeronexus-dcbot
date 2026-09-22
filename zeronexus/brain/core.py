@@ -25,6 +25,7 @@ from zeronexus.brain.event_system import EventDetector, event_history_logger
 from zeronexus.brain.relationship_layer import relationship_layer
 from zeronexus.evolution.smart_collector import smart_collector
 from zeronexus.evolution.dataset_builder import dataset_builder
+from zeronexus.external.cohere_client import cohere_service
 
 log = logging.getLogger("ZeroNexus.Brain.Core")
 
@@ -179,8 +180,29 @@ class BioBrainCore:
         # 1. 晝夜生物時鐘與生理節律
         circadian = self.circadian_engine.get_current_phase()
 
-        # 2. 提取該使用者最近之代表性回憶
-        memories = self.memory_vault.retrieve_relevant_memories(user_id, limit=2)
+        # 2. 提取該使用者最近之代表性回憶（結合 Cohere Rerank 重排精選）
+        candidate_memories = self.memory_vault.retrieve_relevant_memories(user_id, limit=6)
+        if candidate_memories and len(candidate_memories) > 2 and cohere_service.is_available:
+            try:
+                rerank_results = cohere_service.rerank(
+                    query=user_id,
+                    documents=[m.summary for m in candidate_memories],
+                    top_n=3,
+                )
+                if rerank_results:
+                    memories = [
+                        candidate_memories[item["index"]]
+                        for item in rerank_results
+                        if item["index"] < len(candidate_memories)
+                    ]
+                else:
+                    memories = candidate_memories[:2]
+            except Exception as exc:
+                log.warning(f"海馬迴記憶調用 Cohere Rerank 失敗: {exc}，回退至預設記憶順序。")
+                memories = candidate_memories[:2]
+        else:
+            memories = candidate_memories[:2] if candidate_memories else []
+
         memories_str = ""
         if memories:
             m_lines = [f"- 曾記錄（{m.emotion_tag}）：{m.summary}" for m in memories]

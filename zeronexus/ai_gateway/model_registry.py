@@ -386,6 +386,28 @@ class ModelRegistry:
                 description="Manus 自主通用 AI Agent，專為複雜多步驟推理與自動化任務設計。",
             ),
 
+            # Cohere Command Series
+            ModelMetadata(
+                model_id="command-r-plus-08-2024",
+                display_name="Command R+ (08-2024)",
+                provider="cohere",
+                vendor="cohere",
+                status=ModelStatus.ACTIVE,
+                context_window=128000,
+                capabilities={"text", "reasoning", "tools"},
+                description="Cohere 頂級旗艦多語言模型，具備 128k 上下文與卓越的檢索增強生成 (RAG) 能力。",
+            ),
+            ModelMetadata(
+                model_id="command-r-08-2024",
+                display_name="Command R (08-2024)",
+                provider="cohere",
+                vendor="cohere",
+                status=ModelStatus.ACTIVE,
+                context_window=128000,
+                capabilities={"text", "reasoning", "tools"},
+                description="Cohere 高性價比平衡旗艦，專為高輸送量多語言對話與工作流程設計。",
+            ),
+
             # Retired / Deprecated Gemini Models
             ModelMetadata(
                 model_id="gemini-2.0-flash",
@@ -572,7 +594,7 @@ class ModelRegistry:
         is_free: Optional[bool] = None,
     ) -> List[ModelMetadata]:
         """Returns active models strictly filtered to ONLY: qwen, deepseek, gemini."""
-        allowed_vendors = {"qwen", "deepseek", "gemini", "google"}
+        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus", "cohere"}
         res = []
         for m in self._models.values():
             if m.status not in (ModelStatus.ACTIVE, ModelStatus.BETA):
@@ -769,7 +791,7 @@ class ModelRegistry:
         """Returns list of currently active models strictly filtered to ONLY qwen, deepseek, gemini,
         with top 3 recommended models (gemini-3.1-flash-lite, deepseek/deepseek-v4-flash-vision-exp, qwen/qwen-2.5-72b-instruct)
         at the very top of the list."""
-        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus"}
+        allowed_vendors = {"qwen", "deepseek", "gemini", "google", "manus", "cohere"}
         result = []
         for m in self._models.values():
             if m.status not in (ModelStatus.ACTIVE, ModelStatus.BETA):

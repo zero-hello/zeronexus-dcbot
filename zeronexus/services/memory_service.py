@@ -22,6 +22,7 @@ from sqlalchemy import select, delete
 
 from zeronexus.core.database import DatabaseManager
 from zeronexus.models.memory import ConversationMemory
+from zeronexus.external.cohere_client import cohere_service
 
 
 
@@ -101,6 +102,28 @@ class MemoryService:
                             "relevance_score": score,
                             "timestamp": r.created_at.timestamp() if hasattr(r.created_at, "timestamp") else time.time()
                         })
+        # 若啟用 Cohere 服務且有候選記錄與檢索詞，進行語意重排序 (Rerank)
+        if results and query.strip() and cohere_service.is_available:
+            try:
+                candidate_docs = [r["content"] for r in results]
+                reranked = await cohere_service.rerank_async(
+                    query=query,
+                    documents=candidate_docs,
+                    top_n=limit,
+                )
+                if reranked:
+                    reranked_results = []
+                    for item in reranked:
+                        idx = item["index"]
+                        if idx < len(results):
+                            entry = dict(results[idx])
+                            entry["relevance_score"] = item["relevance_score"]
+                            entry["reranked_by"] = "cohere-rerank-multilingual-v3.0"
+                            reranked_results.append(entry)
+                    return reranked_results
+            except Exception:
+                pass  # 優雅降級回退至關鍵字重排
+
         results.sort(key=lambda x: x["relevance_score"], reverse=True)
         return results[:limit]
 

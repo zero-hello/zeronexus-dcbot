@@ -170,6 +170,10 @@ class AIProviderConfig:
     manus_model: str = "manus"
     manus_base_url: str = "https://api.manus.ai/v1"
 
+    # Cohere API 配置
+    cohere_keys: List[str] = field(default_factory=list)
+    cohere_model: str = "command-r-plus-08-2024"
+
     daily_limit_per_user: int = 80
     short_term_memory_limit: int = 400
     memory_ttl_seconds: int = 1800
@@ -258,10 +262,15 @@ class AIProviderConfig:
         self.manus_model = os.getenv("MANUS_MODEL", self.manus_model).strip() or self.manus_model
         self.manus_base_url = os.getenv("MANUS_BASE_URL", self.manus_base_url).strip() or self.manus_base_url
 
+        # 載入 Cohere API 配置
+        self.cohere_keys = parse_keys("COHERE_API_KEYS", "COHERE_API_KEY")
+        self.cohere_model = os.getenv("COHERE_MODEL", self.cohere_model).strip() or self.cohere_model
+
 
 @dataclass
 class ExternalAPIConfig:
     cwa_api_key: str = field(default_factory=lambda: os.getenv("CWA_API_KEY", "").strip())
+    cohere_api_key: str = field(default_factory=lambda: os.getenv("COHERE_API_KEY", "").strip())
 
 
 @dataclass
