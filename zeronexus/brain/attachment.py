@@ -19,7 +19,7 @@ import json
 import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 log = logging.getLogger("ZeroNexus.Brain.Attachment")
 
@@ -169,10 +169,10 @@ class PersonalAttachmentEngine:
             call_name = f"『{profile.user_name}』"
 
         lines = [
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             f"# 【與 {profile.user_name} 的專屬深層靈魂羈絆】",
             f"- ❤️ 關係等級：{profile.affection_level_name} (催產素好感: {int(oxytocin)}%)",
-            f"- 🏷️ 推薦專屬稱謂：請在對話中自然稱呼他為 {call_name}",
+            f"- 🏷️ 推薦專屬稱謂：請在對話中隨和稱呼他為 {call_name}（僅在自然適當時機提及，嚴禁每句話反覆呼叫，嚴禁將名稱疊字化或作為項目標題前綴！）",
         ]
 
         if profile.dietary_preferences:
@@ -180,5 +180,5 @@ class PersonalAttachmentEngine:
         if profile.lifestyle_habits:
             lines.append(f"- 🌙 他的生活作息特徵：{', '.join(profile.lifestyle_habits)}（夜深時可主動溫柔叮嚀或吐槽！）")
 
-        lines.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return "\n".join(lines) + "\n"

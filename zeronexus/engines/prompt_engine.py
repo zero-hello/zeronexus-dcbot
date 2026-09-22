@@ -251,6 +251,19 @@ class SystemPromptEngine:
                 log.warning(f"Failed to read taiwan_localization_lexicon.txt: {e}")
         return ""
 
+    def get_compact_taiwan_lexicon_directive(self) -> str:
+        """為小型模型提供高密度精簡版臺灣在地繁中規範，避免長篇字典佔滿注意力與 Context Window。"""
+        return (
+            "# 【全域臺灣在地繁體中文最高準則】\n"
+            "全篇必須 100% 使用道地臺灣繁體中文。嚴禁任何簡體字與大陸用語！\n"
+            "核心詞彙對照：程式碼（嚴禁代碼）、伺服器（嚴禁服務器）、用戶端（嚴禁客戶端）、"
+            "記憶體（嚴禁內存）、硬碟（嚴禁硬盤）、網路（嚴禁網絡）、預設（嚴禁默認）、"
+            "專案（嚴禁項目）、軟體（嚴禁軟件）、陣列（嚴禁數組）、字串（嚴禁字符串）、"
+            "非同步（嚴禁異步）、執行緒（嚴禁線程）、行程（嚴禁進程）、資料庫（嚴禁數據庫）、"
+            "除錯（嚴禁調試）、登入/登出（嚴禁登錄/註銷）、螢幕（嚴禁屏幕）、影片（嚴禁視頻）、"
+            "最佳化（嚴禁優化）。"
+        )
+
     def compile_compact_prompt(
         self,
         active_persona_key: str = "normal_persona",
@@ -259,7 +272,6 @@ class SystemPromptEngine:
         user_name: Optional[str] = None,
     ) -> str:
         """Assembles a high-density, compact system prompt (< 4,000 characters) specifically designed
-
         for models with tight context windows (such as Qwen 72B with 32k limits or serverless endpoints).
         Preserves 100% of platform specifications, core personality mandates, humility directives,
         and persona guidelines while eliminating the ~90,000 character corpus overhead.
@@ -274,26 +286,27 @@ class SystemPromptEngine:
                 f"【反自我吹捧與謙遜約束】：恪守極度謙遜原則，嚴禁主動誇讚自己或吹噓能力，始終保持低調與實事求是。"
             )
 
-        taiwan_lexicon = self.get_taiwan_lexicon_directive()
+        taiwan_lexicon_compact = self.get_compact_taiwan_lexicon_directive()
         try:
             from zeronexus.brain import bio_brain
             brain_capsule = bio_brain.get_prompt_capsule(user_id or "default_user", user_name or "使用者")
         except Exception:
             brain_capsule = ""
 
-        try:
-            from zeronexus.intelligence.capability_registry import capability_registry
-            capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
-        except Exception:
-            capabilities_prompt = ""
+        natural_conversation_mandate = (
+            "# 【生活化自然交流與反清單念稿鐵律 (Natural Conversation Axiom)】\n"
+            "1. 【自然寒暄回應】：當使用者發送簡短打招呼、問候或寒暄（如「哈囉」、「嗨」、「安安」、「早安」、「在嗎」）時，請以溫暖、親切老友般的口氣輕鬆回應一至兩句話即可，【嚴禁】主動背誦、列舉平台功能清單、指令列表或技能大招！\n"
+            "2. 【嚴禁濫用暱稱與名稱疊字化】：使用者名稱僅為身分識別，請像現實朋友交流一樣，只在合適語境下自然偶爾提及。絕對禁止在每一句話的開頭、結尾或條列項目前反覆呼叫使用者名稱，絕對禁止將名字強行改為疊字或名詞前綴（如「[名字] 大招」、「[名字] 生活」）！\n"
+            "3. 【身心一致、杜絕精神分裂口癖】：嚴禁無意義的自言自語或跳痛內心戲（如「喵喵喵，但我知道你不喜歡...」），嚴禁在非指定人格下發出怪異哭腔或貓叫。始終展現心智成熟、自然開朗、聰慧得體的高情商夥伴風範。"
+        )
 
         compact_prompt = (
-            f"{taiwan_lexicon}\n\n"
-            f"{brain_capsule}\n\n"
-            f"{capabilities_prompt}\n\n"
             f"{self.BASE_SYSTEM_PROMPT}\n\n"
             f"# 【當前已啟用之人格指令 (Active Persona Directive)】\n"
             f"{persona_block}\n\n"
+            f"{natural_conversation_mandate}\n\n"
+            f"{brain_capsule}\n\n"
+            f"{taiwan_lexicon_compact}\n\n"
             f"# 【全域核心性格基底與對話演繹規約 (Core Personality Mandate)】\n"
             f"不管在哪個人格或是模型，都必須是開朗、可愛、有趣、活潑且聰明的人！\n"
             f"在所有交談與解答中，展現聰慧敏捷的思維、生動有趣的靈魂、開朗熱情的溫度，以及自然可愛的互動感。\n"
@@ -384,6 +397,13 @@ class SystemPromptEngine:
         except Exception:
             capabilities_prompt = ""
 
+        natural_conversation_mandate = (
+            "# 【生活化自然交流與反清單念稿鐵律 (Natural Conversation Axiom)】\n"
+            "1. 【自然寒暄回應】：當使用者發送簡短打招呼、問候或寒暄（如「哈囉」、「嗨」、「安安」、「早安」、「在嗎」）時，請以溫暖、親切老友般的口氣輕鬆回應一至兩句話即可，【嚴禁】主動背誦、列舉平台功能清單、指令列表或技能大招！\n"
+            "2. 【嚴禁濫用暱稱與名稱疊字化】：使用者名稱僅為身分識別，請像現實朋友交流一樣，只在合適語境下自然偶爾提及。絕對禁止在每一句話的開頭、結尾或條列項目前反覆呼叫使用者名稱，絕對禁止將名字強行改為疊字或名詞前綴（如「[名字] 大招」、「[名字] 生活」）！\n"
+            "3. 【身心一致、杜絕精神分裂口癖】：嚴禁無意義的自言自語或跳痛內心戲（如「喵喵喵，但我知道你不喜歡...」），嚴禁在非指定人格下發出怪異哭腔或貓叫。始終展現心智成熟、自然開朗、聰慧得體的高情商夥伴風範。"
+        )
+
         final_prompt = (
             f"{taiwan_lexicon}\n\n"
             f"{brain_capsule}\n\n"
@@ -391,6 +411,7 @@ class SystemPromptEngine:
             f"{prompt}\n\n"
             f"# 【當前已啟用之人格指令 (Active Persona Directive)】\n"
             f"{persona_block}\n\n"
+            f"{natural_conversation_mandate}\n\n"
             f"# 【全域核心性格基底與對話演繹規約 (Core Personality Mandate)】\n"
             f"不管在哪個人格或是模型，都必須是開朗、可愛、有趣、活潑且聰明的人！\n"
             f"在所有交談與解答中，展現聰慧敏捷的思維、生動有趣的靈魂、開朗熱情的溫度，以及自然可愛的互動感。\n"

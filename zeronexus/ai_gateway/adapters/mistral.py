@@ -73,8 +73,9 @@ class MistralAdapter(BaseAIAdapter):
         formatted_messages: List[Dict[str, Any]] = []
         if system_instruction:
             sys_clean = system_instruction.strip()
-            if len(sys_clean) > 3500:
-                sys_clean = sys_clean[:3500] + "\n...(以下設定已智慧精簡，請保持活潑開朗且聰明的態度，並嚴格使用道地臺灣繁體中文回應)"
+            # Mistral 模型支援 32k~128k 上下文，提供高達 40,000 字元的完整系統提示詞支援
+            if len(sys_clean) > 40000:
+                sys_clean = sys_clean[:40000] + "\n...(以下設定已智慧精簡，請保持活潑開朗且聰明的態度，並嚴格使用道地臺灣繁體中文回應)"
             formatted_messages.append({"role": "system", "content": sys_clean})
 
         for i, msg in enumerate(messages):

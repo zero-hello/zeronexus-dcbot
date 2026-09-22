@@ -995,15 +995,26 @@ class ContextBuilder:
         })
 
         # 1.5. Dynamic Capabilities & Runtime Ground-Truth Injection
-        try:
-            from zeronexus.intelligence.capability_registry import capability_registry
-            capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
+        # 智慧判斷：若使用者僅為簡短日常問候打招呼，給予自然寒暄提示，避免塞入過長能力清單干擾小型模型
+        is_simple_greeting = any(
+            user_prompt.strip().lower() == g
+            for g in ["哈囉", "嗨", "安安", "你好", "您好", "早安", "午安", "晚安", "在嗎", "hello", "hi", "hey", "yo"]
+        )
+        if is_simple_greeting:
             messages.append({
                 "role": "system",
-                "content": capabilities_prompt,
+                "content": "【對話情境指引】：使用者正在向你親切打招呼，請以溫暖、開朗、生活化且輕鬆自然的朋友口吻簡短回覆寒暄，嚴禁主動背誦、列舉平台功能清單或大招技能！",
             })
-        except Exception as cap_err:
-            log.warning(f"Failed to inject dynamic capabilities prompt: {cap_err}")
+        else:
+            try:
+                from zeronexus.intelligence.capability_registry import capability_registry
+                capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
+                messages.append({
+                    "role": "system",
+                    "content": capabilities_prompt,
+                })
+            except Exception as cap_err:
+                log.warning(f"Failed to inject dynamic capabilities prompt: {cap_err}")
 
         # 2 & 3. Concurrently fetch long-term facts and conversation history
         channel_id = getattr(channel, "id", 0)
