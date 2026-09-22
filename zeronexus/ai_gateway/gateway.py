@@ -291,13 +291,21 @@ class AIGateway:
                             return p.replace(p[:len(k)], v, 1)
                     return p.title()
 
+                is_alias_match = bool(
+                    clean_override
+                    and result.model_name
+                    and (
+                        clean_override.lower() == result.model_name.lower()
+                        or (clean_override.lower() == "manus" and "manus" in result.model_name.lower())
+                    )
+                )
                 if idx > 0:
                     result.is_fallback = True
                     result.requested_model = clean_override
                     failed_disp = ", ".join([_format_failed_provider(p) for p in attempted_providers])
                     fallback_notice = f"{failed_disp} 暫時不可用，已自動切換"
                     log.warning(f"AI Gateway successfully fell back to {provider_name}. Detailed route: {attempted_providers} -> {provider_name}")
-                elif result.is_fallback or (clean_override and result.model_name and result.model_name.lower() != clean_override.lower()):
+                elif result.is_fallback or (clean_override and result.model_name and not is_alias_match):
                     result.is_fallback = True
                     req_model = clean_override or result.requested_model
                     result.requested_model = req_model

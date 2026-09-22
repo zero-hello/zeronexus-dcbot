@@ -33,17 +33,35 @@ def test_gateway_model_routing_separation():
 
 @pytest.mark.asyncio
 async def test_manus_adapter_request_generation():
-    """驗證 ManusAdapter 在官方模式與第三方中轉模式下均能正常運作。"""
+    """驗證 ManusAdapter 在官方模式下進行真實自然語言對話請求與輪詢。"""
     adapter = ManusAdapter()
     captured_request = {}
 
-    class DummyOfficialResponse:
+    class DummyCreateResponse:
         status_code = 200
         def json(self):
             return {
+                "ok": True,
                 "task_id": "test_task_123",
-                "task_title": "測試自主規劃任務",
+                "task_title": "打招呼任務",
                 "task_url": "https://manus.im/app/test_task_123",
+            }
+
+    class DummyPollResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "ok": True,
+                "messages": [
+                    {
+                        "type": "status_update",
+                        "status_update": {"agent_status": "stopped", "brief": "Manus 完成回覆"},
+                    },
+                    {
+                        "type": "assistant_message",
+                        "assistant_message": {"content": "嗨！很高興見到你，今天有什麼我可以協助你的？"},
+                    },
+                ],
             }
 
     class DummyClient:
@@ -51,16 +69,18 @@ async def test_manus_adapter_request_generation():
             captured_request["url"] = url
             captured_request["headers"] = headers
             captured_request["json"] = json
-            return DummyOfficialResponse()
+            return DummyCreateResponse()
 
-        async def get(self, url, headers=None):
-            return DummyOfficialResponse()
+        async def get(self, url, headers=None, params=None):
+            captured_request["poll_url"] = url
+            captured_request["poll_params"] = params
+            return DummyPollResponse()
 
     adapter._get_client = AsyncMock(return_value=DummyClient())
 
     result = await adapter.generate(
-        system_instruction="你是專業自主代理",
-        messages=[{"role": "user", "content": "請規劃這項自動化任務"}],
+        system_instruction="你是 ZeroNexus，個性開朗活潑",
+        messages=[{"role": "user", "content": "嗨"}],
         model="manus",
         api_key="sk-manus-test-key-12345",
         temperature=0.7,
@@ -68,13 +88,16 @@ async def test_manus_adapter_request_generation():
 
     assert result.provider == "manus"
     assert "manus" in result.actual_model.lower()
-    assert "Manus AI 自主 Agent" in result.text
-    assert "https://manus.im/app/test_task_123" in result.text
+    assert result.text == "嗨！很高興見到你，今天有什麼我可以協助你的？"
+    assert result.thinking_process == "Manus 完成回覆"
 
-    # 驗證 Header 包含 API_KEY 與 x-manus-api-key
-    assert captured_request["headers"]["API_KEY"] == "sk-manus-test-key-12345"
-    assert captured_request["url"].endswith("/v1/tasks")
+    # 驗證 Header 包含 x-manus-api-key 與正確的 v2 端點
+    assert captured_request["headers"]["x-manus-api-key"] == "sk-manus-test-key-12345"
+    assert captured_request["url"].endswith("/v2/task.create")
+    assert "message" in captured_request["json"]
     assert "agent_profile" in captured_request["json"]
+    assert captured_request["poll_url"].endswith("/v2/task.listMessages")
+    assert captured_request["poll_params"]["task_id"] == "test_task_123"
 
 
 

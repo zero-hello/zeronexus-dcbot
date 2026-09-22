@@ -65,7 +65,7 @@ class ManusAdapter(BaseAIAdapter):
         is_official = ("api.manus.ai" in raw_base) or ("api.manus.im" in raw_base)
 
         # ---------------------------------------------------------------------
-        # 模式 1：Manus 官方非同步自主 Agent API (https://api.manus.ai/v1/tasks)
+        # 模式 1：Manus 官方 API 自然語言對話模式 (v2/task.create + v2/task.listMessages)
         # ---------------------------------------------------------------------
         if is_official:
             user_prompt = ""
@@ -79,25 +79,47 @@ class ManusAdapter(BaseAIAdapter):
                         user_prompt = str(c)
                     break
             if not user_prompt:
-                user_prompt = "請協助處理任務"
+                user_prompt = "你好！"
+
+            # 構建結構化自然對話上下文 (避免超過 Manus 5,000 tokens 上限)
+            context_blocks: List[str] = []
+            if system_instruction:
+                sys_clean = system_instruction.strip()
+                if len(sys_clean) > 2500:
+                    sys_clean = sys_clean[:2500] + "\n...(以下設定省略)"
+                context_blocks.append(f"【角色設定與系統指示】\n{sys_clean}")
+
+            # 附加前文對話歷史 (最近 4 則)
+            history_lines: List[str] = []
+            for msg in messages[:-1]:
+                m_role = "使用者" if msg.get("role") == "user" else "ZeroNexus"
+                m_content = msg.get("content", "")
+                if isinstance(m_content, str) and m_content.strip():
+                    history_lines.append(f"{m_role}: {m_content.strip()}")
+            if history_lines:
+                context_blocks.append("【前文對話記錄】\n" + "\n".join(history_lines[-4:]))
+
+            context_blocks.append(f"【使用者最新訊息】\n{user_prompt}")
+            context_blocks.append("請以道地繁體中文自然流暢、生動有趣地直接回應使用者。")
+            full_prompt = "\n\n".join(context_blocks)
 
             target_model = getattr(config.ai, "manus_model", "") or model or "manus-1.6-lite"
             if "max" in target_model.lower():
-                agent_profile = "manus-2.0-max"
+                agent_profile = "max"
             elif "standard" in target_model.lower():
-                agent_profile = "manus-1.6"
+                agent_profile = "standard"
             else:
-                agent_profile = "manus-1.6-lite"
+                agent_profile = "lite"
 
-            endpoint = "https://api.manus.ai/v1/tasks"
+            endpoint = "https://api.manus.ai/v2/task.create"
             headers = {
-                "API_KEY": api_key,
                 "x-manus-api-key": api_key,
+                "API_KEY": api_key,
                 "Content-Type": "application/json",
-                "User-Agent": "ZeroNexus/1.7.1 (Autonomous Agent System)",
+                "User-Agent": "ZeroNexus/1.8.0 (Natural Chat Protocol)",
             }
             payload = {
-                "prompt": user_prompt,
+                "message": {"content": full_prompt},
                 "agent_profile": agent_profile,
             }
 
@@ -119,58 +141,67 @@ class ManusAdapter(BaseAIAdapter):
 
                     data = response.json()
                     task_id = data.get("task_id", "")
-                    task_title = data.get("task_title", "Manus 自主任務")
-                    task_url = data.get("task_url", f"https://manus.im/app/{task_id}")
+                    if not task_id:
+                        raise RuntimeError("Manus API did not return a valid task_id")
 
-                    # 短暫輪詢等待 Agent 第一輪結果 (至多等待 3 秒)
+                    # 輪詢等待對話回覆 (上限 45 秒)
+                    poll_url = "https://api.manus.ai/v2/task.listMessages"
+                    poll_start = time.perf_counter()
                     final_answer = ""
-                    if task_id:
-                        for _ in range(2):
-                            await asyncio.sleep(1.5)
-                            try:
-                                poll_resp = await client.get(
-                                    f"https://api.manus.ai/v1/tasks/{task_id}",
-                                    headers=headers,
-                                )
-                                if poll_resp.status_code == 200:
-                                    task_data = poll_resp.json()
-                                    outputs = task_data.get("output", [])
-                                    for item in outputs:
-                                        if item.get("role") == "assistant":
-                                            for part in item.get("content", []):
-                                                if part.get("type") in ("output_text", "text"):
-                                                    final_answer = part.get("text", "")
-                                    if final_answer:
-                                        break
-                            except Exception as poll_e:
-                                log.debug(f"Manus poll error (non-fatal): {poll_e}")
-                                break
+                    thinking_steps: List[str] = []
 
-                    # 若已取得具體回答則呈現回答；若任務仍在非同步運作則呈現精美任務看板
-                    if final_answer:
-                        text_content = (
-                            f"{final_answer}\n\n"
-                            f"🌐 [在 Manus 雲端檢視完整執行紀錄]({task_url})"
-                        )
-                    else:
-                        text_content = (
-                            f"🤖 **Manus AI 自主 Agent 任務已啟動！**\n\n"
-                            f"• **任務名稱**：`{task_title}`\n"
-                            f"• **執行規格**：`{agent_profile}`（自主雲端工作站）\n"
-                            f"• **任務追蹤連結**：<{task_url}>\n\n"
-                            f"✨ Manus 正在雲端專屬虛擬環境中全自動執行中，您可以點擊上方連結即時查看 Agent 的瀏覽器操作與生成報告！"
-                        )
+                    while (time.perf_counter() - poll_start) < min(timeout, 45.0):
+                        await asyncio.sleep(1.5)
+                        try:
+                            poll_resp = await client.get(
+                                poll_url,
+                                headers=headers,
+                                params={"task_id": task_id},
+                            )
+                            if poll_resp.status_code == 200:
+                                p_data = poll_resp.json()
+                                msgs = p_data.get("messages", [])
+                                is_stopped = False
+                                for m in msgs:
+                                    m_type = m.get("type")
+                                    if m_type == "status_update":
+                                        st_info = m.get("status_update", {})
+                                        st_status = st_info.get("agent_status")
+                                        brief = st_info.get("brief") or st_info.get("description")
+                                        if brief and brief not in thinking_steps:
+                                            thinking_steps.append(brief)
+                                        if st_status in ("stopped", "completed"):
+                                            is_stopped = True
+                                        elif st_status in ("failed", "error"):
+                                            raise RuntimeError(f"Manus task execution failed: {brief}")
+                                    elif m_type == "assistant_message":
+                                        c = m.get("assistant_message", {}).get("content", "")
+                                        if c and isinstance(c, str):
+                                            final_answer = c.strip()
+
+                                if final_answer and is_stopped:
+                                    break
+                        except Exception as poll_e:
+                            if "failed" in str(poll_e):
+                                raise poll_e
+                            log.debug(f"Manus poll non-fatal error: {poll_e}")
+
+                    if not final_answer:
+                        raise RuntimeError("Manus API timed out waiting for natural language dialogue response")
 
                     latency = (time.perf_counter() - start_time) * 1000
+                    thinking_str = "\n".join(thinking_steps) if thinking_steps else None
+
+                    ret_model = model if (model and "manus" in model.lower()) else f"manus-{agent_profile}"
                     return AIResult(
-                        text=text_content,
-                        model_name=agent_profile,
+                        text=final_answer,
+                        model_name=ret_model,
                         provider="manus",
                         latency_ms=latency,
-                        prompt_tokens=len(user_prompt) // 4,
-                        completion_tokens=len(text_content) // 4,
+                        prompt_tokens=len(full_prompt) // 4,
+                        completion_tokens=len(final_answer) // 4,
                         is_fallback=False,
-                        thinking_process=f"已成功為您在 Manus 雲端建立專屬 Agent 任務【{task_title}】，正在調度虛擬環境與瀏覽器推演...",
+                        thinking_process=thinking_str,
                         raw_response=data,
                     )
                 except Exception as e:
