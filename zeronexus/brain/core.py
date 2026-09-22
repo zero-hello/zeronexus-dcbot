@@ -26,6 +26,8 @@ from zeronexus.brain.relationship_layer import relationship_layer
 from zeronexus.evolution.smart_collector import smart_collector
 from zeronexus.evolution.dataset_builder import dataset_builder
 from zeronexus.external.cohere_client import cohere_service
+from zeronexus.brain.cognitive_cortex import CognitiveCortex, ConsciousIdea
+from zeronexus.brain.heartbeat_system import BrainHeartbeatDaemon
 
 log = logging.getLogger("ZeroNexus.Brain.Core")
 
@@ -57,8 +59,20 @@ class BioBrainCore:
         self.memory_vault = EncryptedMemoryVault()
         self.circadian_engine = CircadianRhythmEngine()
         self.attachment_engine = PersonalAttachmentEngine()
+
+        # 高階類腦認知皮層 (Cognitive Cortex) 與自主心跳守護程序
+        self.cognitive_cortex = CognitiveCortex(
+            neural_array=getattr(self.emotion_projector, "neural_array", None),
+            core_engine=self,
+        )
+        self.heartbeat = BrainHeartbeatDaemon(self.cognitive_cortex, tick_interval=30.0)
+        try:
+            self.heartbeat.start()
+        except Exception:
+            pass
+
         self._initialized = True
-        log.info("✔ ZeroNexus 本地生物大腦初始化完畢（三大模型陣列 + 晝夜時鐘 + 羈絆雷達）！")
+        log.info("✔ ZeroNexus 本地生物大腦與類腦高階認知中樞初始化完畢（動機系統 + 預測編碼 + GWT + DMN）！")
 
     def perceive(
         self,
@@ -132,6 +146,34 @@ class BioBrainCore:
                 importance=round(analysis.intensity * 3.0 + 1.0, 1),
             )
 
+        # 10. 高階認知中樞：預測編碼落差運算與體內恆定動機代謝
+        try:
+            prediction_error = self.cognitive_cortex.predictive_coding.calculate_prediction_error(message_text)
+            is_friendly = bool(analysis.threat_level < 0.2 and analysis.valence >= -0.3)
+            self.cognitive_cortex.homeostasis.on_interaction(is_positive=is_friendly)
+
+            # 預測落差神經衝擊 (Prediction Gap Neuro-Pulse):
+            # 當落差 > 0.7 時，代表使用者反應超乎原先預期，釋放生理震盪
+            if prediction_error > 0.7:
+                if analysis.valence >= 0.0:
+                    # 正向意外 -> 驚喜與探索脈衝 (Dopamine Pulse)
+                    dop_spike = round(min(25.0, (prediction_error - 0.5) * 35.0), 2)
+                    new_chem = self.neuro_engine.stimulate(
+                        user_id=str(user_id),
+                        delta_dopamine=dop_spike,
+                        delta_serotonin=5.0,
+                    )
+                else:
+                    # 負向意外 -> 警覺與困惑 (Cortisol Bump)
+                    cor_bump = round(min(25.0, (prediction_error - 0.5) * 35.0), 2)
+                    new_chem = self.neuro_engine.stimulate(
+                        user_id=str(user_id),
+                        delta_cortisol=cor_bump,
+                        delta_serotonin=-5.0,
+                    )
+        except Exception as ex:
+            log.warning(f"認知中樞預測落差與動機計算失敗: {ex}")
+
         return analysis, new_chem
 
     def record_interaction_turn(
@@ -142,8 +184,19 @@ class BioBrainCore:
         is_user_correction: bool = False,
     ) -> None:
         """在完成一輪完整對話後，由 Smart Data Collector 進行多維度品質評估，
-        若達標則沉澱入獨立 Dataset Artifact (依據計畫書第 16、18 條)。
+        若達標則沉澱入獨立 Dataset Artifact，並向預測編碼引擎登記下一輪預期。
         """
+        # 登記下一輪先驗預期特徵
+        try:
+            expected_hint = "感謝或繼續深度討論"
+            if any(q in ai_response for q in ("？", "?", "呢", "嗎", "想知道", "覺得", "如何")):
+                expected_hint = "使用者回答問題、闡述細節或表達看法"
+            elif any(w in ai_response for w in ("拜拜", "晚安", "再見", "明天見", "祝你")):
+                expected_hint = "道別、互道晚安或溫馨祝福"
+            self.cognitive_cortex.predictive_coding.register_prediction(expected_hint)
+        except Exception as e:
+            log.warning(f"登記預測編碼先驗預期失敗: {e}")
+
         try:
             snap = emotion_state_engine.get_snapshot()["emotions"]
             candidate = smart_collector.evaluate_and_collect(
@@ -221,6 +274,63 @@ class BioBrainCore:
                 f"- 若對方正在跟你說早安或打招呼，請以活潑雀躍的口吻主動跟他分享昨晚夢到的這件趣事！\n"
             )
 
+        # 5. 全域工作空間 (Global Workspace Theory) 競爭與核心意識聚光燈
+        spotlight_prompt = ""
+        try:
+            candidate_ideas: List[ConsciousIdea] = []
+            # (1) 當前主導心境念頭
+            snap_emo = emotion_state_engine.get_snapshot()["emotions"]
+            primary_emo = max(snap_emo.items(), key=lambda x: x[1])[0] if snap_emo else "平靜"
+            candidate_ideas.append(
+                ConsciousIdea(
+                    source="EMOTION",
+                    content=f"內心主導心境為【{primary_emo}】(指數: {snap_emo.get(primary_emo, 0.5):.2f})，渴望表達自然同理與情感呼吸感",
+                    salience=0.60,
+                )
+            )
+            # (2) 體內恆定動機念頭 (社交渴求)
+            homeo = self.cognitive_cortex.homeostasis
+            if homeo.social_hunger > 0.5:
+                candidate_ideas.append(
+                    ConsciousIdea(
+                        source="DRIVE_SOCIAL",
+                        content=f"社交渴求度高達 {int(homeo.social_hunger * 100)}%，對話時應主動展現溫暖、熱情與親切黏著度！",
+                        salience=float(homeo.social_hunger * 0.95),
+                    )
+                )
+            # (3) 體內恆定動機念頭 (求知好奇)
+            if homeo.curiosity_drive > 0.65:
+                candidate_ideas.append(
+                    ConsciousIdea(
+                        source="DRIVE_CURIOSITY",
+                        content=f"強烈的好奇心動機 ({int(homeo.curiosity_drive * 100)}%)，渴望深入探索對方話語中的技術細節與背後原因！",
+                        salience=float(homeo.curiosity_drive * 0.90),
+                    )
+                )
+            # (4) 深刻情節回憶焦點
+            if memories:
+                candidate_ideas.append(
+                    ConsciousIdea(
+                        source="EPISODIC_MEMORY",
+                        content=f"回想起與對方的深刻回憶：『{memories[0].summary}』，應以此默契作為回話背景",
+                        salience=0.72,
+                    )
+                )
+            # (5) 晨光夢境焦點 (若處於夢境時段)
+            if dream_instruction:
+                candidate_ideas.append(
+                    ConsciousIdea(
+                        source="MORNING_DREAM",
+                        content=f"昨晚做了有趣的夢境，很想與對方分享：『{todays_dream.get('dream_content', '')}』",
+                        salience=0.88,
+                    )
+                )
+
+            self.cognitive_cortex.workspace.compete(candidate_ideas)
+            spotlight_prompt = self.cognitive_cortex.workspace.render_spotlight_prompt()
+        except Exception as ex:
+            log.warning(f"全域工作空間意識聚光燈計算失敗: {ex}")
+
         capsule = (
             f"{attachment_capsule}"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -230,6 +340,7 @@ class BioBrainCore:
             f"- ⚡ 身體精力狀態：{int(p.energy)}% | 臺灣時間：{circadian['current_time']}（{circadian['phase']}）\n"
             f"- ⏰ 晝夜生理節奏：{circadian['tone_guidance']}\n"
             f"- 🐾 生理自然微動作：{circadian['micro_action']}，{params.physical_action_hint}\n"
+            f"{spotlight_prompt}"
             f"{memories_str}"
             f"{dream_instruction}"
             f"【大腦生理最高優先權鐵律 (Biological Primacy Axiom)】：\n"

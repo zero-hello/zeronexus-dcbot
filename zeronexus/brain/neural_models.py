@@ -509,3 +509,45 @@ class HierarchicalNeuralArray:
             delta_oxytocin=delta_oxy,
             active_layers=active_layers,
         )
+
+    def get_embedding(self, text: str) -> np.ndarray:
+        """獲取文字之 L2 歸一化語意特徵向量 (384 維)，優先使用 BGE 或 MiniLM，無權重時降級為確定性偽向量。"""
+        if not text or not isinstance(text, str):
+            text = ""
+        # 1. 優先嘗試中文 BGE
+        if self.bge_session and self.bge_tokenizer:
+            emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, text)
+            if emb is not None:
+                return emb
+        # 2. 次要嘗試通用 MiniLM-L6
+        if self.l6_session and self.l6_tokenizer:
+            emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, text)
+            if emb is not None:
+                return emb
+        # 3. 降級確定性幾何偽特徵向量 (384 維，支援無 ONNX 或單元測試環境)
+        return self._fallback_pseudo_embedding(text)
+
+    def _fallback_pseudo_embedding(self, text: str) -> np.ndarray:
+        """基於字元特徵與雜湊產生確定性 384 維單位向量。"""
+        dim = 384
+        if not text:
+            vec = np.zeros(dim, dtype=np.float32)
+            vec[0] = 1.0
+            return vec
+
+        # 以字元編碼與滑動窗口累加特徵
+        vec = np.zeros(dim, dtype=np.float32)
+        encoded = text.encode("utf-8")
+        for i, b in enumerate(encoded):
+            idx = (b * 13 + i * 37) % dim
+            vec[idx] += 1.0
+            # 引入字符平滑擴散
+            vec[(idx + 1) % dim] += 0.5
+            vec[(idx - 1) % dim] += 0.5
+
+        norm = float(np.linalg.norm(vec))
+        if norm > 1e-9:
+            return (vec / norm).astype(np.float32)
+        vec[0] = 1.0
+        return vec
+
