@@ -332,7 +332,7 @@ class AICog(commands.Cog):
                             prompt=draw_intent.prompt,
                             style=draw_intent.style,
                             aspect_ratio=draw_intent.aspect_ratio,
-                            model="gemini-2.5-flash-image",
+                            model=getattr(config.ai, "normal_gen_image_model", "imagen-3.0-generate-002"),
                             verify_download=True,
                         )
                         if img_res.success and (img_res.image_url or img_res.image_bytes):
@@ -505,7 +505,7 @@ class AICog(commands.Cog):
                             prompt=draw_intent.prompt,
                             style=draw_intent.style,
                             aspect_ratio=draw_intent.aspect_ratio,
-                            model="gemini-2.5-flash-image",
+                            model=getattr(config.ai, "normal_gen_image_model", "imagen-3.0-generate-002"),
                             verify_download=True,
                         )
                         if img_res.success and (img_res.image_url or img_res.image_bytes):

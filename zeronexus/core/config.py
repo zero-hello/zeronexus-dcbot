@@ -160,6 +160,16 @@ class AIProviderConfig:
     huggingface_model: str = "Qwen/Qwen2.5-72B-Instruct"
     huggingface_keys: List[str] = field(default_factory=list)
 
+    # 專屬分離模型設定 (可於 .env 中獨立指定)
+    normal_text_model: str = "gemini-3.1-flash-lite"
+    normal_vision_model: str = "gemini-2.5-flash"
+    normal_gen_image_model: str = "imagen-3.0-generate-002"
+
+    # Manus API 配置
+    manus_keys: List[str] = field(default_factory=list)
+    manus_model: str = "manus"
+    manus_base_url: str = "https://api.manus.ai/v1"
+
     daily_limit_per_user: int = 80
     short_term_memory_limit: int = 400
     memory_ttl_seconds: int = 1800
@@ -235,6 +245,18 @@ class AIProviderConfig:
         raw_ttl = os.getenv("MEMORY_TTL_SECONDS", "").strip()
         if raw_ttl.isdigit():
             self.memory_ttl_seconds = int(raw_ttl)
+
+        # 載入專屬分離模型
+        self.normal_text_model = os.getenv("NORMAL_TEXT_MODEL", self.normal_text_model).strip() or self.normal_text_model
+        self.normal_vision_model = os.getenv("NORMAL_VISION_MODEL", self.normal_vision_model).strip() or self.normal_vision_model
+        self.normal_gen_image_model = os.getenv("NORMAL_GEN_IMAGE_MODEL", self.normal_gen_image_model).strip() or self.normal_gen_image_model
+        if self.normal_text_model:
+            self.gemini_model = self.normal_text_model
+
+        # 載入 Manus API 配置
+        self.manus_keys = parse_keys("MANUS_API_KEYS", "MANUS_API_KEY")
+        self.manus_model = os.getenv("MANUS_MODEL", self.manus_model).strip() or self.manus_model
+        self.manus_base_url = os.getenv("MANUS_BASE_URL", self.manus_base_url).strip() or self.manus_base_url
 
 
 @dataclass

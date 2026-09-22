@@ -19,6 +19,7 @@ from zeronexus.ai_gateway.adapters.base import AIResult
 from zeronexus.ai_gateway.adapters.deepseek import DeepSeekAdapter
 from zeronexus.ai_gateway.adapters.gemini import GeminiAdapter
 from zeronexus.ai_gateway.adapters.huggingface import HuggingFaceAdapter
+from zeronexus.ai_gateway.adapters.manus import ManusAdapter
 from zeronexus.ai_gateway.adapters.openrouter import (
     OPENROUTER_STRICT_FREE_MODELS,
     OpenRouterAdapter,
@@ -41,14 +42,17 @@ class AIGateway:
             "deepseek": DeepSeekAdapter(),
             "openrouter": OpenRouterAdapter(),
             "huggingface": HuggingFaceAdapter(),
+            "manus": ManusAdapter(),
         }
 
         hf_keys = getattr(config.ai, "huggingface_keys", None) or ([config.ai.huggingface_token] if config.ai.huggingface_token else [])
+        manus_keys = getattr(config.ai, "manus_keys", None) or []
         self.key_pools = {
             "gemini": ProviderKeyPool("gemini", config.ai.gemini_keys),
             "deepseek": ProviderKeyPool("deepseek", config.ai.deepseek_keys),
             "openrouter": ProviderKeyPool("openrouter", config.ai.openrouter_keys),
             "huggingface": ProviderKeyPool("huggingface", hf_keys),
+            "manus": ProviderKeyPool("manus", manus_keys),
         }
 
     async def generate_response(
@@ -91,6 +95,8 @@ class AIGateway:
                 primary = "gemini"
             elif "deepseek" in clean_override.lower():
                 primary = "deepseek"
+            elif "manus" in clean_override.lower():
+                primary = "manus"
             else:
                 primary = "openrouter"
 
@@ -119,15 +125,21 @@ class AIGateway:
                 base_chain = ["gemini", "deepseek", "openrouter"]
                 if self.key_pools["huggingface"].has_active_keys:
                     base_chain.append("huggingface")
+                if self.key_pools.get("manus") and self.key_pools["manus"].has_active_keys:
+                    base_chain.append("manus")
                 fallback_chain = [primary] + [p for p in base_chain if p != primary]
         elif images:
             fallback_chain = ["gemini", "openrouter", "deepseek"]
             if self.key_pools["huggingface"].has_active_keys:
                 fallback_chain.append("huggingface")
+            if self.key_pools.get("manus") and self.key_pools["manus"].has_active_keys:
+                fallback_chain.append("manus")
         else:
             fallback_chain = ["gemini", "deepseek", "openrouter"]
             if self.key_pools["huggingface"].has_active_keys:
                 fallback_chain.append("huggingface")
+            if self.key_pools.get("manus") and self.key_pools["manus"].has_active_keys:
+                fallback_chain.append("manus")
 
         fallback_notice: Optional[str] = None
         attempted_providers: List[str] = []
@@ -147,7 +159,7 @@ class AIGateway:
                 else:
                     model = "deepseek/deepseek-chat"
             else:
-                model = self._get_default_model(provider_name)
+                model = self._get_default_model(provider_name, has_images=bool(images))
 
             # Check if this provider call requires paid quota
             requires_paid = False
@@ -385,16 +397,18 @@ class AIGateway:
             f"所有 AI 提供者皆無法回應 ({', '.join(attempted_providers)})。請稍後再試或檢查 API 金鑰與額度。"
         )
 
-    def _get_default_model(self, provider: str) -> str:
+    def _get_default_model(self, provider: str, has_images: bool = False) -> str:
         if provider == "gemini":
-            return config.ai.gemini_model
+            return getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if has_images else getattr(config.ai, "normal_text_model", config.ai.gemini_model)
+        if provider == "manus":
+            return getattr(config.ai, "manus_model", "manus")
         if provider == "deepseek":
             return config.ai.deepseek_model
         if provider == "openrouter":
             return config.ai.openrouter_model
         if provider == "huggingface":
             return config.ai.huggingface_model
-        return config.ai.gemini_model
+        return getattr(config.ai, "normal_text_model", config.ai.gemini_model)
 
     async def health_check(self) -> Dict[str, Any]:
         """Summarizes key pool health across all configured providers."""

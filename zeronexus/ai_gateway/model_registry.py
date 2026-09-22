@@ -374,6 +374,18 @@ class ModelRegistry:
                 description="Google 免費百萬上下文極速模型 (OpenRouter 免費節點)。",
             ),
 
+            # Manus AI Series
+            ModelMetadata(
+                model_id="manus",
+                display_name="Manus AI Agent",
+                provider="manus",
+                vendor="manus",
+                status=ModelStatus.ACTIVE,
+                context_window=128000,
+                capabilities={"text", "reasoning", "tools", "vision"},
+                description="Manus 自主通用 AI Agent，專為複雜多步驟推理與自動化任務設計。",
+            ),
+
             # Retired / Deprecated Gemini Models
             ModelMetadata(
                 model_id="gemini-2.0-flash",

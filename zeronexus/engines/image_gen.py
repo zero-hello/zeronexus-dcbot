@@ -55,7 +55,21 @@ class ImageGenEngine:
     """High-performance AI Image Generation Engine 100% powered by Google Gemini."""
 
     GEMINI_OPENAI_IMAGES_URL = "https://generativelanguage.googleapis.com/v1beta/openai/images/generations"
-    DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+    DEFAULT_GEMINI_IMAGE_MODEL = "imagen-3.0-generate-002"
+
+    @property
+    def default_image_model(self) -> str:
+        """動態讀取生圖模型設定 (NORMAL_GEN_IMAGE_MODEL)。"""
+        try:
+            from zeronexus.core.config import config
+            if getattr(config.ai, "normal_gen_image_model", None):
+                return config.ai.normal_gen_image_model
+        except Exception:
+            pass
+        env_m = os.getenv("NORMAL_GEN_IMAGE_MODEL", "").strip()
+        if env_m:
+            return env_m
+        return os.getenv("OPENROUTER_GEN_IMAGE_MODEL", self.DEFAULT_GEMINI_IMAGE_MODEL).strip()
 
     # Style presets enhancing quality and adherence
     STYLE_PRESETS: Dict[str, str] = {
@@ -361,7 +375,7 @@ class ImageGenEngine:
 
         Returns ImageGenResult with raw image_bytes and content_type.
         """
-        chosen_model = model or self.DEFAULT_GEMINI_IMAGE_MODEL
+        chosen_model = model or self.default_image_model
         api_key = self._get_gemini_api_key()
         if not api_key:
             return await self.generate_openrouter_gemini_image(
@@ -383,7 +397,7 @@ class ImageGenEngine:
             "Content-Type": "application/json",
         }
         payload = {
-            "model": self.DEFAULT_GEMINI_IMAGE_MODEL,
+            "model": chosen_model,
             "prompt": enhanced_prompt,
             "response_format": "b64_json",
             "n": 1,

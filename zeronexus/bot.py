@@ -1580,7 +1580,7 @@ class ZeroNexusBot(commands.Bot):
                                 prompt=draw_intent.prompt,
                                 style=draw_intent.style,
                                 aspect_ratio=draw_intent.aspect_ratio,
-                                model="gemini-2.5-flash-image",
+                                model=getattr(config.ai, "normal_gen_image_model", "imagen-3.0-generate-002"),
                                 verify_download=True,
                             )
                             if img_res.success and (img_res.image_url or img_res.image_bytes):
@@ -1681,10 +1681,14 @@ class ZeroNexusBot(commands.Bot):
                 log.warning(f"Failed to lookup UserProfile preferences: {pe}")
 
             persona = user_persona or (settings.ai_persona if settings else None) or "normal_persona"
-            active_model = user_model or (settings.ai_model if settings else None) or model_registry.get_active_default_model()
+            active_model = user_model or (settings.ai_model if settings else None) or config.ai.normal_text_model or model_registry.get_active_default_model()
 
             # Process attachments (multimodal: images, docs, code/text, audio, general)
             images, image_thumbnail, attachment_tool_results, attachment_notes = await self._ingest_attachments(message.attachments)
+
+            # 專屬分離模型路由：若使用者未鎖定特定個人模型且訊息中附帶視覺圖像，自動切換至 NORMAL_VISION_MODEL
+            if images and not user_model:
+                active_model = getattr(config.ai, "normal_vision_model", "gemini-2.5-flash")
 
             # 4.9 Check for Deep Thinking Natural Language Control Intent (人話語意控制 + AI 動態親口回應)
             thinking_intent, extracted_query = deep_thinking_controller.parse_intent_and_extract_query(user_prompt)
@@ -2022,13 +2026,13 @@ class ZeroNexusBot(commands.Bot):
                 else:
                     await report_progress(1, 3, "構圖與風格分析", f"正在解析繪圖主題提示詞（`{draw_intent.prompt[:50]}`）...", icon="🎨")
                     try:
-                        active_img_model = getattr(image_gen_engine, "_default_model", "google/gemini-2.5-flash-image")
+                        active_img_model = getattr(config.ai, "normal_gen_image_model", getattr(image_gen_engine, "default_image_model", "imagen-3.0-generate-002"))
                         await report_progress(2, 3, "調用生圖引擎渲染", f"正在透過 {active_img_model} 渲染高畫質作品...", icon="🖼️")
                         img_res = await image_gen_engine.generate_image(
                             prompt=draw_intent.prompt,
                             style=draw_intent.style,
                             aspect_ratio=draw_intent.aspect_ratio,
-                            model="gemini-2.5-flash-image",
+                            model=active_img_model,
                             verify_download=True,
                         )
                         if img_res.success and (img_res.image_url or img_res.image_bytes):
