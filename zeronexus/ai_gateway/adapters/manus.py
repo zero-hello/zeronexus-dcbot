@@ -62,16 +62,136 @@ class ManusAdapter(BaseAIAdapter):
         client = await self._get_client(timeout)
 
         raw_base = getattr(config.ai, "manus_base_url", "https://api.manus.ai/v1").strip().rstrip("/")
+        is_official = ("api.manus.ai" in raw_base) or ("api.manus.im" in raw_base)
+
+        # ---------------------------------------------------------------------
+        # 模式 1：Manus 官方非同步自主 Agent API (https://api.manus.ai/v1/tasks)
+        # ---------------------------------------------------------------------
+        if is_official:
+            user_prompt = ""
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    c = m.get("content", "")
+                    if isinstance(c, list):
+                        texts = [p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"]
+                        user_prompt = " ".join(texts)
+                    else:
+                        user_prompt = str(c)
+                    break
+            if not user_prompt:
+                user_prompt = "請協助處理任務"
+
+            target_model = getattr(config.ai, "manus_model", "") or model or "manus-1.6-lite"
+            if "max" in target_model.lower():
+                agent_profile = "manus-2.0-max"
+            elif "standard" in target_model.lower():
+                agent_profile = "manus-1.6"
+            else:
+                agent_profile = "manus-1.6-lite"
+
+            endpoint = "https://api.manus.ai/v1/tasks"
+            headers = {
+                "API_KEY": api_key,
+                "x-manus-api-key": api_key,
+                "Content-Type": "application/json",
+                "User-Agent": "ZeroNexus/1.7.1 (Autonomous Agent System)",
+            }
+            payload = {
+                "prompt": user_prompt,
+                "agent_profile": agent_profile,
+            }
+
+            max_retries = 2
+            last_error: Optional[Exception] = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    response = await client.post(endpoint, headers=headers, json=payload)
+                    if response.status_code in (429, 503) and attempt < max_retries:
+                        backoff = (1.0 * (2 ** attempt)) + random.uniform(0.1, 0.5)
+                        log.warning(f"Manus Official API HTTP {response.status_code}. Retrying in {backoff:.2f}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+
+                    if response.status_code != 200:
+                        err_body = response.text[:300]
+                        raise RuntimeError(f"Manus API Error (HTTP {response.status_code}): {redact_secrets(err_body)}")
+
+                    data = response.json()
+                    task_id = data.get("task_id", "")
+                    task_title = data.get("task_title", "Manus 自主任務")
+                    task_url = data.get("task_url", f"https://manus.im/app/{task_id}")
+
+                    # 短暫輪詢等待 Agent 第一輪結果 (至多等待 3 秒)
+                    final_answer = ""
+                    if task_id:
+                        for _ in range(2):
+                            await asyncio.sleep(1.5)
+                            try:
+                                poll_resp = await client.get(
+                                    f"https://api.manus.ai/v1/tasks/{task_id}",
+                                    headers=headers,
+                                )
+                                if poll_resp.status_code == 200:
+                                    task_data = poll_resp.json()
+                                    outputs = task_data.get("output", [])
+                                    for item in outputs:
+                                        if item.get("role") == "assistant":
+                                            for part in item.get("content", []):
+                                                if part.get("type") in ("output_text", "text"):
+                                                    final_answer = part.get("text", "")
+                                    if final_answer:
+                                        break
+                            except Exception as poll_e:
+                                log.debug(f"Manus poll error (non-fatal): {poll_e}")
+                                break
+
+                    # 若已取得具體回答則呈現回答；若任務仍在非同步運作則呈現精美任務看板
+                    if final_answer:
+                        text_content = (
+                            f"{final_answer}\n\n"
+                            f"🌐 [在 Manus 雲端檢視完整執行紀錄]({task_url})"
+                        )
+                    else:
+                        text_content = (
+                            f"🤖 **Manus AI 自主 Agent 任務已啟動！**\n\n"
+                            f"• **任務名稱**：`{task_title}`\n"
+                            f"• **執行規格**：`{agent_profile}`（自主雲端工作站）\n"
+                            f"• **任務追蹤連結**：<{task_url}>\n\n"
+                            f"✨ Manus 正在雲端專屬虛擬環境中全自動執行中，您可以點擊上方連結即時查看 Agent 的瀏覽器操作與生成報告！"
+                        )
+
+                    latency = (time.perf_counter() - start_time) * 1000
+                    return AIResult(
+                        text=text_content,
+                        model_name=agent_profile,
+                        provider="manus",
+                        latency_ms=latency,
+                        prompt_tokens=len(user_prompt) // 4,
+                        completion_tokens=len(text_content) // 4,
+                        is_fallback=False,
+                        thinking_process=f"已成功為您在 Manus 雲端建立專屬 Agent 任務【{task_title}】，正在調度虛擬環境與瀏覽器推演...",
+                        raw_response=data,
+                    )
+                except Exception as e:
+                    last_error = e
+                    log.warning(f"Manus Official API attempt {attempt} failed: {e}")
+                    if attempt == max_retries:
+                        raise last_error
+
+        # ---------------------------------------------------------------------
+        # 模式 2：第三方中轉站 / 自訂反代 (OpenAI-compatible /chat/completions)
+        # ---------------------------------------------------------------------
         if not raw_base.endswith("/v1"):
             raw_base = f"{raw_base}/v1"
         endpoint = f"{raw_base}/chat/completions"
 
-        # Manus 雙重認證 Header 支持 (x-manus-api-key 與 Bearer Token)
         headers = {
             "Authorization": f"Bearer {api_key}",
             "x-manus-api-key": api_key,
+            "API_KEY": api_key,
             "Content-Type": "application/json",
-            "User-Agent": "ZeroNexus/1.6 (Autonomous Agent System)",
+            "User-Agent": "ZeroNexus/1.7.1 (Autonomous Agent System)",
         }
 
         formatted_messages: List[Dict[str, Any]] = []
@@ -82,7 +202,6 @@ class ManusAdapter(BaseAIAdapter):
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if i == len(messages) - 1 and images:
-                # 視覺附件整合
                 content_parts: List[Dict[str, Any]] = [{"type": "text", "text": str(content)}]
                 for img in images:
                     mime = img.get("mime_type", "image/png")
@@ -95,8 +214,8 @@ class ManusAdapter(BaseAIAdapter):
             else:
                 formatted_messages.append({"role": role, "content": str(content)})
 
-        target_model = model or getattr(config.ai, "manus_model", "manus") or "manus"
-        payload: Dict[str, Any] = {
+        target_model = getattr(config.ai, "manus_model", "") or model or "manus"
+        payload = {
             "model": target_model,
             "messages": formatted_messages,
             "temperature": temperature,
@@ -108,7 +227,7 @@ class ManusAdapter(BaseAIAdapter):
             payload["tool_choice"] = "auto"
 
         max_retries = 2
-        last_error: Optional[Exception] = None
+        last_error = None
 
         for attempt in range(max_retries + 1):
             try:
@@ -132,7 +251,6 @@ class ManusAdapter(BaseAIAdapter):
                 message = choice.get("message", {})
                 text_content = message.get("content") or ""
 
-                # 提取思維鏈推理內容 (Chain of Thought / Reasoning)
                 reasoning = (
                     message.get("reasoning_content")
                     or message.get("thought")
@@ -140,7 +258,19 @@ class ManusAdapter(BaseAIAdapter):
                     or None
                 )
 
-                tool_calls = message.get("tool_calls")
+                tool_calls: List[Dict[str, Any]] = []
+                raw_tool_calls = message.get("tool_calls", [])
+                if raw_tool_calls:
+                    for tc in raw_tool_calls:
+                        fn = tc.get("function", {})
+                        fn_name = fn.get("name", "")
+                        fn_args_raw = fn.get("arguments", "{}")
+                        try:
+                            fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                        except Exception:
+                            fn_args = {"raw": fn_args_raw}
+                        tool_calls.append({"name": fn_name, "args": fn_args, "id": tc.get("id")})
+
                 usage = data.get("usage", {})
                 prompt_tokens = usage.get("prompt_tokens", 0)
                 completion_tokens = usage.get("completion_tokens", 0)
@@ -156,13 +286,13 @@ class ManusAdapter(BaseAIAdapter):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     is_fallback=False,
-                    tool_calls=tool_calls,
+                    tool_calls=tool_calls if tool_calls else None,
                     thinking_process=reasoning,
                     raw_response=data,
                 )
-
             except Exception as e:
                 last_error = e
+                log.warning(f"Manus API attempt {attempt} failed: {e}")
                 if attempt < max_retries and ("timeout" in str(e).lower() or "connect" in str(e).lower()):
                     await asyncio.sleep(1.0)
                     continue

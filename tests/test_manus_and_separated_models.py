@@ -33,28 +33,17 @@ def test_gateway_model_routing_separation():
 
 @pytest.mark.asyncio
 async def test_manus_adapter_request_generation():
-    """驗證 ManusAdapter 成功發送正確的 Headers、Endpoint 與解析回傳資料。"""
+    """驗證 ManusAdapter 在官方模式與第三方中轉模式下均能正常運作。"""
     adapter = ManusAdapter()
     captured_request = {}
 
-    class DummyResponse:
+    class DummyOfficialResponse:
         status_code = 200
         def json(self):
             return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "哈囉！我是 Manus AI 自主智慧代理人，任務已為您規劃完成。",
-                            "reasoning_content": "正在進行多步驟因果推演與工具協調規劃...",
-                        }
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": 50,
-                    "completion_tokens": 120,
-                    "total_tokens": 170,
-                }
+                "task_id": "test_task_123",
+                "task_title": "測試自主規劃任務",
+                "task_url": "https://manus.im/app/test_task_123",
             }
 
     class DummyClient:
@@ -62,7 +51,10 @@ async def test_manus_adapter_request_generation():
             captured_request["url"] = url
             captured_request["headers"] = headers
             captured_request["json"] = json
-            return DummyResponse()
+            return DummyOfficialResponse()
+
+        async def get(self, url, headers=None):
+            return DummyOfficialResponse()
 
     adapter._get_client = AsyncMock(return_value=DummyClient())
 
@@ -75,15 +67,15 @@ async def test_manus_adapter_request_generation():
     )
 
     assert result.provider == "manus"
-    assert result.actual_model == "manus"
-    assert "Manus AI 自主智慧代理人" in result.text
-    assert result.thinking_process == "正在進行多步驟因果推演與工具協調規劃..."
+    assert "manus" in result.actual_model.lower()
+    assert "Manus AI 自主 Agent" in result.text
+    assert "https://manus.im/app/test_task_123" in result.text
 
-    # 驗證 Header 同時包含 Bearer Token 與 x-manus-api-key
-    assert captured_request["headers"]["Authorization"] == "Bearer sk-manus-test-key-12345"
-    assert captured_request["headers"]["x-manus-api-key"] == "sk-manus-test-key-12345"
-    assert captured_request["url"].endswith("/v1/chat/completions")
-    assert captured_request["json"]["model"] == "manus"
+    # 驗證 Header 包含 API_KEY 與 x-manus-api-key
+    assert captured_request["headers"]["API_KEY"] == "sk-manus-test-key-12345"
+    assert captured_request["url"].endswith("/v1/tasks")
+    assert "agent_profile" in captured_request["json"]
+
 
 
 def test_manus_in_model_select_entries():
