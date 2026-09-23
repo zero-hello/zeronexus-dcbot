@@ -5,13 +5,13 @@
 授權條款：Apache License 2.0
 版權所有：Copyright 2026 Zero
 
-核心架構公理：
-1. 嚴禁依賴單純 Prompt 文字要求模型「假裝思考」，而是使用原生 Python 狀態樹實作演算法推導。
+設計架構原則：
+1. 避免僅依賴提示詞要求模型想像思考過程，而是透過資料結構與搜尋演算法建構推導流程。
 2. 結合蒙地卡羅樹搜尋 (MCTS) 與啟發式邏輯評估 (Heuristic Evaluation)：
    - 選擇 (Selection)：UCB1 (Upper Confidence Bound 1) 平衡深度探勘與廣度探索。
    - 擴展 (Expansion)：產生「目標分解」、「假設構想」、「批判審查」、「工具交叉求證」等思維節點。
    - 模擬 (Simulation / Rollout)：評估邏輯自洽性分數與潛在矛盾。
-   - 反向傳播 (Backpropagation)：更新沿途節點之存活機率與真理權重。
+   - 反向傳播 (Backpropagation)：更新沿途節點之評估分數與置信度權重。
 3. 輸出結構化、具備推導深度與依據的實體思維鏈。
 """
 

@@ -258,7 +258,7 @@ class AgentEngine:
         # Stage 5: Synthesis & Completion
         # -----------------------------------------------------------------
         await emit_update("COMPLETED", "✅ [階段 5/5] 正在整合最終診斷結論與排版輸出...")
-        progress.chain_of_thought.append("【認知對齊】：嚴格遵循事實公理，杜絕虛構與假成功，綜合產出高品質分析報告")
+        progress.chain_of_thought.append("【資料彙整】：依據客觀工具執行結果，產出清晰分析報告")
         final_text = await self._synthesize_output(task_goal, progress.steps)
         progress.final_output = final_text
         await emit_update("COMPLETED", "任務執行完畢！")
@@ -395,18 +395,18 @@ class AgentEngine:
             f"使用者交付的任務目標：{task_goal}\n\n"
             f"各步驟工具執行後的真實觀測數據如下：\n"
             f"{chr(10).join(observations)}\n\n"
-            f"【核心真實性與模型認知對齊公理 (Ground-Truth Cognitive Alignment)】：\n"
-            f"1. 嚴格事實依附（防止宣稱失敗）：若步驟狀態為【步驟執行成功】且具備真實觀測數據，代表工具完全成功獲取資料。嚴格禁止向使用者謊稱「工具失敗」、「無法獲取資料」、「探測逾時」或「連線中斷」！\n"
-            f"2. 嚴禁瞎掰成功（防止虛構數據）：若步驟狀態為【步驟執行失敗】或存在異常原因，代表該步驟明確未成功。嚴格禁止捏造虛假的成功結果（如編造假在線人數、假運算數值、假氣象數據），必須誠實回報該步驟異常與具體失敗原因！\n"
-            f"3. 實體狀態精準詮釋：若 Minecraft 伺服器探測數據中 online 為 false，代表伺服器本體目前「離線或無法連線」，探測工具本身成功回報了該離線事實，請如實告知使用者該伺服器離線，切勿幻想在線人數！\n"
-            f"4. 報告格式排版：使用台灣繁體中文，格式清晰（善用重點粗體與條列 bullet points）。嚴格禁止直接傾倒 raw json 代碼塊（禁止 ```json）。字數控制在 350 字以內，適合在 Discord 卡片中閱讀。"
+            f"【客觀真實性與工具結果對齊指引】：\n"
+            f"1. 嚴格依附真實數據：若步驟狀態為【步驟執行成功】且具備真實觀測數據，代表工具完全成功獲取資料。禁止向使用者宣稱「工具失敗」、「無法獲取資料」、「探測逾時」或「連線中斷」！\n"
+            f"2. 嚴禁捏造數據：若步驟狀態為【步驟執行失敗】或存在異常原因，代表該步驟未成功。禁止捏造虛假結果，必須如實回報該步驟異常與具體失敗原因！\n"
+            f"3. 實體狀態精準詮釋：若 Minecraft 伺服器探測數據中 online 為 false，代表伺服器本體目前「離線或無法連線」，探測工具本身成功回報了該離線事實，請如實告知使用者該伺服器離線！\n"
+            f"4. 報告格式排版：使用臺灣繁體中文，格式清晰（善用重點粗體與條列 bullet points）。嚴格禁止直接傾倒 raw json 程式碼塊（禁止 ```json）。字數控制在 350 字以內，適合在 Discord 卡片中閱讀。"
         )
 
         try:
             res, _ = await ai_gateway.generate_response(
                 system_instruction=(
-                    "你是一個嚴格遵從格式規範與事實真實性的專業診斷分析師，產出高品質台灣繁體中文 Markdown 報告。"
-                    "嚴格遵循認知對齊公理：工具成功絕不宣稱失敗，工具失敗絕不瞎掰成功，切勿輸出 raw json 代碼塊。"
+                    "你是一個嚴格遵從格式規範與事實真實性的專業診斷分析師，產出高品質臺灣繁體中文 Markdown 報告。"
+                    "如實根據工具執行狀況回報，成功不稱失敗，失敗不捏造數據，切勿輸出 raw json 程式碼塊。"
                 ),
                 messages=[{"role": "user", "content": prompt}],
             )

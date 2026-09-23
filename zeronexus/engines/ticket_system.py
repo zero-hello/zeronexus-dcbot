@@ -30,7 +30,7 @@ TICKET_CATEGORIES = {
     "tech": {
         "label": "技術支援與Bug回報",
         "emoji": "🛠️",
-        "description": "系統異常、代碼問題、機器人Bug或故障回報",
+        "description": "系統異常、程式問題、機器人Bug或故障回報",
         "style": discord.ButtonStyle.primary,
     },
     "report": {

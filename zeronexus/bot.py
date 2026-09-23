@@ -1071,7 +1071,7 @@ class ZeroNexusBot(commands.Bot):
                     trace_lines.append(f"- [{ts}] 👤 {author_name}: {text}")
 
             trace_lines.append("────────────────────────────────────────────────────────────")
-            trace_lines.append("【法官審理與認知指引】：以上為頻道現場完整對話脈絡。若使用者的提問涉及吵架、評判對錯、詢問誰有理、分析爭論或請求評理，請嚴格按照『賽博法庭至高審理憲法』給出超炸裂、超豐富的五大板塊判決書；若僅為普通引述或日常聊天，請自然針對該話題完整作答。")
+            trace_lines.append("【法官審理與認知指引】：以上為頻道現場完整對話脈絡。若使用者的提問涉及吵架、評判對錯、詢問誰有理、分析爭論或請求評理，請按照『賽博法庭公道仲裁審理指引』給出詳盡完整的五大板塊判決書；若僅為普通引述或日常聊天，請自然針對該話題完整作答。")
             return "\n".join(trace_lines)
         except Exception as e:
             log.warning(f"Failed to trace dispute context for message {message.id}: {e}")
@@ -1892,7 +1892,7 @@ class ZeroNexusBot(commands.Bot):
                 await report_progress(1, 2, "解析圖表需求（正在沙盒繪製圖表）", "正在分析數值維度與可視化對比項目...", icon="📊")
                 system_instruction += (
                     "\n\n【圖表生成強制規範】：\n"
-                    "使用者詢問圖表！請在回覆中提供明確清晰的對比數據清單與結構化整理，切勿輸出無法執行的代碼片段。"
+                    "使用者詢問圖表！請在回覆中提供明確清晰的對比數據清單與結構化整理，切勿輸出無法執行的程式碼片段。"
                 )
 
             from zeronexus.engines.free_apis import free_apis
@@ -2097,7 +2097,7 @@ class ZeroNexusBot(commands.Bot):
                                 + "\n".join(lines)
                                 + f"\n\n【Discord 班次時刻排版強制規範】：\n"
                                 f"1. 切勿在 Discord 輸出 Markdown 管道表格語法（如 `|:---|:---|` 會造成破版嚴重難以閱讀）！\n"
-                                f"2. 請務必使用代碼區塊（```text ... ```）將車次清單整理成整齊對齊的單行列表，格式範例：\n"
+                                f"2. 請務必使用程式碼區塊（```text ... ```）將車次清單整理成整齊對齊的單行列表，格式範例：\n"
                                 f"```text\n"
                                 f"車次     出發 ➔ 抵達    行車時間   狀態\n"
                                 f"0803次   06:26 ➔ 07:30  01:04      準點\n"

@@ -214,7 +214,7 @@ class ManusAdapter(BaseAIAdapter):
                     )
                 except Exception as e:
                     last_error = e
-                    log.warning(f"Manus Official API attempt {attempt} failed: {e}")
+                    log.warning(f"Manus Official API attempt {attempt} failed: {redact_secrets(str(e))}")
                     if attempt == max_retries:
                         raise last_error
 
@@ -331,7 +331,7 @@ class ManusAdapter(BaseAIAdapter):
                 )
             except Exception as e:
                 last_error = e
-                log.warning(f"Manus API attempt {attempt} failed: {e}")
+                log.warning(f"Manus API attempt {attempt} failed: {redact_secrets(str(e))}")
                 if attempt < max_retries and ("timeout" in str(e).lower() or "connect" in str(e).lower()):
                     await asyncio.sleep(1.0)
                     continue

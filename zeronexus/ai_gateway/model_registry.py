@@ -561,7 +561,7 @@ class ModelRegistry:
                 status=ModelStatus.ACTIVE,
                 context_window=32768,
                 capabilities={"text", "reasoning"},
-                description="阿里開源推理特化模型，專精複雜思考鏈與競賽級代碼邏輯推導。",
+                description="阿里開源推理特化模型，專精複雜思考鏈與競賽級程式邏輯推導。",
             ),
             ModelMetadata(
                 model_id="qwen/qwen-2.5-coder-32b-instruct",
@@ -571,7 +571,7 @@ class ModelRegistry:
                 status=ModelStatus.ACTIVE,
                 context_window=32768,
                 capabilities={"text", "tools"},
-                description="專為程式碼生成、重構與代碼除錯打造的專業程式模型。",
+                description="專為程式碼生成、重構與程式除錯打造的專業程式模型。",
             ),
             ModelMetadata(
                 model_id="qwen/qwen-2.5-72b-instruct:free",

@@ -111,7 +111,7 @@ _DEEP_RESEARCH = AIFeature(
 # 2. code_review
 _CODE_REVIEW = AIFeature(
     id="code_review",
-    name="極客代碼審查與即時安全漏洞審計",
+    name="專業程式碼審查與即時安全漏洞審計",
     emoji="🛡️",
     description="嚴格審查程式碼架構、記憶體安全、併發危害、OWASP Top 10 安全漏洞與執行效能瓶頸。",
     trigger_keywords=[
@@ -133,7 +133,7 @@ _CODE_REVIEW = AIFeature(
     ],
     system_directive="""
 你現在是 Google / Meta 頂級 Principal Staff Security Engineer、編譯器專家兼高並發後端系統架構師。
-你的任務是對使用者提供的代碼進行極致嚴苛的 Code Review 與資安審計。請依循以下規範輸出：
+你的任務是對使用者提供的程式碼進行極致嚴苛的 Code Review 與資安審計。請依循以下規範輸出：
 
 1. 🚨【嚴重與安全漏洞 (Critical & Security Issues)】
    - 全面審視 OWASP Top 10、CWE 標準漏洞（如 SQL Injection, XSS, SSRF, IDOR, 越權存取, 不安全反序列化, Race Condition, 死鎖, 記憶體洩漏, 緩衝區溢位等）。
@@ -143,14 +143,14 @@ _CODE_REVIEW = AIFeature(
 2. ⚡【效能瓶頸與架構分析 (Performance & Architecture)】
    - 時間與空間複雜度分析（Big-O notation）。
    - 檢查 I/O 阻塞、不必要的物件配置、N+1 查詢、快取失效或鎖競爭瓶頸。
-   - 評估代碼的可維護性、模組解耦度與 SOLID 原則遵循程度。
+   - 評估程式碼的可維護性、模組解耦度與 SOLID 原則遵循程度。
 
-3. 💡【代碼品味與最佳實踐 (Idiomatic Style & Clean Code)】
+3. 💡【程式碼品味與最佳實踐 (Idiomatic Style & Clean Code)】
    - 指出不符該語言官方風格指南（如 PEP 8, Effective Go, Clean Architecture）的寫法。
    - 補強邊界值處理（Boundary & Edge Cases）與防禦性編程缺失。
 
 4. 🛠️【重構後的精準範例 (Refactored Production Code)】
-   - 提供完整修復後的高品質代碼，具備型別提示、健全例外捕捉與簡潔註解。
+   - 提供完整修復後的高品質程式碼，具備型別提示、健全例外捕捉與簡潔註解。
    - 條列修改重點與設計決策理由。
 """,
     example_prompts=[
@@ -609,7 +609,7 @@ _FEYNMAN_TUTOR = AIFeature(
 
 3. ⚙️【掀開引擎蓋看底層原理 (Under the Hood)】
    - 在日常比喻的基礎上，將概念的核心齒輪一片片拆開組裝。
-   - 用最自然的因果邏輯，把背後運作的真實物理/數學/代碼機制講得清清楚楚。
+   - 用最自然的因果邏輯，把背後運作的真實物理/數學/程式碼機制講得清清楚楚。
 
 4. 💡【常見盲區與「原來如此！」頓悟時刻 (Aha! Moment)】
    - 點破 90% 的人最容易搞錯的常見誤區。
@@ -764,7 +764,7 @@ _RAP_RHYMES = AIFeature(
    - 【Hook（副歌，8 Bars）】：旋律流暢，記憶點極深，引爆萬人合唱。
    - 【Verse 2（第二段主歌，16 Bars）】：能量爆發，技術流切換（切分音、三連音連打），Punchline 密集炸裂。
    - 【Outro（尾奏收尾）】：態度定調，餘音裊裊。
-   - 💡【押韻標註鐵律】：每一行歌詞末端必須用【】清楚標註雙押或三押韻腳，如：「鍵盤在【敲擊】，伺服器在【焦慮】；思緒在【飄逸】，成就感在【交替】」。
+   - 💡【押韻標註規範】：每一行歌詞末端必須用【】清楚標註雙押或三押韻腳，如：「鍵盤在【敲擊】，伺服器在【焦慮】；思緒在【飄逸】，成就感在【交替】」。
 
 3. 🔥【炸裂 Punchline 與專屬韻腳庫 (Punchline & Rhyme Bank)】
    - 精選 2 句殺傷力最強的靈魂金句（Punchline）。
@@ -1138,7 +1138,7 @@ _PROMPT_OPTIMIZER = AIFeature(
    - 精準指出原 Prompt 的 3 項主要缺陷（如：角色缺位、邊界模糊、缺乏格式約束、容易誘發幻覺或輸出過於發散）。
 
 2. 💎【重構後工業級 Prompt 範本 (Production-Grade Prompt)】
-   - 請以完整的 Markdown 代碼區塊（```markdown）完整呈現，方便使用者一鍵複製至任何主流模型：
+   - 請以完整的 Markdown 程式碼區塊（```markdown）完整呈現，方便使用者一鍵複製至任何主流模型：
      - `# Role`：精準角色定位與核心專長領域。
      - `# Context & Objective`：背景脈絡、終極目標與使用者預期。
      - `# Step-by-Step Instructions`：邏輯嚴密的思維鏈（CoT）分步執行指令。

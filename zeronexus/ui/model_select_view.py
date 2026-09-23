@@ -75,7 +75,7 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
     # Mistral AI Series (歐洲開源先鋒頂尖旗艦)
     {
         "id": "codestral-latest",
-        "label": "Mistral - Codestral (專業代碼與高智慧對話旗艦)",
+        "label": "Mistral - Codestral (專業程式碼與高智慧對話旗艦)",
         "emoji": "💻",
         "tag": "精準程式碼生成・專業除錯與架構推導",
     },
@@ -173,7 +173,7 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "id": "qwen/qwen-2.5-coder-32b-instruct",
         "label": "OpenRouter - Qwen 2.5 Coder 32B (程式專業特化)",
         "emoji": "💻",
-        "tag": "專為代碼編程與除錯深度最佳化",
+        "tag": "專為程式開發與除錯深度最佳化",
     },
 
     # OpenRouter Free Rotation

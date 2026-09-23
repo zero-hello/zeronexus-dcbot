@@ -134,7 +134,7 @@ def _sandbox_audit_hook(event, args):
     if event in ("os.system", "subprocess.Popen", "os.spawn", "os.posix_spawn", "os.exec", "os.execve", "pty.spawn", "os.fork", "os.forkpty"):
         raise PermissionError("沙盒安全限制：禁止衍生子行程 (" + str(event) + ")")
 
-    # 使用者代碼執行期間的檔案系統與二進位擴充嚴格防護
+    # 使用者程式碼執行期間的檔案系統與二進位擴充嚴格防護
     if _in_user_code:
         # 阻斷 ctypes 底層調用逃逸（嚴禁載入或調用任意底層 C 二進位函式庫與符號）
         if "ctypes" in event:
@@ -162,7 +162,7 @@ def _sandbox_audit_hook(event, args):
                 if any(kw in lower_p for kw in sensitive_keywords):
                     raise PermissionError("沙盒安全限制：禁止存取敏感系統或專案設定檔 (" + str(target_path) + ")")
 
-                # 嚴禁讀取專案代碼根目錄（字型檔、快取目錄與虛擬環境套件庫除外）
+                # 嚴禁讀取專案程式碼根目錄（字型檔、快取目錄與虛擬環境套件庫除外）
                 if _project_root and norm_p.startswith(_project_root):
                     allowed_subpaths = ("/data/fonts", "/data/cache", "/znenv", "/.venv", "/venv")
                     if not any(sub in norm_p for sub in allowed_subpaths):
@@ -306,7 +306,7 @@ user_env = {{
     "DISCORD_PALETTE": discord_colors,
 }}
 
-# 若代碼包含繪圖相關呼叫，在進入嚴格安全審核前預先完成繪圖函式庫載入
+# 若程式碼包含繪圖相關呼叫，在進入嚴格安全審核前預先完成繪圖函式庫載入
 if any(k in user_code_str for k in ("plt", "matplotlib", "sns", "seaborn")):
     try:
         _lazy_plt._ensure_loaded()

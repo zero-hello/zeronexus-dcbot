@@ -3,7 +3,7 @@
 核心哲學與規範：
 - 終結「靜態寫死在人設 Prompt 中導致功能過期、脫節」的系統痛點。
 - 達成「程式碼新增工具或模組，所有模型與人設 0 秒自動同步最新能力清單」。
-- 嚴格遵守真實性公理 (Ground-Truth Axiom)：只列出真實已實作與啟用的功能，杜絕假能力宣稱。
+- 嚴格遵守客觀事實原則 (Ground-Truth Principle)：只列出真實已實作與啟用的功能，杜絕假能力宣稱。
 - 音樂模組硬性隔離：絕不干擾音訊串流組件。
 """
 
@@ -65,7 +65,7 @@ class CapabilityRegistry:
             capability_id="tri_vendor_ai_gateway",
             name="三階頂尖 AI 模型智慧閘道",
             domain=CapabilityDomain.AI_GATEWAY,
-            description="支援三大頂尖模型架構：Rank 1 旗艦預設（Google Gemini 原生百萬上下文超低延遲）、Rank 2 深度思維（DeepSeek 複雜邏輯推理）、Rank 3 繁中代碼（Qwen 卓越工程能力）。支援自然語言（如『切換到 deepseek』）或指令秒級切換，具備多金鑰輪詢池與零中斷自動容災降級。",
+            description="支援三大頂尖模型架構：Rank 1 旗艦預設（Google Gemini 原生百萬上下文超低延遲）、Rank 2 深度思維（DeepSeek 複雜邏輯推理）、Rank 3 繁中程式碼（Qwen 卓越工程能力）。支援自然語言（如『切換到 deepseek』）或指令秒級切換，具備多金鑰輪詢池與零中斷自動容災降級。",
             trigger_keywords=["換模型", "切換模型", "gemini", "deepseek", "qwen"],
             slash_command="/ai_model | /人工智慧 切換模型 | zn!model",
             tool_names=[]
@@ -208,7 +208,7 @@ class CapabilityRegistry:
             lines.append("")
 
         lines.append("> [!IMPORTANT]")
-        lines.append("> **真實性公理與非宣傳原則**：")
+        lines.append("> **客觀事實與非宣傳原則**：")
         lines.append("> 1. 本清單僅作為你『受到使用者明確詢問功能或要求執行特定任務時』之事實依據，【絕對禁止】在日常打招呼、寒暄、一般閒聊時主動搬出或背誦本清單！")
         lines.append("> 2. 絕不聲稱不存在的功能，亦不隱瞞你真實具備的本領；嚴禁在項目名稱前反覆附加使用者的暱稱！")
         return "\n".join(lines)

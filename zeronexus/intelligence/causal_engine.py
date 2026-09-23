@@ -1,6 +1,6 @@
 """Zero Intelligence - 原生因果推論引擎與矛盾消解器 (Causal Inference Engine & Conflict Resolver)
 
-本模組為 Zero Intelligence 核心符號邏輯推論組件，以原生 Python 代碼實作：
+本模組為 Zero Intelligence 核心符號邏輯推論組件，以原生 Python 程式碼實作：
 1. 因果有向無環圖 (Causal Directed Acyclic Graph, DAG)
 2. 介入推演 (Intervention / do-calculus 原生模擬)
 3. 反事實分析 (Counterfactual Reasoning)

@@ -1,10 +1,10 @@
-"""Zero Intelligence 真理光譜模組 (Truth Spectrum Engine).
+"""Zero Intelligence 真實度裁決模組 (Truth Spectrum Engine).
 
-本模組落實 Zero Intelligence 之第一核心公理：
+本模組實作客觀事實等級裁決與真偽驗證機制：
 - 執行時期真實（Runtime Truth）> 模型猜測（Model Guess）。
 - 工具觀測結果（OBSERVED）> 模型記憶與假設。
 - 嚴禁 MODEL_CLAIM -> RUNTIME_TRUTH（模型口頭宣稱不等於真實事實）。
-- 嚴格提供真實性六級光譜、衝突降級處置與斷言安全檢查。
+- 提供真實性六級光譜、衝突降級處置與斷言安全檢查。
 """
 
 from __future__ import annotations
@@ -202,9 +202,9 @@ def resolve_conflict(
     strict: bool = False,
     fallback_to_lower: bool = True,
 ) -> TruthFact:
-    """依據真實性公理調解兩個事實間的衝突。
+    """依據事實等級調解兩個事實間的衝突。
 
-    核心公理：
+    判定規則：
     1. 執行時期真實（Runtime Truth）> 模型猜測（Model Guess）。
     2. 等級較高者覆蓋等級較低者。
     3. 若等級相同但值不同（同級衝突）：
@@ -218,12 +218,12 @@ def resolve_conflict(
     if fact_a.value == fact_b.value:
         return fact_a if fact_a.level >= fact_b.level else fact_b
 
-    # 值不同時，若等級有高下，依公理以高者為準
+    # 值不同時，若等級有高下，以等級高者為準
     if fact_a.level > fact_b.level:
         result_meta = dict(fact_a.metadata)
         result_meta["superseded_fact"] = fact_b.to_dict()
         result_meta["resolution_note"] = (
-            f"高等級事實 [{fact_a.level.value}] 依真理公理覆蓋低等級事實 [{fact_b.level.value}]"
+            f"高等級事實 [{fact_a.level.value}] 覆蓋低等級事實 [{fact_b.level.value}]"
         )
         return TruthFact(
             key=fact_a.key,
@@ -239,7 +239,7 @@ def resolve_conflict(
         result_meta = dict(fact_b.metadata)
         result_meta["superseded_fact"] = fact_a.to_dict()
         result_meta["resolution_note"] = (
-            f"高等級事實 [{fact_b.level.value}] 依真理公理覆蓋低等級事實 [{fact_a.level.value}]"
+            f"高等級事實 [{fact_b.level.value}] 覆蓋低等級事實 [{fact_a.level.value}]"
         )
         return TruthFact(
             key=fact_b.key,
@@ -368,8 +368,8 @@ def verify_runtime_truth(claim_value: Any, runtime_fact: TruthFact) -> bool:
     """
     if runtime_fact.level < TruthLevel.OBSERVED:
         raise TruthViolationError(
-            f"公理違規：驗證依據必須為最高置信度之工具觀測事實 [OBSERVED]，"
-            f"實際提供之等級為 [{runtime_fact.level.value}]，嚴禁將未經工具驗證之資料視為執行時期真理！"
+            f"驗證失敗：依據必須為最高置信度之工具觀測事實 [OBSERVED]，"
+            f"實際提供之等級為 [{runtime_fact.level.value}]，未經工具驗證之資料不得作為執行時期客觀事實！"
         )
 
     if claim_value != runtime_fact.value:

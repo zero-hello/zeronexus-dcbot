@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import logging
 import math
 import time
@@ -37,16 +38,19 @@ class MemoryVectorItem:
 class SemanticMemoryRetriever:
     """本地語意向量記憶檢索與關聯回想引擎"""
 
+    MAX_CACHE_SIZE = 1000
     _instance: Optional["SemanticMemoryRetriever"] = None
 
     def __new__(cls) -> "SemanticMemoryRetriever":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._vector_cache: Dict[str, MemoryVectorItem] = {}
+            cls._instance._embedding_lru_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         return cls._instance
 
     def __init__(self) -> None:
-        pass
+        if not hasattr(self, "_embedding_lru_cache"):
+            self._embedding_lru_cache = OrderedDict()
 
     def _get_encoder(self):
         """動態取得本地神經模型陣列編碼器"""
@@ -59,20 +63,33 @@ class SemanticMemoryRetriever:
         return None
 
     def encode_text(self, text: str) -> Optional[np.ndarray]:
-        """將文本轉換為單位歸一化向量"""
+        """將文本轉換為單位歸一化向量，支援有界 LRU 快取"""
         if not text or not text.strip():
             return None
+
+        cache_key = text.strip()
+        if cache_key in self._embedding_lru_cache:
+            self._embedding_lru_cache.move_to_end(cache_key)
+            return self._embedding_lru_cache[cache_key]
+
         encoder = self._get_encoder()
+        emb: Optional[np.ndarray] = None
         if encoder and hasattr(encoder, "encode_text"):
             try:
-                emb = encoder.encode_text(text)
-                if emb is not None:
-                    return emb
+                emb = encoder.encode_text(cache_key)
             except Exception as e:
                 log.warning(f"本地模型向量編碼失敗: {e}")
 
         # 備援：簡易特徵雜湊虛擬向量 (保持計算連續性與防崩潰)
-        return self._fallback_hash_embedding(text)
+        if emb is None:
+            emb = self._fallback_hash_embedding(cache_key)
+
+        if emb is not None:
+            self._embedding_lru_cache[cache_key] = emb
+            if len(self._embedding_lru_cache) > self.MAX_CACHE_SIZE:
+                self._embedding_lru_cache.popitem(last=False)
+
+        return emb
 
     def _fallback_hash_embedding(self, text: str, dim: int = 128) -> np.ndarray:
         """輕量備援向量產生器：以字元 n-gram 進行雜湊映射"""

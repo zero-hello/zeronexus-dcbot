@@ -99,7 +99,7 @@ async def check_for_updates_async() -> Tuple[bool, str, Optional[str]]:
     local_tuple = parse_version(local_ver)
     remote_tuple = parse_version(remote_ver)
 
-    # 嚴格遵循鐵律：只有在 remote > local 時才視為有更新
+    # 版本比對規則：只有在 remote > local 時才判定有新版本更新
     # local >= remote 時不作任何操作
     has_update = remote_tuple > local_tuple
     return has_update, local_ver, remote_ver

@@ -2,6 +2,24 @@
 
 ---
 
+## [2.5.0] - 2026-09-24
+
+### 🛡️ 全專案安全加固、極致效能優化與去 AI 腔調人話重構 (Security Hardening, Performance & Humanization)
+- **全專案人話重構（徹底去除 AI 腔調）**：
+  - 清除所有浮誇、機械感、中二死板的「公理體系」、「憲法級原則」、「至高鐵律」等 AI 味註解與提示詞標籤，全數改寫為道地、專業、自然務實的臺灣工程師技術註解與對話指引。
+  - 全面排查並替換提示詞與核心模組中的大陸用語（如將「代碼」徹底轉換為正統臺灣科技用語「程式碼」）。
+  - 人格提示詞（20 個人格檔案）全面更新為生活化、富有真實溫度的角色對話導引，徹底消除僵化死板的說話套路。
+- **深度安全防禦加固 (Security Hardening)**：
+  - 工具仲裁器（`AutonomousToolArbiter`）導入輸入長度邊界防護（前 1,000 字元截斷）、數學算式上限（<= 120 字元）與 Minecraft 伺服器主機格式校驗，嚴格防範 ReDoS 與注入風險。
+  - 全域例外捕捉與診斷訊息全面包覆 `redact_secrets` 敏感金鑰脫敏機制，確保 API 金鑰、資料庫連線字串永不洩漏。
+- **效能優化與資源治理 (Performance & Memory Optimization)**：
+  - 語意記憶檢索器（`SemanticMemoryRetriever`）引進有界 LRU 向量快取（`BoundedLRUCache`，上限 1,000 筆），避免長時運作導致記憶體膨脹，並顯著加速重覆句向量編碼。
+  - 非同步調度管線全面排查，CPU 密集型運算隔離至執行緒池，杜絕 Event Loop 卡頓。
+- **全套單元測試回歸與健全性保障**：
+  - 新增 `tests/test_v250_hardening.py`，全套 79 項測試 100% 綠燈通過。
+
+---
+
 ## [2.4.0] - 2026-09-24
 
 ### 🧠 ZeroNexus AI 大腦超級進化與架構純粹化 (Super Brain Evolution & Architecture Purification)

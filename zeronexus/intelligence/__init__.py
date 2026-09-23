@@ -2,7 +2,7 @@
 
 核心規範與設計原則：
 - Agent. But More Intelligent.
-- 核心真實性公理：執行時期真實（Runtime Truth）> 模型猜測（Model Guess）；工具觀測結果 > 模型記憶。
+- 客觀真實性原則：執行時期真實（Runtime Truth）> 模型猜測（Model Guess）；工具觀測結果 > 模型記憶。
 - 嚴禁 MODEL_CLAIM -> RUNTIME_TRUTH（模型口頭說做完了不等於真實做完）。
 - 嚴禁 REQUESTED -> COMPLETED（使用者請求不等於已完成）。
 - 絕對隔離保護音樂串流播放組件，不改動現有音樂邏輯。

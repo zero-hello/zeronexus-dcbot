@@ -1,12 +1,12 @@
 """Zero Intelligence 原子動作帳本模組 (Action Ledger Engine).
 
-本模組落實 Zero Intelligence 之兩大核心防偽鐵律：
-1. 嚴禁 MODEL_CLAIM -> RUNTIME_TRUTH（模型口頭說做完了不等於真實做完）。
-2. 嚴禁 REQUESTED -> COMPLETED（使用者請求或代理人意圖直接跳轉已完成）。
+本模組落實動作生命週期管理與結果驗證機制：
+1. 嚴禁 MODEL_CLAIM -> RUNTIME_TRUTH（模型口頭宣稱不等於真實已執行完成）。
+2. 嚴禁 REQUESTED -> COMPLETED（使用者請求或代理人意圖不可直接跳轉已完成）。
 
-狀態機嚴格遵循：
+狀態機遵循標準流程：
 [INTENT] -> [PLANNED] -> [IN_PROGRESS] -> [VERIFIED] -> [SUCCEEDED]
-任何未經工具驗證 (VERIFIED) 的動作，絕對阻斷標記為成功 (SUCCEEDED)！
+任何未經工具驗證 (VERIFIED) 的動作，禁止標記為成功 (SUCCEEDED)！
 同時提供 Discord 狀態分歧防禦 (Discord State Divergence Handling)。
 """
 
@@ -108,7 +108,7 @@ class ActionRecord:
     ) -> None:
         """執行狀態機轉移，並進行嚴格防偽檢驗。
 
-        鐵律檢查：
+        檢查規則：
         1. 嚴禁任何繞過合法流程的狀態躍遷（例如 INTENT -> SUCCEEDED, IN_PROGRESS -> SUCCEEDED）。
         2. 轉移至 VERIFIED 必須提供工具輸出與依據憑證，且真實性等級提升為 OBSERVED。
         3. 轉移至 SUCCEEDED 前置狀態必須已經是 VERIFIED。
@@ -118,7 +118,7 @@ class ActionRecord:
             raise ActionForgeError(
                 f"阻斷非法狀態躍遷：嚴禁從 [{self.state.value}] 直接躍遷至 [{next_state.value}]！"
                 f"（動作 ID: {self.action_id}，名稱: {self.name}）。"
-                f"核心公理：所有成功動作必須經過 [VERIFIED] 工具輸出驗證！"
+                f"判定原則：所有成功動作必須經過工具輸出驗證！"
             )
 
         now = time.time()
@@ -182,8 +182,8 @@ class ActionRecord:
 class ActionLedger:
     """原子動作帳本管理器 (Action Ledger).
 
-    全生命週期追蹤代理人動作，維護真實性公理，
-    嚴格防禦模型幻覺、口頭宣稱、請求即完成之偽造漏洞。
+    負責動作生命週期追蹤與客觀驗證，
+    防範模型幻覺、口頭宣稱、請求即完成之偽造問題。
     """
 
     def __init__(self, session_id: Optional[str] = None) -> None:
@@ -442,7 +442,7 @@ def handle_discord_divergence(
 ) -> dict[str, Any]:
     """比對 Discord 快取事實與實時觀測事實，處理狀態分歧。
 
-    公理原則：執行時期觀測 (OBSERVED) 永遠高於本地快取 (KNOWN/ESTIMATE)。
+    優先級原則：執行時期即時觀測 (OBSERVED) 優先於本地快取 (KNOWN/ESTIMATE)。
     """
     if cached_fact.key != observed_fact.key:
         raise ValueError(f"分歧檢驗之鍵不一致：'{cached_fact.key}' vs '{observed_fact.key}'")

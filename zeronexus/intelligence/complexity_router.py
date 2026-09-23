@@ -6,7 +6,7 @@
 - SIMPLE: 打招呼、閒聊、簡單常識、常規對話 ➔ 0 工具毫秒直出，不浪費算力與假裝思考。
 - MEDIUM: 即時單點查詢（如查油價、天氣、股票、發票） ➔ 單步工具精確命中。
 - COMPLEX: 多步推演（跨時段頻道訊息統整、多維數據統計） ➔ 啟動步驟規劃與驗證。
-- EXTREME: 深度代碼除錯、安全沙盒多步探索 ➔ 啟動完整動作帳本與自適應驗證。
+- EXTREME: 深度程式碼除錯、安全沙盒多步探索 ➔ 啟動完整動作帳本與自適應驗證。
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ _EXTREME_PATTERNS: List[Tuple[str, str]] = [
     (r"(?:python_code_sandbox|代碼沙盒|程式碼沙盒|安全沙盒|沙盒探索|沙盒執行)", "明確請求沙盒環境執行"),
     (r"(?:沙盒|sandbox).*(?:除錯|執行|代碼|程式碼|python|探索|跑|測試)", "沙盒與程式碼結合探索"),
     (r"(?:除錯|debug|修復|排查|找出).*(?:代碼|程式碼|python|程式|腳本|函式|函數|bug|錯誤|例外)", "深度程式碼修復與除錯"),
-    (r"(?:代碼|程式碼|python|腳本|程式).*(?:除錯|debug|修復|報錯|異常|沙盒|bug)", "代碼關聯性除錯診斷"),
+    (r"(?:代碼|程式碼|python|腳本|程式).*(?:除錯|debug|修復|報錯|異常|沙盒|bug)", "程式碼關聯性除錯診斷"),
     (r"(?:traceback|exception|stack\s*trace|零除錯誤|zerodivisionerror|syntaxerror|typeerror|nameerror|indexerror|keyerror)", "包含錯誤堆疊日誌追蹤"),
     (r"(?:記憶體洩漏|memory\s*leak|死結|deadlock|競態條件|race\s*condition|緩衝區溢位)", "並行架構與底層系統除錯"),
     (r"(?:滲透測試|安全漏洞審計|逆向工程|二進位反編譯|動態追蹤)", "高階安全與逆向探索"),

@@ -41,6 +41,11 @@ class AutonomousToolArbiter:
             return results
 
         p = user_prompt.strip().lower()
+        # 安全邊界防禦：輸入截斷前 1000 字元，防範超長輸入引發 CPU 耗盡
+        if len(p) > 1000:
+            p = p[:1000]
+
+        from zeronexus.security.sanitizer import redact_secrets
 
         # 1. 系統診斷意圖 (主機效能、CPU、記憶體、健康狀態)
         if any(k in p for k in ("系統狀態", "主機狀態", "效能診斷", "記憶體用量", "cpu使用率", "主機健康", "運行時間", "uptime")):
@@ -56,7 +61,7 @@ class AutonomousToolArbiter:
                         f"運行時間: {res.get('uptime_formatted')}"
                     )
             except Exception as e:
-                log.warning(f"自主診斷工具執行失敗: {e}")
+                log.warning(f"自主診斷工具執行失敗: {redact_secrets(str(e))}")
 
         # 2. 模組健康巡檢意圖
         if any(k in p for k in ("模組狀態", "模組健康", "所有模組運行")):
@@ -67,7 +72,7 @@ class AutonomousToolArbiter:
                     res = await tool.execute()
                     results["模組健康狀態"] = f"總模組數: {res.get('total_modules')} | 已註冊指令數: {res.get('total_commands_registered')}"
             except Exception as e:
-                log.warning(f"自主模組健康工具執行失敗: {e}")
+                log.warning(f"自主模組健康工具執行失敗: {redact_secrets(str(e))}")
 
         # 3. 台灣即時天氣與氣象觀測意圖
         tw_cities = [
@@ -96,26 +101,30 @@ class AutonomousToolArbiter:
                 else:
                     results["中央氣象署即時觀測"] = f"已針對 {city_name} 啟動氣象資料檢索。"
             except Exception as e:
-                # 即使無 CWA API 金鑰，仍提供確定性城市接地資訊
-                results["中央氣象署即時觀測"] = f"已嘗試調取 {city_name} 即時氣象（連線反饋：{e}）"
+                # 即使無 CWA API 金鑰，仍提供確定性城市接地資訊，且對錯誤訊息進行脫敏
+                safe_err = redact_secrets(str(e))
+                results["中央氣象署即時觀測"] = f"已嘗試調取 {city_name} 即時氣象（連線反饋：{safe_err}）"
 
         # 4. 精確數學運算意圖
-        math_match = re.search(r"(?:計算|算一下|運算|求)\s*([0-9\+\-\*\/\^\(\)\.\s×÷\*\*]+?)(?:\s*(?:等於多少|等於幾|是多少|\=\?|\=|\?|$))", user_prompt)
+        math_match = re.search(r"(?:計算|算一下|運算|求)\s*([0-9\+\-\*\/\^\(\)\.\s×÷\*\*]+?)(?:\s*(?:等於多少|等於幾|是多少|\=\?|\=|\?|$))", user_prompt[:200])
         if math_match and len(math_match.group(1).strip()) > 2:
             raw_expr = math_match.group(1).strip()
-            try:
-                from zeronexus.engines.calculator import calculator
-                calc_res = calculator.evaluate(raw_expr)
-                if not calc_res.is_error and calc_res.result_str:
-                    results["精準數學計算器"] = f"算式: {raw_expr} = {calc_res.result_str}"
-            except Exception as e:
-                log.warning(f"自主計算機工具執行失敗: {e}")
+            # 限制算式長度在 120 字元內，防範惡意巢狀式
+            if len(raw_expr) <= 120:
+                try:
+                    from zeronexus.engines.calculator import calculator
+                    calc_res = calculator.evaluate(raw_expr)
+                    if not calc_res.is_error and calc_res.result_str:
+                        results["精準數學計算器"] = f"算式: {raw_expr} = {calc_res.result_str}"
+                except Exception as e:
+                    log.warning(f"自主計算機工具執行失敗: {redact_secrets(str(e))}")
 
         # 5. Minecraft 伺服器狀態查詢意圖
         mc_match = re.search(r"(?:查詢|看一下)?(?:mc|minecraft|麥塊)[\s]*(?:伺服器)?[\s]*([a-zA-Z0-9\.\-_]+(?:\:[0-9]+)?)", p)
         if mc_match:
             server_host = mc_match.group(1).strip()
-            if "." in server_host and not server_host.startswith("http"):
+            # 嚴格限制主機格式與長度 (最長 100 字元，不可包含路徑符號)
+            if len(server_host) <= 100 and "." in server_host and not server_host.startswith("http") and "/" not in server_host and "\\" not in server_host:
                 try:
                     from zeronexus.engines.minecraft_query import mc_query
                     stat = await mc_query.ping_server(server_host)
@@ -126,7 +135,7 @@ class AutonomousToolArbiter:
                     else:
                         results["Minecraft 伺服器即時資訊"] = f"伺服器 [{server_host}] 目前處於離線狀態。"
                 except Exception as e:
-                    log.warning(f"自主 Minecraft 工具執行失敗: {e}")
+                    log.warning(f"自主 Minecraft 工具執行失敗: {redact_secrets(str(e))}")
 
         return results
 

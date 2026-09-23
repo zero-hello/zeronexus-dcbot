@@ -113,7 +113,7 @@ class ModelSwitchResult:
             elif "deepseek" in mid_low:
                 brand_badge = "💬 DeepSeek 旗艦對話節點"
                 family_emoji = "💬"
-                highlight = "671B 總參數 MoE 架構・頂尖代碼與繁中對話能力"
+                highlight = "671B 總參數 MoE 架構・頂尖程式碼與繁中對話能力"
                 color = ZNColor.PRIMARY
             elif "qwen" in mid_low:
                 brand_badge = "🇨🇳 阿里通義千問頂級繁中架構"
