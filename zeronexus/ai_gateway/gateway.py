@@ -147,45 +147,32 @@ class AIGateway:
                         elif not clean_override.startswith("deepseek/"):
                             clean_override = f"deepseek/{clean_override}"
 
+            configured_fallbacks = getattr(config.ai, "fallback_providers", None) or [
+                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+            ]
+            base_chain = [p for p in configured_fallbacks if p in self.key_pools and self.key_pools[p].has_active_keys]
+            if not base_chain:
+                base_chain = [p for p in configured_fallbacks if p in self.key_pools]
             if not allow_fallback:
                 fallback_chain = [primary]
             else:
-                base_chain = ["gemini", "deepseek", "openrouter"]
-                if self.key_pools["huggingface"].has_active_keys:
-                    base_chain.append("huggingface")
-                if self.key_pools.get("manus") and self.key_pools["manus"].has_active_keys:
-                    base_chain.append("manus")
-                if self.key_pools.get("cohere") and self.key_pools["cohere"].has_active_keys:
-                    base_chain.append("cohere")
-                if self.key_pools.get("groq") and self.key_pools["groq"].has_active_keys:
-                    base_chain.append("groq")
-                if self.key_pools.get("mistral") and self.key_pools["mistral"].has_active_keys:
-                    base_chain.append("mistral")
                 fallback_chain = [primary] + [p for p in base_chain if p != primary]
         elif images:
-            fallback_chain = ["gemini", "openrouter", "deepseek"]
-            if self.key_pools["huggingface"].has_active_keys:
-                fallback_chain.append("huggingface")
-            if self.key_pools.get("manus") and self.key_pools["manus"].has_active_keys:
-                fallback_chain.append("manus")
-            if self.key_pools.get("cohere") and self.key_pools["cohere"].has_active_keys:
-                fallback_chain.append("cohere")
-            if self.key_pools.get("groq") and self.key_pools["groq"].has_active_keys:
-                fallback_chain.append("groq")
-            if self.key_pools.get("mistral") and self.key_pools["mistral"].has_active_keys:
-                fallback_chain.append("mistral")
+            configured_fallbacks = getattr(config.ai, "fallback_providers", None) or [
+                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+            ]
+            base_chain = [p for p in configured_fallbacks if p in self.key_pools and self.key_pools[p].has_active_keys]
+            if not base_chain:
+                base_chain = [p for p in configured_fallbacks if p in self.key_pools]
+            vision_chain = ["gemini", "openrouter"]
+            fallback_chain = [p for p in vision_chain if p in base_chain] + [p for p in base_chain if p not in vision_chain]
         else:
-            fallback_chain = ["gemini", "deepseek", "openrouter"]
-            if self.key_pools["huggingface"].has_active_keys:
-                fallback_chain.append("huggingface")
-            if self.key_pools.get("manus") and self.key_pools["manus"].has_active_keys:
-                fallback_chain.append("manus")
-            if self.key_pools.get("cohere") and self.key_pools["cohere"].has_active_keys:
-                fallback_chain.append("cohere")
-            if self.key_pools.get("groq") and self.key_pools["groq"].has_active_keys:
-                fallback_chain.append("groq")
-            if self.key_pools.get("mistral") and self.key_pools["mistral"].has_active_keys:
-                fallback_chain.append("mistral")
+            configured_fallbacks = getattr(config.ai, "fallback_providers", None) or [
+                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+            ]
+            fallback_chain = [p for p in configured_fallbacks if p in self.key_pools and self.key_pools[p].has_active_keys]
+            if not fallback_chain:
+                fallback_chain = [p for p in configured_fallbacks if p in self.key_pools]
 
         fallback_notice: Optional[str] = None
         attempted_providers: List[str] = []

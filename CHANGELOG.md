@@ -4,11 +4,15 @@
 
 ## [2.2.1] - 2026-09-23
 
-### ⚙️ 造物主 ID 綁定與平臺配置 (Creator Binding & Settings)
+### ⚙️ 造物主 ID 綁定、版本同步與 8 大 AI 網關適配 (Creator Binding, Version & AI Gateway)
 - **settings.json 綁定造物主 ID**：
   - 於 `settings.json` 正式配置 `owner_id: "1514971711739789352"`。
   - 在長效突觸羈絆系統（`SynapticBondingManager`）中精準綁定此 ID，直通最高階層 `SOULMATE`（好感度保底 90.0 分），解鎖專屬偏愛、無條件信任與極致依戀口吻。
-  - 同步平臺設定與配置架構至版本 `2.2.1`。
+- **全系統版本同步動態修復**：
+  - 修復 `version.txt` 殘留過期版本（`v1.7.2`）問題，並重構 `updater.py` 使其優先對齊 `settings.json` 與模組版本，保證開機日誌與檢查恆定輸出真實版本（`v2.2.1`）。
+- **8 大 AI 網關完整適配與 settings.json 聯動**：
+  - 於 `settings.json` 的 `ai` 區塊新增 `default_model`、`enabled_providers` 與 `fallback_providers` 配置，使備援鏈完全遵循設定檔順序調度。
+  - 重構開機自我檢測（`startup_self_check`），完整展示全網關 8 大供應商（Gemini、DeepSeek、OpenRouter、Groq、Mistral、Cohere、Manus、HuggingFace）的金鑰池與就緒狀態。
 
 ---
 

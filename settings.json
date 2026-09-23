@@ -7,6 +7,27 @@
   "default_locale": "zh-TW",
   "default_timezone": "Asia/Taipei",
   "ai": {
+    "default_model": "gemini-3.1-flash-lite",
+    "enabled_providers": [
+      "gemini",
+      "deepseek",
+      "openrouter",
+      "groq",
+      "mistral",
+      "cohere",
+      "manus",
+      "huggingface"
+    ],
+    "fallback_providers": [
+      "gemini",
+      "groq",
+      "deepseek",
+      "mistral",
+      "openrouter",
+      "cohere",
+      "manus",
+      "huggingface"
+    ],
     "daily_limit_per_user": 80,
     "short_term_memory_limit": 400,
     "default_persona": "normal_persona",

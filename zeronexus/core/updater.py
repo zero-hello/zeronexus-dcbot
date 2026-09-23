@@ -37,7 +37,19 @@ def parse_version(version_str: str) -> tuple[int, ...]:
 
 
 def get_local_version() -> str:
-    """讀取本地 version.txt，若不存在預設為 v1.0.0。"""
+    """取得當前本地版本，優先讀取 settings.json 與 zeronexus.__version__，並與 version.txt 同步。"""
+    try:
+        from zeronexus import __version__
+        current_v = f"v{__version__.lstrip('v')}"
+        if not LOCAL_VERSION_FILE.exists() or LOCAL_VERSION_FILE.read_text(encoding="utf-8").strip() != current_v:
+            try:
+                LOCAL_VERSION_FILE.write_text(f"{current_v}\n", encoding="utf-8")
+            except Exception:
+                pass
+        return current_v
+    except Exception:
+        pass
+
     if LOCAL_VERSION_FILE.exists():
         try:
             val = LOCAL_VERSION_FILE.read_text(encoding="utf-8").strip()
@@ -45,7 +57,7 @@ def get_local_version() -> str:
                 return val
         except Exception:
             pass
-    return "v1.0.0"
+    return "v2.2.1"
 
 
 def fetch_remote_version_sync() -> Optional[str]:

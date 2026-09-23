@@ -44,11 +44,19 @@ async def startup_self_check() -> bool:
     db_type = config.database.url.split("://")[0]
     log.info(f"✔ 資料儲存：{db_type.upper()} 引擎就緒")
 
-    # 3. AI 網關與金鑰池
-    gemini_cnt = len(config.ai.gemini_keys)
-    deepseek_cnt = len(config.ai.deepseek_keys)
-    openrouter_cnt = len(config.ai.openrouter_keys)
-    log.info(f"✔ AI 網關：Gemini ({gemini_cnt}) | DeepSeek ({deepseek_cnt}) | OpenRouter ({openrouter_cnt})")
+    # 3. AI 網關與金鑰池 (完整呈現 8 大供應商)
+    gateway_providers = [
+        ("Gemini", len(config.ai.gemini_keys)),
+        ("DeepSeek", len(config.ai.deepseek_keys)),
+        ("OpenRouter", len(config.ai.openrouter_keys)),
+        ("Groq", len(config.ai.groq_keys)),
+        ("Mistral", len(config.ai.mistral_keys)),
+        ("Cohere", len(config.ai.cohere_keys)),
+        ("Manus", len(config.ai.manus_keys)),
+        ("HuggingFace", len(config.ai.huggingface_keys)),
+    ]
+    summary_str = " | ".join([f"{name} ({cnt})" for name, cnt in gateway_providers])
+    log.info(f"✔ AI 網關：{summary_str}")
 
     # 4. 本地生物大腦神經模型矩陣守護與開機自癒
     try:

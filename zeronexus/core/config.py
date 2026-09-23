@@ -182,6 +182,15 @@ class AIProviderConfig:
     groq_keys: List[str] = field(default_factory=list)
     groq_model: str = "qwen/qwen3.8-27b"
 
+    # 全域 AI 網關偏好與備援順序
+    default_model: str = "gemini-3.1-flash-lite"
+    enabled_providers: List[str] = field(default_factory=lambda: [
+        "gemini", "deepseek", "openrouter", "groq", "mistral", "cohere", "manus", "huggingface"
+    ])
+    fallback_providers: List[str] = field(default_factory=lambda: [
+        "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+    ])
+
     daily_limit_per_user: int = 80
     short_term_memory_limit: int = 400
     memory_ttl_seconds: int = 1800
@@ -455,6 +464,12 @@ class Config:
                     self.ai.temperature = _safe_float(ai_settings["temperature"], self.ai.temperature, min_val=0.0, max_val=2.0)
                 if "show_thinking" in ai_settings:
                     self.ai.show_thinking = _safe_bool(ai_settings["show_thinking"], self.ai.show_thinking)
+                if "default_model" in ai_settings:
+                    self.ai.default_model = _safe_str(ai_settings["default_model"], self.ai.default_model)
+                if "enabled_providers" in ai_settings and isinstance(ai_settings["enabled_providers"], list):
+                    self.ai.enabled_providers = [str(p).strip().lower() for p in ai_settings["enabled_providers"] if str(p).strip()]
+                if "fallback_providers" in ai_settings and isinstance(ai_settings["fallback_providers"], list):
+                    self.ai.fallback_providers = [str(p).strip().lower() for p in ai_settings["fallback_providers"] if str(p).strip()]
                 if "gemini_safety_settings" in ai_settings and isinstance(ai_settings["gemini_safety_settings"], dict):
                     self.ai.gemini_safety_settings = {
                         str(k): str(v) for k, v in ai_settings["gemini_safety_settings"].items()
