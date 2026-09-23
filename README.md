@@ -7,11 +7,11 @@
 [![Discord.py 2.5+](https://img.shields.io/badge/Discord.py-2.5%2B-5865F2?logo=discord&logoColor=white)](https://discordpy.readthedocs.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Async%20Event--Driven-blueviolet)](#-系統架構)
 [![AI Gateway](https://img.shields.io/badge/AI%20Gateway-Gemini%20%7C%20DeepSeek%20%7C%20Qwen-FF6F00)](#-三階模型智慧閘道)
-[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Terms of Service](https://img.shields.io/badge/Terms%20of%20Service-TOS-blue)](TERMS_OF_SERVICE.md)
 [![Privacy Policy](https://img.shields.io/badge/Privacy%20Policy-Policy-green)](PRIVACY_POLICY.md)
-[![Changelog](https://img.shields.io/badge/Changelog-v2.2.1-orange)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v2.3.0-orange)](CHANGELOG.md)
 
 ---
 

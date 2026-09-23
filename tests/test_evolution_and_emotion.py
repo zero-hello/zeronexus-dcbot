@@ -31,7 +31,9 @@ from zeronexus.evolution.model_registry import ModelRegistry
 
 def test_001_neutral_to_praise():
     """Test 001: 稱讚激發測試"""
-    engine = EmotionStateEngine(state_file=Path("/tmp/test_emo_001.json"))
+    f = Path("/tmp/test_emo_001.json")
+    f.unlink(missing_ok=True)
+    engine = EmotionStateEngine(state_file=f)
     initial_happiness = engine.state.happiness
 
     evt = EventDetector.detect_event_from_text("ZeroNexus 你真的太厲害了，謝謝你的幫助！")
@@ -43,7 +45,9 @@ def test_001_neutral_to_praise():
 
 def test_002_long_absence_social_need_cap():
     """Test 002: 長時間無互動代謝與社交渴望上限保護"""
-    engine = EmotionStateEngine(state_file=Path("/tmp/test_emo_002.json"))
+    f = Path("/tmp/test_emo_002.json")
+    f.unlink(missing_ok=True)
+    engine = EmotionStateEngine(state_file=f)
     engine.state.social_need = 0.35
     engine.state.last_update_timestamp = time.time() - (86400 * 30)  # 模擬 30 天未互動
 

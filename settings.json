@@ -1,11 +1,17 @@
 {
   "platform_name": "ZeroNexus",
   "codename": "ZN",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "owner_id": "1514971711739789352",
   "default_prefix": "zn!",
   "default_locale": "zh-TW",
   "default_timezone": "Asia/Taipei",
+  "web_panel": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8080,
+    "session_max_age_days": 7
+  },
   "ai": {
     "default_model": "gemini-3.1-flash-lite",
     "enabled_providers": [

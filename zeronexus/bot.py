@@ -51,10 +51,12 @@ from zeronexus.intelligence.deep_thinking_controller import (
 )
 from zeronexus.models.guild import GuildSettings
 from zeronexus.modules import module_manager, register_all_modules
+from zeronexus.security.blacklist import global_blacklist
 from zeronexus.security.ratelimit import quota_service
 from zeronexus.ui.card import ZNCard, ZNResponse
 from zeronexus.ui.responder import InteractionResponder
 from zeronexus.ui.theme import ZNColor, ZNStatusPill
+from zeronexus.web import WebPanelServer
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,7 @@ class ZeroNexusBot(commands.Bot):
         self._in_flight_users: set[int] = set()
         self._last_user_prompts: dict[int, tuple[str, float]] = {}
         self._last_notified_update_version: Optional[str] = None
+        self.web_panel: Optional[WebPanelServer] = None
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -577,6 +580,34 @@ class ZeroNexusBot(commands.Bot):
             except Exception:
                 pass
 
+        # 4.2 Global Blacklist App Command Interceptor
+        @self.tree.interaction_check
+        async def global_tree_interaction_check(interaction: discord.Interaction) -> bool:
+            if global_blacklist.is_banned(interaction.user.id):
+                ban_info = global_blacklist.get_ban_info(interaction.user.id) or {}
+                reason = ban_info.get("reason", "違反系統使用規範")
+                ban_card = ZNCard(
+                    title="🚫 【全域存取限制】已遭到全域封鎖",
+                    subtitle=f"受限制使用者：{interaction.user.display_name}",
+                    description=(
+                        f"**您的帳號已被 ZeroNexus 造物主列入全域封鎖名單。**\n\n"
+                        f"• **封鎖原因**：`{reason}`\n"
+                        f"• **處置狀態**：已終止所有神經網路運算、指令與互動功能。\n\n"
+                        f"👉 若對封鎖處置有任何疑慮，請向 **Zero** 提出申訴。"
+                    ),
+                    status_pill=ZNStatusPill.ERROR,
+                    color=ZNColor.ERROR,
+                )
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(embed=ban_card.to_embed(), ephemeral=True)
+                    else:
+                        await interaction.followup.send(embed=ban_card.to_embed(), ephemeral=True)
+                except Exception:
+                    pass
+                return False
+            return True
+
         # 5. Start Background Scheduler & Jobs
         self._register_scheduled_jobs()
         await scheduler.start()
@@ -584,6 +615,15 @@ class ZeroNexusBot(commands.Bot):
         # 6. Start Presence Rotation Loop
         self.presence_loop.change_interval(seconds=config.platform.presence_rotation_interval)
         self.presence_loop.start()
+
+        # 7. Start Web Panel Server if enabled
+        if config.web_panel.enabled:
+            try:
+                self.web_panel = WebPanelServer(self)
+                await self.web_panel.start()
+                log.info(f"🌐 ZeroNexus Web Panel 已在 http://{config.web_panel.host}:{config.web_panel.port} 啟動！")
+            except Exception as wpe:
+                log.error(f"❌ 啟動 Web Panel 失敗：{wpe}", exc_info=True)
 
     def _register_scheduled_jobs(self) -> None:
         """Registers default platform maintenance and polling tasks."""
@@ -1268,6 +1308,33 @@ class ZeroNexusBot(commands.Bot):
             return
 
         clean_text = (message.content or "").strip()
+
+        # 全域黑名單攔截守門員：若已遭到造物主封鎖，且嘗試輸入機器人前綴指令，立即回傳封鎖紅牌警告卡片
+        if global_blacklist.is_banned(message.author.id):
+            if clean_text.startswith("-") or clean_text.startswith("!zn") or clean_text.startswith("zn!") or clean_text.startswith(config.platform.default_prefix):
+                ban_info = global_blacklist.get_ban_info(message.author.id) or {}
+                reason = ban_info.get("reason", "違反系統使用規範")
+                ban_card = ZNCard(
+                    title="🚫 【全域存取限制】已遭到全域封鎖",
+                    subtitle=f"受限制使用者：{message.author.display_name}",
+                    description=(
+                        f"**您的帳號已被 ZeroNexus 造物主列入全域封鎖名單。**\n\n"
+                        f"• **封鎖原因**：`{reason}`\n"
+                        f"• **處置狀態**：已終止所有神經網路運算、指令與互動功能。\n\n"
+                        f"👉 若對封鎖處置有任何疑慮，請向 **Zero** 提出申訴。"
+                    ),
+                    status_pill=ZNStatusPill.ERROR,
+                    color=ZNColor.ERROR,
+                )
+                try:
+                    await message.reply(embed=ban_card.to_embed(), mention_author=False)
+                except Exception:
+                    try:
+                        await message.channel.send(embed=ban_card.to_embed())
+                    except Exception:
+                        pass
+                return
+
         # 針對純 !zn / zn! 快速規範化為 !zn
         if clean_text in ("!zn", "zn!"):
             message.content = "!zn"
@@ -1305,8 +1372,35 @@ class ZeroNexusBot(commands.Bot):
         channel_override: Optional[discord.abc.Messageable] = None,
     ) -> None:
         """Entry point for AI channel processing with in-flight concurrency tracking."""
+        # 全域黑名單攔截守門員：若已遭到造物主封鎖，立即回傳封鎖紅牌警告卡片並終止所有運算
+        if global_blacklist.is_banned(message.author.id):
+            ban_info = global_blacklist.get_ban_info(message.author.id) or {}
+            reason = ban_info.get("reason", "違反系統使用規範")
+            ban_card = ZNCard(
+                title="🚫 【全域存取限制】已遭到全域封鎖",
+                subtitle=f"受限制使用者：{message.author.display_name}",
+                description=(
+                    f"**您的帳號已被 ZeroNexus 造物主列入全域封鎖名單。**\n\n"
+                    f"• **封鎖原因**：`{reason}`\n"
+                    f"• **處置狀態**：已終止所有神經網路運算、指令與互動功能。\n\n"
+                    f"👉 若對封鎖處置有任何疑慮，請向 **Zero** 提出申訴。"
+                ),
+                status_pill=ZNStatusPill.ERROR,
+                color=ZNColor.ERROR,
+            )
+            target_ch = channel_override or message.channel
+            try:
+                await message.reply(embed=ban_card.to_embed(), mention_author=False)
+            except Exception:
+                try:
+                    await target_ch.send(embed=ban_card.to_embed())
+                except Exception:
+                    pass
+            return
+
         self._in_flight_message_ids.add(message.id)
         self._in_flight_users.add(message.author.id)
+
         try:
             await self._execute_ai_channel_message(
                 message=message,
@@ -2961,6 +3055,13 @@ class ZeroNexusBot(commands.Bot):
             await db.close()
         except Exception as e:
             log.warning(f"Error closing database: {e}")
+
+        if self.web_panel:
+            try:
+                await self.web_panel.stop()
+                log.info("🌐 Web Panel 已優雅關閉。")
+            except Exception as e:
+                log.warning(f"Error stopping Web Panel: {e}")
 
         await super().close()
         log.info("ZeroNexus shutdown complete.")
