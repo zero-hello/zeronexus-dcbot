@@ -162,8 +162,8 @@ class AIProviderConfig:
 
     # 專屬分離模型設定 (可於 .env 中獨立指定)
     normal_text_model: str = "gemini-3.1-flash-lite"
-    normal_vision_model: str = "gemini-2.5-flash"
-    normal_gen_image_model: str = "imagen-3.0-generate-002"
+    normal_vision_model: str = "gemini-3.1-flash-lite"
+    normal_gen_image_model: str = "gemini-2.5-flash-image"
 
     # Manus API 配置
     manus_keys: List[str] = field(default_factory=list)
@@ -362,22 +362,10 @@ class RateLimitConfig:
 
 
 @dataclass
-class WebPanelConfig:
-    enabled: bool = True
-    host: str = "0.0.0.0"
-    port: int = 8080
-    session_max_age_days: int = 7
-    client_id: str = field(default_factory=lambda: os.getenv("DISCORD_CLIENT_ID", "").strip())
-    client_secret: str = field(default_factory=lambda: os.getenv("DISCORD_CLIENT_SECRET", "").strip())
-    redirect_uri: str = field(default_factory=lambda: os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8080/auth/callback").strip())
-    session_secret: str = field(default_factory=lambda: os.getenv("WEB_SESSION_SECRET", "zeronexus_secret_panel_key_2026").strip())
-
-
-@dataclass
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "2.3.0"
+    version: str = "2.3.1"
     owner_id: str = "1514971711739789352"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
@@ -408,7 +396,6 @@ class Config:
         self.external = ExternalAPIConfig()
         self.music = MusicConfig()
         self.platform = PlatformSettings()
-        self.web_panel = WebPanelConfig()
         self.rate_limits = RateLimitConfig()
 
         self._load_settings_json()
@@ -430,7 +417,6 @@ class Config:
         self.external = ExternalAPIConfig()
         self.music = MusicConfig()
         self.platform = PlatformSettings()
-        self.web_panel = WebPanelConfig()
         self.rate_limits = RateLimitConfig()
         self._load_settings_json()
 
@@ -459,17 +445,6 @@ class Config:
                 self.platform.default_locale = _safe_str(data["default_locale"], self.platform.default_locale)
             if "default_timezone" in data:
                 self.platform.default_timezone = _safe_str(data["default_timezone"], self.platform.default_timezone)
-
-            wp_settings = data.get("web_panel")
-            if isinstance(wp_settings, dict):
-                if "enabled" in wp_settings:
-                    self.web_panel.enabled = _safe_bool(wp_settings["enabled"], self.web_panel.enabled)
-                if "host" in wp_settings:
-                    self.web_panel.host = _safe_str(wp_settings["host"], self.web_panel.host)
-                if "port" in wp_settings:
-                    self.web_panel.port = _safe_int(wp_settings["port"], self.web_panel.port, min_val=1, max_val=65535)
-                if "session_max_age_days" in wp_settings:
-                    self.web_panel.session_max_age_days = _safe_int(wp_settings["session_max_age_days"], self.web_panel.session_max_age_days, min_val=1)
 
             ai_settings = data.get("ai")
             if isinstance(ai_settings, dict):

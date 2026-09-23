@@ -2,6 +2,25 @@
 
 ---
 
+## [2.3.1] - 2026-09-24
+
+### 🚀 AI 核心端點全面升級、生圖架構現代化與 Web Panel 解耦 (AI Gateway & Architecture Modernization)
+- **AI 圖像生成端點現代化升級**：
+  - 徹底淘汰舊版易引發 `v1main` 404 錯誤的 OpenAI 相容生圖端點。
+  - **Gemini 原生多模態生圖 (Nano Banana 系列)**：原生對接 Google `generateContent` 端點，帶入 `responseModalities: ["TEXT", "IMAGE"]` 並直接解析 `inlineData` Base64 影像資料。
+  - **Google Imagen 3 原生對接**：原生直連 `models/{model}:predict` 端點，以標準 `instances` 與 `parameters` 傳遞參數。
+  - **生圖模型智慧防呆重定向**：若設定或呼叫時傳入純文字模型（如 `gemini-3.6-flash`），系統自動於前線攔截並安全導向至現役生圖模型 `gemini-2.5-flash-image`，杜絕任何端點報錯。
+  - **增強 OpenRouter 圖片相容解析**：支援解析 OpenRouter 回傳結構中夾帶之各類 Base64 圖片資料。
+- **Gemini 適配器與模型候選池修復**：
+  - **安全性設定修復 (HTTP 400)**：移除不支援設為 `BLOCK_NONE` 之 `HARM_CATEGORY_CIVIC_INTEGRITY` 類別，消解 Google API `INVALID_ARGUMENT` 錯誤。
+  - **退役模型汰換**：自候選清單中移除已被 Google 官方停用之 `gemini-2.5-flash`，全面替換為現役推薦之 `gemini-3.1-flash-lite`、`gemini-2.5-flash-lite` 與 `gemini-flash-latest`。
+- **Web Panel 解耦與精簡**：
+  - 安全移除 Web Panel 相關外掛檔案與設定項，維持純粹 Discord 平台原生極致體驗。
+  - 完整保留並維護全域黑名單安全防護系統（Global Blacklist）與造物主金身保護機制。
+- **全套單元測試 100% 通過**：同步修復所有分離核心模型測試斷言，維持 62 項單元測試完全綠燈。
+
+---
+
 ## [2.3.0] - 2026-09-24
 
 ### 🌐 現代極簡 Web Panel 管理控制面板與造物主全域安全封鎖 (Web Panel & Creator Security)

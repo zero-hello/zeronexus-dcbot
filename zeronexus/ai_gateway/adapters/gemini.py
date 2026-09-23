@@ -145,12 +145,12 @@ class GeminiAdapter(BaseAIAdapter):
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ]
         elif getattr(config.ai, "gemini_safety_settings", None):
             payload["safetySettings"] = [
                 {"category": cat, "threshold": thresh}
                 for cat, thresh in config.ai.gemini_safety_settings.items()
+                if cat != "HARM_CATEGORY_CIVIC_INTEGRITY"
             ]
         else:
             payload["safetySettings"] = [
@@ -158,7 +158,6 @@ class GeminiAdapter(BaseAIAdapter):
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ]
 
         # Format Gemini tools
@@ -180,8 +179,8 @@ class GeminiAdapter(BaseAIAdapter):
 
         primary_model = model or "gemini-3.1-flash-lite"
         # 自動校正已退役之舊版模型名稱至官方現役穩定版
-        if primary_model in ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"):
-            primary_model = "gemini-2.5-flash"
+        if primary_model in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"):
+            primary_model = "gemini-3.1-flash-lite"
 
         if not allow_fallback:
             candidate_models = [primary_model]
@@ -189,7 +188,7 @@ class GeminiAdapter(BaseAIAdapter):
             candidate_models = [primary_model]
             for bm in [
                 "gemini-3.1-flash-lite",
-                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
                 "gemini-3.5-flash-lite",
                 "gemini-flash-latest",
             ]:

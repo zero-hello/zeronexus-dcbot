@@ -316,34 +316,41 @@ class ImageGenEngine:
                 if choices and isinstance(choices, list) and isinstance(choices[0], dict):
                     msg = choices[0].get("message") or {}
                     images = msg.get("images") or []
+                    raw_b64 = None
                     if images and isinstance(images, list):
                         raw_img = images[0]
                         img_url = (raw_img.get("image_url") or {}).get("url") if isinstance(raw_img, dict) else str(raw_img)
                         if img_url:
-                            b64_data = img_url.split(",", 1)[1] if "," in img_url else img_url
-                            try:
-                                img_bytes = base64.b64decode(b64_data)
-                            except Exception:
-                                img_bytes = b""
-                            if img_bytes:
-                                is_valid, detected_mime = self.verify_image_bytes(img_bytes)
-                                mime = detected_mime or "image/png"
-                                width, height = self.ASPECT_RATIOS.get(norm_ratio, (1024, 1024))
-                                log.info(f"Successfully generated image via OpenRouter {target_model} ({len(img_bytes)} bytes).")
-                                return ImageGenResult(
-                                    success=True,
-                                    image_url="attachment://ai_image.png",
-                                    prompt=clean_prompt,
-                                    enhanced_prompt=enhanced_prompt,
-                                    style=norm_style,
-                                    aspect_ratio=norm_ratio,
-                                    model=target_model,
-                                    width=width,
-                                    height=height,
-                                    seed=0,
-                                    image_bytes=img_bytes,
-                                    content_type=mime,
-                                )
+                            raw_b64 = img_url.split(",", 1)[1] if "," in img_url else img_url
+                    elif msg.get("content"):
+                        content_str = str(msg.get("content"))
+                        if "base64," in content_str:
+                            raw_b64 = content_str.split("base64,", 1)[1].split(")", 1)[0].split('"', 1)[0].strip()
+
+                    if raw_b64:
+                        try:
+                            img_bytes = base64.b64decode(raw_b64)
+                        except Exception:
+                            img_bytes = b""
+                        if img_bytes:
+                            is_valid, detected_mime = self.verify_image_bytes(img_bytes)
+                            mime = detected_mime or "image/png"
+                            width, height = self.ASPECT_RATIOS.get(norm_ratio, (1024, 1024))
+                            log.info(f"Successfully generated image via OpenRouter {target_model} ({len(img_bytes)} bytes).")
+                            return ImageGenResult(
+                                success=True,
+                                image_url="attachment://ai_image.png",
+                                prompt=clean_prompt,
+                                enhanced_prompt=enhanced_prompt,
+                                style=norm_style,
+                                aspect_ratio=norm_ratio,
+                                model=target_model,
+                                width=width,
+                                height=height,
+                                seed=0,
+                                image_bytes=img_bytes,
+                                content_type=mime,
+                            )
             err_text = resp.text[:200]
             log.warning(f"OpenRouter image generation HTTP {resp.status_code}: {err_text}")
             return ImageGenResult(
@@ -371,11 +378,21 @@ class ImageGenEngine:
         timeout: float = 45.0,
         model: Optional[str] = None,
     ) -> ImageGenResult:
-        """Generates an image via Google Gemini OpenAI-compatible or OpenRouter endpoint.
+        """Generates an image via official Google Generative Language REST endpoints.
 
-        Returns ImageGenResult with raw image_bytes and content_type.
+        Supports:
+        - Gemini Native Multimodal Image (gemini-2.5-flash-image / gemini-3.1-flash-image) via generateContent
+        - Google Imagen 3 (imagen-3.0-generate-002) via predict
         """
-        chosen_model = model or self.default_image_model
+        raw_model = (model or self.default_image_model).strip()
+        # 移除可能夾帶的第三方前綴 (例如 google/gemini-2.5-flash-image -> gemini-2.5-flash-image)
+        clean_model = raw_model.replace("google/", "").strip()
+
+        # 防呆機制：若被指定純文字模型（如 gemini-3.6-flash, gemini-3.1-flash-lite），自動智慧切換至標準生圖模型
+        if not ("image" in clean_model.lower() or "imagen" in clean_model.lower()):
+            log.warning(f"偵測到非生圖專案模型 '{clean_model}'，自動智慧導向至標準生圖模型 'gemini-2.5-flash-image'")
+            clean_model = "gemini-2.5-flash-image"
+
         api_key = self._get_gemini_api_key()
         if not api_key:
             return await self.generate_openrouter_gemini_image(
@@ -393,83 +410,96 @@ class ImageGenEngine:
             enhanced_prompt = f"{enhanced_prompt}, aspect ratio {norm_ratio}"
 
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "x-goog-api-key": api_key,
             "Content-Type": "application/json",
-        }
-        payload = {
-            "model": chosen_model,
-            "prompt": enhanced_prompt,
-            "response_format": "b64_json",
-            "n": 1,
         }
 
         try:
             client = await self._get_client(timeout=timeout)
-            resp = await client.post(self.GEMINI_OPENAI_IMAGES_URL, headers=headers, json=payload)
-            if resp.status_code == 200:
-                try:
+
+            # 分支 1: Imagen 3 系列原生 predict 端點
+            if "imagen" in clean_model.lower():
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:predict"
+                payload = {
+                    "instances": [{"prompt": enhanced_prompt}],
+                    "parameters": {
+                        "sampleCount": 1,
+                        "aspectRatio": norm_ratio,
+                        "personGeneration": "allow_adult",
+                    },
+                }
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 200:
                     resp_json = resp.json()
-                except Exception:
-                    resp_json = {}
-                data_arr = resp_json.get("data") or []
-                if data_arr and isinstance(data_arr, list) and isinstance(data_arr[0], dict) and "b64_json" in data_arr[0]:
-                    b64_str = data_arr[0]["b64_json"]
-                    revised_p = data_arr[0].get("revised_prompt") or enhanced_prompt
-                    try:
+                    preds = resp_json.get("predictions") or []
+                    if preds and isinstance(preds, list) and "bytesBase64Encoded" in preds[0]:
+                        b64_str = preds[0]["bytesBase64Encoded"]
+                        mime = preds[0].get("mimeType") or "image/jpeg"
                         img_bytes = base64.b64decode(b64_str)
-                    except Exception:
-                        img_bytes = b""
-                    if img_bytes:
-                        is_valid, detected_mime = self.verify_image_bytes(img_bytes)
-                        mime = detected_mime or "image/png"
                         width, height = self.ASPECT_RATIOS.get(norm_ratio, (1024, 1024))
-                        log.info(
-                            f"Successfully generated image via Gemini {chosen_model} "
-                            f"({len(img_bytes)} bytes)."
-                        )
                         return ImageGenResult(
                             success=True,
                             image_url="attachment://ai_image.png",
                             prompt=clean_prompt,
-                            enhanced_prompt=revised_p,
+                            enhanced_prompt=enhanced_prompt,
                             style=norm_style,
                             aspect_ratio=norm_ratio,
-                            model=chosen_model,
+                            model=clean_model,
                             width=width,
                             height=height,
                             seed=0,
                             image_bytes=img_bytes,
                             content_type=mime,
                         )
-                return ImageGenResult(
-                    success=False,
-                    image_url="",
-                    prompt=clean_prompt,
-                    enhanced_prompt=enhanced_prompt,
-                    model=self.DEFAULT_GEMINI_IMAGE_MODEL,
-                    error_message="Gemini API 回傳資料中未包含影像資料",
-                )
             else:
-                err_snippet = resp.text[:200]
-                log.warning(f"Google AI Studio image generation HTTP {resp.status_code}: {err_snippet}. Falling back to OpenRouter Gemini 2.5 Flash Image...")
-                or_res = await self.generate_openrouter_gemini_image(
-                    prompt=prompt,
-                    style=style,
-                    aspect_ratio=aspect_ratio,
-                    timeout=timeout,
-                )
-                if or_res.success:
-                    return or_res
-                return ImageGenResult(
-                    success=False,
-                    image_url="",
-                    prompt=clean_prompt,
-                    enhanced_prompt=enhanced_prompt,
-                    model=self.DEFAULT_GEMINI_IMAGE_MODEL,
-                    error_message=f"Gemini API 回應異常 (HTTP {resp.status_code}): {err_snippet} / OpenRouter: {or_res.error_message}",
-                )
-        except Exception as e:
-            log.warning(f"Google AI Studio image generation exception: {e}. Falling back to OpenRouter Gemini 2.5 Flash Image...")
+                # 分支 2: Gemini Native 多模態生圖 (gemini-2.5-flash-image) 原生 generateContent 端點
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
+                payload = {
+                    "contents": [{
+                        "parts": [{"text": enhanced_prompt}]
+                    }],
+                    "generationConfig": {
+                        "responseModalities": ["TEXT", "IMAGE"]
+                    },
+                    "safetySettings": [
+                        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                    ]
+                }
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    resp_json = resp.json()
+                    candidates = resp_json.get("candidates") or []
+                    if candidates and isinstance(candidates, list):
+                        parts = (candidates[0].get("content") or {}).get("parts") or []
+                        for part in parts:
+                            inline = part.get("inlineData") or part.get("inline_data")
+                            if inline and isinstance(inline, dict):
+                                b64_str = inline.get("data", "")
+                                mime = inline.get("mimeType") or inline.get("mime_type") or "image/png"
+                                if b64_str:
+                                    img_bytes = base64.b64decode(b64_str)
+                                    width, height = self.ASPECT_RATIOS.get(norm_ratio, (1024, 1024))
+                                    return ImageGenResult(
+                                        success=True,
+                                        image_url="attachment://ai_image.png",
+                                        prompt=clean_prompt,
+                                        enhanced_prompt=enhanced_prompt,
+                                        style=norm_style,
+                                        aspect_ratio=norm_ratio,
+                                        model=clean_model,
+                                        width=width,
+                                        height=height,
+                                        seed=0,
+                                        image_bytes=img_bytes,
+                                        content_type=mime,
+                                    )
+
+            # 若 Google 原生呼叫失敗，嘗試回退至 OpenRouter
+            err_snippet = resp.text[:200] if 'resp' in locals() else "No response"
+            log.warning(f"Google AI Studio image generation failed ({err_snippet}). Falling back to OpenRouter...")
             or_res = await self.generate_openrouter_gemini_image(
                 prompt=prompt,
                 style=style,
@@ -483,8 +513,26 @@ class ImageGenEngine:
                 image_url="",
                 prompt=clean_prompt,
                 enhanced_prompt=enhanced_prompt,
-                model=self.DEFAULT_GEMINI_IMAGE_MODEL,
-                error_message=f"Gemini 影像生成遭遇未預期錯誤: {e}",
+                model=clean_model,
+                error_message=f"Gemini 官方原生生圖異常: {err_snippet} / OpenRouter 備援: {or_res.error_message}",
+            )
+        except Exception as e:
+            log.warning(f"Google AI Studio image generation exception: {e}. Falling back to OpenRouter...")
+            or_res = await self.generate_openrouter_gemini_image(
+                prompt=prompt,
+                style=style,
+                aspect_ratio=aspect_ratio,
+                timeout=timeout,
+            )
+            if or_res.success:
+                return or_res
+            return ImageGenResult(
+                success=False,
+                image_url="",
+                prompt=clean_prompt,
+                enhanced_prompt=enhanced_prompt,
+                model=clean_model,
+                error_message=f"Gemini 異常 ({e}) / OpenRouter: {or_res.error_message}",
             )
 
     async def generate_image(

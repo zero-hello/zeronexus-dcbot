@@ -440,7 +440,7 @@ class AIGateway:
 
     def _get_default_model(self, provider: str, has_images: bool = False) -> str:
         if provider == "gemini":
-            return getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if has_images else getattr(config.ai, "normal_text_model", config.ai.gemini_model)
+            return getattr(config.ai, "normal_vision_model", "gemini-3.1-flash-lite") if has_images else getattr(config.ai, "normal_text_model", config.ai.gemini_model)
         if provider == "manus":
             return getattr(config.ai, "manus_model", "manus")
         if provider == "cohere":

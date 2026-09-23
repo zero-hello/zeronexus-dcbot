@@ -56,7 +56,6 @@ from zeronexus.security.ratelimit import quota_service
 from zeronexus.ui.card import ZNCard, ZNResponse
 from zeronexus.ui.responder import InteractionResponder
 from zeronexus.ui.theme import ZNColor, ZNStatusPill
-from zeronexus.web import WebPanelServer
 
 
 @dataclass(frozen=True)
@@ -116,7 +115,6 @@ class ZeroNexusBot(commands.Bot):
         self._in_flight_users: set[int] = set()
         self._last_user_prompts: dict[int, tuple[str, float]] = {}
         self._last_notified_update_version: Optional[str] = None
-        self.web_panel: Optional[WebPanelServer] = None
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -615,15 +613,6 @@ class ZeroNexusBot(commands.Bot):
         # 6. Start Presence Rotation Loop
         self.presence_loop.change_interval(seconds=config.platform.presence_rotation_interval)
         self.presence_loop.start()
-
-        # 7. Start Web Panel Server if enabled
-        if config.web_panel.enabled:
-            try:
-                self.web_panel = WebPanelServer(self)
-                await self.web_panel.start()
-                log.info(f"🌐 ZeroNexus Web Panel 已在 http://{config.web_panel.host}:{config.web_panel.port} 啟動！")
-            except Exception as wpe:
-                log.error(f"❌ 啟動 Web Panel 失敗：{wpe}", exc_info=True)
 
     def _register_scheduled_jobs(self) -> None:
         """Registers default platform maintenance and polling tasks."""
@@ -3055,13 +3044,6 @@ class ZeroNexusBot(commands.Bot):
             await db.close()
         except Exception as e:
             log.warning(f"Error closing database: {e}")
-
-        if self.web_panel:
-            try:
-                await self.web_panel.stop()
-                log.info("🌐 Web Panel 已優雅關閉。")
-            except Exception as e:
-                log.warning(f"Error stopping Web Panel: {e}")
 
         await super().close()
         log.info("ZeroNexus shutdown complete.")
