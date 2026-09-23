@@ -17,10 +17,17 @@ def test_user_bond_profile_tier_and_affinity(tmp_path):
     assert p_normal.affinity_score == 20.0
     assert p_normal.tier == "STRANGER"
 
-    # 2. 核心造物主 Zero 預設分數 90.0 -> SOULMATE
+    # 2. 核心造物主 Zero 與綁定 ID 1514971711739789352 預設分數 90.0 -> SOULMATE
     p_zero = mgr.get_profile(user_id="zero_dev", user_name="Zero")
     assert p_zero.affinity_score == 90.0
     assert p_zero.tier == "SOULMATE"
+
+    p_owner = mgr.get_profile(user_id="1514971711739789352", user_name="MyOwner")
+    assert p_owner.affinity_score == 90.0
+    assert p_owner.tier == "SOULMATE"
+    prompt_owner = mgr.render_bond_prompt("1514971711739789352", "MyOwner")
+    assert "settings.json" in prompt_owner
+    assert "靈魂羈絆" in prompt_owner
 
     # 3. 階層晉級測試
     # FRIEND (30 ~ 60)

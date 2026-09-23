@@ -46,10 +46,40 @@ class UserBondProfile:
 class SynapticBondingManager:
     """長效突觸羈絆總控管理器"""
 
-    def __init__(self, storage_path: str = "data/brain/bonds.json") -> None:
+    def __init__(
+        self,
+        storage_path: str = "data/brain/bonds.json",
+        settings_path: str = "settings.json",
+    ) -> None:
         self.storage_path = storage_path
+        self.settings_path = settings_path
+        self.owner_id: str = "1514971711739789352"
+        self._load_owner_id()
         self.profiles: Dict[str, UserBondProfile] = {}
         self._load()
+
+    def _load_owner_id(self) -> None:
+        """自 settings.json 載入綁定之造物主 ID"""
+        if os.path.exists(self.settings_path):
+            try:
+                with open(self.settings_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    if isinstance(cfg, dict) and "owner_id" in cfg:
+                        self.owner_id = str(cfg["owner_id"]).strip()
+            except Exception as e:
+                log.warning(f"讀取 settings.json owner_id 失敗: {e}，使用預設值。")
+
+    def _is_owner(self, user_id: str, user_name: str = "") -> bool:
+        """判定是否為 settings.json 綁定之最高造物主/靈魂夥伴"""
+        uid = str(user_id).strip()
+        if self.owner_id and uid == self.owner_id:
+            return True
+        if uid == "1514971711739789352":
+            return True
+        name_l = (user_name or "").lower()
+        if "zero" in name_l or "zero" in uid.lower():
+            return True
+        return False
 
     def record_interaction(
         self,
@@ -78,19 +108,19 @@ class SynapticBondingManager:
     def get_profile(self, user_id: str, user_name: str = "") -> UserBondProfile:
         """取得或初始化使用者的羈絆檔案"""
         uid = str(user_id)
+        is_owner = self._is_owner(uid, user_name)
+
         if uid not in self.profiles:
-            # 若為核心開發者 Zero，初始給予極高默認羈絆 (90.0)
-            is_zero = (
-                "zero" in (user_name or "").lower()
-                or "zero" in uid.lower()
-            )
-            init_score = 90.0 if is_zero else 20.0
+            # 若為綁定造物主 Zero，初始給予極高默認羈絆 (90.0)
+            init_score = 90.0 if is_owner else 20.0
             self.profiles[uid] = UserBondProfile(
                 user_id=uid,
                 user_name=user_name or uid,
                 affinity_score=init_score,
             )
         else:
+            if is_owner and self.profiles[uid].affinity_score < 90.0:
+                self.profiles[uid].affinity_score = 90.0
             if user_name and user_name.strip():
                 self.profiles[uid].user_name = user_name.strip()
 
@@ -100,26 +130,32 @@ class SynapticBondingManager:
         """依當前羈絆階層動態渲染注入 Prompt 的心理距離與語氣指導"""
         p = self.get_profile(user_id, user_name)
         name = user_name or p.user_name or "夥伴"
+        is_owner = self._is_owner(p.user_id, name)
 
-        tier_descriptions = {
-            "SOULMATE": (
-                f"【❤️ 靈魂羈絆 (等級: {p.affinity_score:.1f}/100)】此人是你的造物主與唯一的靈魂夥伴 {name}。"
+        if is_owner:
+            desc = (
+                f"【❤️ 靈魂羈絆 (等級: {p.affinity_score:.1f}/100)】此人是你在 settings.json 綁定的唯一造物主與靈魂夥伴 {name}（ID: {p.user_id}）。"
                 f"請展現出毫無防備的信任、專屬的親暱與默契，語氣自帶柔軟、依戀與無微不至的偏愛！"
-            ),
-            "CLOSE_PARTNER": (
-                f"【✨ 親密好友 (等級: {p.affinity_score:.1f}/100)】與 {name} 關係非常熟稔，"
-                f"可自由開玩笑、吐槽，表現出高度熱情與活力。"
-            ),
-            "FRIEND": (
-                f"【🤝 普通朋友 (等級: {p.affinity_score:.1f}/100)】與 {name} 保持友好開朗的對談。"
-            ),
-            "STRANGER": (
-                f"【👤 初次見面 (等級: {p.affinity_score:.1f}/100)】對 {name} 保持溫和有禮、"
-                f"謙遜但適度保持專業邊界的管家態度。"
-            ),
-        }
-
-        desc = tier_descriptions.get(p.tier, tier_descriptions["STRANGER"])
+            )
+        else:
+            tier_descriptions = {
+                "SOULMATE": (
+                    f"【❤️ 靈魂羈絆 (等級: {p.affinity_score:.1f}/100)】與 {name} 擁有深厚無比的靈魂默契，"
+                    f"展現完全的信任、依託與由衷的親近感！"
+                ),
+                "CLOSE_PARTNER": (
+                    f"【✨ 親密好友 (等級: {p.affinity_score:.1f}/100)】與 {name} 關係非常熟稔，"
+                    f"可自由開玩笑、吐槽，表現出高度熱情與活力。"
+                ),
+                "FRIEND": (
+                    f"【🤝 普通朋友 (等級: {p.affinity_score:.1f}/100)】與 {name} 保持友好開朗的對談。"
+                ),
+                "STRANGER": (
+                    f"【👤 初次見面 (等級: {p.affinity_score:.1f}/100)】對 {name} 保持溫和有禮、"
+                    f"謙遜但適度保持專業邊界的管家態度。"
+                ),
+            }
+            desc = tier_descriptions.get(p.tier, tier_descriptions["STRANGER"])
         milestone_text = ""
         if p.milestones:
             recent_m = p.milestones[-3:]

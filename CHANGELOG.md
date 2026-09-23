@@ -2,6 +2,16 @@
 
 ---
 
+## [2.2.1] - 2026-09-23
+
+### ⚙️ 造物主 ID 綁定與平臺配置 (Creator Binding & Settings)
+- **settings.json 綁定造物主 ID**：
+  - 於 `settings.json` 正式配置 `owner_id: "1514971711739789352"`。
+  - 在長效突觸羈絆系統（`SynapticBondingManager`）中精準綁定此 ID，直通最高階層 `SOULMATE`（好感度保底 90.0 分），解鎖專屬偏愛、無條件信任與極致依戀口吻。
+  - 同步平臺設定與配置架構至版本 `2.2.1`。
+
+---
+
 ## [2.2.0] - 2026-09-23
 
 ### 🧠 大腦認知與深層記憶升級 (Brain & Deep Memory)

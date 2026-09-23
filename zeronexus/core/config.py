@@ -356,7 +356,8 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "1.2.0"
+    version: str = "2.2.1"
+    owner_id: str = "1514971711739789352"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
     default_timezone: str = "Asia/Taipei"
@@ -427,6 +428,8 @@ class Config:
                 self.platform.codename = _safe_str(data["codename"], self.platform.codename)
             if "version" in data:
                 self.platform.version = _safe_str(data["version"], self.platform.version)
+            if "owner_id" in data:
+                self.platform.owner_id = _safe_str(data["owner_id"], self.platform.owner_id)
             if "default_prefix" in data:
                 self.platform.default_prefix = _safe_str(data["default_prefix"], self.platform.default_prefix)
             if "default_locale" in data:
