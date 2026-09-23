@@ -266,6 +266,51 @@ class MCTSThoughtSearchEngine:
             curr.total_value += reward
             curr = curr.parent
 
+    def is_high_complexity_problem(self, problem: str) -> bool:
+        """判定問題是否具備深層邏輯推導、因果分析或多步驟規劃需求。"""
+        if not problem or len(problem.strip()) < 6:
+            return False
+        import re
+        patterns = [
+            r"(?:為什麼|為何|怎會|原因是什麼|背後機理|原理是什麼)",
+            r"(?:比較|差異|優缺點|分析|評估|利弊|權衡|Trade-off)",
+            r"(?:證明|推導|論證|反證|邏輯|是否矛盾|假說)",
+            r"(?:步驟|架構|如何設計|解決方案|最佳實踐|演算法|實作方案)",
+            r"(?:計算|微積分|機率|統計|矩陣|演算法複雜度)",
+            r"(?:如果.+那麼.+會怎樣|假使.+結果如何)",
+            r"(?:除錯|為什麼報錯|定位問題|死鎖|Race Condition|記憶體洩漏)",
+        ]
+        return any(re.search(p, problem, re.IGNORECASE) for p in patterns)
+
+    def generate_deliberation_skeleton(
+        self,
+        problem: str,
+        context_facts: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        """
+        針對複雜命題自動執行蒙地卡羅思維樹推導，產出高品質的認知引導骨架。
+        若為日常寒暄或簡短問候則返回 None，避免過度工程。
+        """
+        if not self.is_high_complexity_problem(problem):
+            return None
+
+        path, confidence = self.search_optimal_reasoning_path(problem, context_facts)
+        if not path:
+            return None
+
+        lines = [
+            "【ZeroNexus 認知中樞蒙地卡羅思維推導導引 (MCTS Reasoning Skeleton)】：",
+            f"- 核心命題探勘置信度：`{confidence * 100:.1f}%`",
+        ]
+        for step in path:
+            desc = step.get("description", "")
+            action = step.get("action", "")
+            coherence = step.get("coherence", 0.0)
+            lines.append(f"  • [步驟 {step.get('step')}] ({action})：{desc}（邏輯自洽度：{coherence * 100:.0f}%）")
+
+        lines.append("- 推導要求：請依據上述思維路徑展開論證，著重先驗因果檢驗、多維反思排查與清晰結論輸出。")
+        return "\n".join(lines)
+
 
 # 全域單例思維搜尋引擎
 thought_search_engine = MCTSThoughtSearchEngine()

@@ -293,6 +293,22 @@ class HierarchicalNeuralArray:
         except Exception:
             return None
 
+    def encode_text(self, text: str) -> Optional[np.ndarray]:
+        """公開通用文字向量編碼介面（優先中文 BGE，備援 MiniLM-L6）"""
+        if not text or not text.strip():
+            return None
+        # 1. 優先中文 BGE 模型
+        if self.bge_session and self.bge_tokenizer:
+            emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, text)
+            if emb is not None:
+                return emb
+        # 2. 備援通用概念 MiniLM-L6
+        if self.l6_session and self.l6_tokenizer:
+            emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, text)
+            if emb is not None:
+                return emb
+        return None
+
     def _precompute_bge_prototypes(self) -> None:
         prototypes = {
             "喜悅": "太棒了太開心，好幸福好感動，真的很感謝你！",

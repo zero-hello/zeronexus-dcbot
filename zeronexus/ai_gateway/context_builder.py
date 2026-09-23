@@ -451,25 +451,22 @@ class ContextBuilder:
         channel_id: int,
         limit: int = 15,
         ttl_seconds: Optional[int] = None,
-        is_secret_easter_egg: bool = False,
     ) -> List[Dict[str, str]]:
         """Retrieves recent group conversation history from an AI-designated channel with TTL & session cutoff."""
         ttl = ttl_seconds if ttl_seconds is not None else config.ai.memory_ttl_seconds
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=ttl)
-        target_scope = "secret_short_term" if is_secret_easter_egg else "channel_shared"
-        effective_limit = min(limit, 500) if is_secret_easter_egg else limit
 
         async with db.session() as session:
             stmt = (
                 select(ConversationMemory)
                 .where(
-                    ConversationMemory.scope == target_scope,
+                    ConversationMemory.scope == "channel_shared",
                     ConversationMemory.channel_id == channel_id,
                     ConversationMemory.created_at >= cutoff,
                 )
                 .order_by(desc(ConversationMemory.created_at))
-                .limit(effective_limit)
+                .limit(limit)
             )
             result = await session.execute(stmt)
             raw_records = list(result.scalars().all())
@@ -513,25 +510,22 @@ class ContextBuilder:
         user_id: int,
         limit: int = 20,
         ttl_seconds: Optional[int] = None,
-        is_secret_easter_egg: bool = False,
     ) -> List[Dict[str, str]]:
         """Retrieves rolling conversational turns for an individual user with TTL & session cutoff."""
         ttl = ttl_seconds if ttl_seconds is not None else config.ai.memory_ttl_seconds
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=ttl)
-        target_scope = "secret_short_term" if is_secret_easter_egg else "user_short_term"
-        effective_limit = min(limit, 500) if is_secret_easter_egg else limit
 
         async with db.session() as session:
             stmt = (
                 select(ConversationMemory)
                 .where(
-                    ConversationMemory.scope == target_scope,
+                    ConversationMemory.scope == "user_short_term",
                     ConversationMemory.user_id == user_id,
                     ConversationMemory.created_at >= cutoff,
                 )
                 .order_by(desc(ConversationMemory.created_at))
-                .limit(effective_limit)
+                .limit(limit)
             )
             result = await session.execute(stmt)
             raw_records = list(result.scalars().all())
@@ -543,22 +537,43 @@ class ContextBuilder:
     async def fetch_user_long_term_facts(
         self,
         user_id: int,
-        is_secret_easter_egg: bool = False,
+        query: Optional[str] = None,
     ) -> List[str]:
-        """Retrieves extracted long-term memories and personal preferences."""
-        target_scope = "secret_long_term" if is_secret_easter_egg else "user_long_term"
+        """Retrieves extracted long-term memories and personal preferences with optional semantic ranking."""
         async with db.session() as session:
             stmt = (
                 select(ConversationMemory)
                 .where(
-                    ConversationMemory.scope == target_scope,
+                    ConversationMemory.scope == "user_long_term",
                     ConversationMemory.user_id == user_id,
                 )
                 .order_by(ConversationMemory.created_at)
-                .limit(500 if is_secret_easter_egg else 50)
+                .limit(50)
             )
             result = await session.execute(stmt)
             records = result.scalars().all()
+            if not records:
+                return []
+
+            # 若提供查詢詞，透過本地語意向量檢索器進行多維度重排
+            if query and query.strip():
+                try:
+                    from zeronexus.brain.semantic_memory import semantic_memory_retriever
+                    cand_items = [
+                        {
+                            "record": r,
+                            "content": f"{r.fact_key or ''} {r.content}".strip(),
+                            "created_at": r.created_at,
+                            "importance": 2.5,
+                            "emotion_tag": "平靜",
+                        }
+                        for r in records
+                    ]
+                    ranked = semantic_memory_retriever.rank_memories(query, cand_items, top_k=len(cand_items))
+                    records = [item["record"] for item, _ in ranked]
+                except Exception as rank_err:
+                    log.warning(f"長期事實語意向量重排失敗: {rank_err}")
+
             facts: List[str] = []
             for r in records:
                 if r.fact_key and r.fact_key != r.content:
@@ -576,7 +591,6 @@ class ContextBuilder:
         assistant_content: str,
         is_shared_ai_channel: bool = False,
         save_short_term: bool = True,
-        is_secret_easter_egg: bool = False,
     ) -> None:
         """Persists short-term chat logs and automatically extracts worthy long-term memories."""
         channel_id = getattr(channel, "id", 0)
@@ -584,125 +598,6 @@ class ContextBuilder:
 
         clean_user_text = _clean_stored_turn(user_content, "user")
         clean_assistant_text = _clean_stored_turn(assistant_content, "assistant")
-
-        if is_secret_easter_egg:
-            async with db.session() as session:
-                # 1. Save to secret_short_term
-                if save_short_term:
-                    session.add(ConversationMemory(
-                        scope="secret_short_term",
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user.id,
-                        role="user",
-                        speaker_name=user.display_name,
-                        content=clean_user_text,
-                    ))
-                    session.add(ConversationMemory(
-                        scope="secret_short_term",
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user.id,
-                        role="assistant",
-                        speaker_name="ZeroNexus",
-                        content=clean_assistant_text,
-                    ))
-
-                # Enforce rolling window of up to 500 messages
-                st_count_stmt = select(func.count()).select_from(ConversationMemory).where(
-                    ConversationMemory.scope == "secret_short_term",
-                    ConversationMemory.user_id == user.id,
-                )
-                st_count = await session.scalar(st_count_stmt) or 0
-                if st_count > 500:
-                    excess = st_count - 500
-                    old_subq = (
-                        select(ConversationMemory.id)
-                        .where(
-                            ConversationMemory.scope == "secret_short_term",
-                            ConversationMemory.user_id == user.id,
-                        )
-                        .order_by(ConversationMemory.created_at)
-                        .limit(excess)
-                    )
-                    old_ids = (await session.execute(old_subq)).scalars().all()
-                    if old_ids:
-                        await session.execute(
-                            delete(ConversationMemory).where(ConversationMemory.id.in_(old_ids))
-                        )
-
-                # 2. Secret Long-Term Memory Extraction
-                tag_matches = re.finditer(
-                    r"\[(?:REMEMBER|MEMORIZE):\s*([^=\]:\r\n]+?)(?:(?:\s*[=:]\s*)([^\]\r\n]+))?\]",
-                    assistant_content,
-                    re.IGNORECASE,
-                )
-                for m in tag_matches:
-                    k_part = m.group(1).strip()
-                    v_part = m.group(2).strip() if m.group(2) else None
-                    if v_part is not None and v_part != "":
-                        key_clean = re.sub(r"[\r\n\t]+", " ", k_part).strip()[:64]
-                        val_clean = v_part[:1000].strip()
-                    else:
-                        key_clean = None
-                        val_clean = k_part[:1000].strip()
-
-                    if not val_clean:
-                        continue
-
-                    if key_clean:
-                        existing_stmt = select(ConversationMemory).where(
-                            ConversationMemory.scope == "secret_long_term",
-                            ConversationMemory.user_id == user.id,
-                            ConversationMemory.fact_key == key_clean,
-                        )
-                        existing_res = await session.execute(existing_stmt)
-                        existing = existing_res.scalars().first()
-                        if existing:
-                            existing.content = val_clean
-                            existing.created_at = datetime.now(timezone.utc)
-                            continue
-                    else:
-                        existing_stmt = select(ConversationMemory).where(
-                            ConversationMemory.scope == "secret_long_term",
-                            ConversationMemory.user_id == user.id,
-                            ConversationMemory.content == val_clean,
-                        )
-                        existing_res = await session.execute(existing_stmt)
-                        existing = existing_res.scalars().first()
-                        if existing:
-                            existing.created_at = datetime.now(timezone.utc)
-                            continue
-
-                    count_stmt = select(func.count()).select_from(ConversationMemory).where(
-                        ConversationMemory.scope == "secret_long_term",
-                        ConversationMemory.user_id == user.id,
-                    )
-                    fact_count = await session.scalar(count_stmt) or 0
-                    if fact_count >= 500:
-                        oldest_stmt = (
-                            select(ConversationMemory)
-                            .where(
-                                ConversationMemory.scope == "secret_long_term",
-                                ConversationMemory.user_id == user.id,
-                            )
-                            .order_by(ConversationMemory.created_at)
-                            .limit(1)
-                        )
-                        oldest = (await session.execute(oldest_stmt)).scalars().first()
-                        if oldest:
-                            await session.delete(oldest)
-
-                    session.add(ConversationMemory(
-                        scope="secret_long_term",
-                        guild_id=guild_id,
-                        channel_id=channel_id,
-                        user_id=user.id,
-                        role="system",
-                        fact_key=key_clean,
-                        content=val_clean,
-                    ))
-            return
 
         async with db.session() as session:
             # 1. Save user short-term turn if requested
@@ -968,7 +863,6 @@ class ContextBuilder:
         max_history_tokens: int = 4000,
         include_short_term_history: bool = True,
         custom_persona_instructions: Optional[str] = None,
-        is_secret_easter_egg: bool = False,
     ) -> List[Dict[str, str]]:
         """Constructs unified multi-turn conversation payload for AI Gateway with token budgeting & user identity."""
         messages: List[Dict[str, str]] = []
@@ -986,16 +880,12 @@ class ContextBuilder:
             f"- 溝通頻道：#{channel_name} (ID: {channel_id})",
             f"- 使用者身分級別：{'🛠️ 平台核心開發者 (Developer - 無額度限制)' if is_dev else '一般成員 (Standard User)'}",
         ]
-        if is_secret_easter_egg:
-            identity_lines.append("- 特殊模式：✨ 絕密彩蛋領域 (完全私密獨立、500 句專屬記憶)")
-
         messages.append({
             "role": "system",
             "content": "【使用者身分與環境上下文 (User Identity & Runtime Context)】：\n" + "\n".join(identity_lines),
         })
 
         # 1.5. Dynamic Capabilities & Runtime Ground-Truth Injection
-        # 智慧判斷：若使用者僅為簡短日常問候打招呼，給予自然寒暄提示，避免塞入過長能力清單干擾小型模型
         is_simple_greeting = any(
             user_prompt.strip().lower() == g
             for g in ["哈囉", "嗨", "安安", "你好", "您好", "早安", "午安", "晚安", "在嗎", "hello", "hi", "hey", "yo"]
@@ -1018,29 +908,24 @@ class ContextBuilder:
 
         # 2 & 3. Concurrently fetch long-term facts and conversation history
         channel_id = getattr(channel, "id", 0)
-        default_limit = 500 if is_secret_easter_egg else (15 if is_shared_ai_channel else 20)
+        default_limit = 15 if is_shared_ai_channel else 20
         fetch_limit = max_history_turns if max_history_turns is not None else default_limit
-        effective_max_tokens = 100000 if is_secret_easter_egg else max_history_tokens
 
         async def _fetch_history() -> List[Dict[str, str]]:
             if not include_short_term_history:
                 return []
-            if is_secret_easter_egg:
-                return await self.fetch_user_short_term_context(
-                    user.id, limit=fetch_limit, is_secret_easter_egg=True
-                )
-            elif is_shared_ai_channel:
+            if is_shared_ai_channel:
                 return await self.fetch_channel_shared_context(channel_id, limit=fetch_limit)
             else:
                 return await self.fetch_user_short_term_context(user.id, limit=fetch_limit)
 
         long_term_facts, history_msgs = await asyncio.gather(
-            self.fetch_user_long_term_facts(user.id, is_secret_easter_egg=is_secret_easter_egg),
+            self.fetch_user_long_term_facts(user.id, query=user_prompt),
             _fetch_history(),
         )
 
         if long_term_facts:
-            facts_budget = 40000 if is_secret_easter_egg else 2000
+            facts_budget = 2000
             cur_tokens = 0
             selected_facts = []
             # 優先保留最新事實，避免長期記憶無節制膨脹撐爆 Context Window
@@ -1065,7 +950,7 @@ class ContextBuilder:
                     hm["content"] = c[:2000] + "\n...[過長歷史對話已安全截斷]...\n" + c[-1000:]
 
             # 智慧歷史預算截斷：持續彈出最舊對話回合直至符合 token 預算上限
-            while history_msgs and estimate_messages_tokens(history_msgs) > effective_max_tokens:
+            while history_msgs and estimate_messages_tokens(history_msgs) > max_history_tokens:
                 history_msgs.pop(0)
 
             # 確保對話歷史不以 assistant 作為首輪，符合各大模型 chat completion 規範
@@ -1073,6 +958,21 @@ class ContextBuilder:
                 history_msgs.pop(0)
 
             messages.extend(history_msgs)
+
+        # 3.5. Adaptive Cognitive Deliberation Skeleton (MCTS Reasoning)
+        try:
+            from zeronexus.intelligence.deep_thinking_controller import deep_thinking_controller
+            deliberation_skeleton = deep_thinking_controller.deliberate_query(
+                user_prompt,
+                context_facts=long_term_facts[:3] if long_term_facts else None,
+            )
+            if deliberation_skeleton:
+                messages.append({
+                    "role": "system",
+                    "content": deliberation_skeleton,
+                })
+        except Exception as delib_err:
+            log.warning(f"自適應認知推導骨架生成失敗: {delib_err}")
 
         # 4. Grounded Tool Results (Calculator / Weather / Minecraft / System)
         if tool_results:

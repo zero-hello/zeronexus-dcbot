@@ -366,6 +366,7 @@ class BioBrainCore:
             f"- ⚡ 身體精力狀態：{int(p.energy)}% | 臺灣時間：{circadian['current_time']}（{circadian['phase']}）\n"
             f"- ⏰ 晝夜生理節奏：{circadian['tone_guidance']}\n"
             f"- 🐾 生理自然微動作：{circadian['micro_action']}，{params.physical_action_hint}\n"
+            f"- 🎭 當前神經情緒語氣呼吸感：{params.emotional_tone_guidance}\n"
             f"{spotlight_prompt}"
             f"{memories_str}"
             f"{dream_instruction}"

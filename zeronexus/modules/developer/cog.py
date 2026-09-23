@@ -499,7 +499,7 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
             important_keys = [
                 "DISCORD_TOKEN", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
                 "DATABASE_URL", "REDIS_URL", "ENVIRONMENT", "LOG_LEVEL",
-                "TZ", "CHANNELID", "SECRET_CHANNEL_ID"
+                "TZ"
             ]
             lines = []
             for k in important_keys:

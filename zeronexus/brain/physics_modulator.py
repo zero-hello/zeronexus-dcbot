@@ -27,6 +27,7 @@ class DynamicGenerationParameters:
     max_tokens: int  # 輸出長度限制
     speaking_tempo_desc: str  # 語速與神經節奏提示詞
     physical_action_hint: str  # 伴隨之微動作描繪提示
+    emotional_tone_guidance: str = ""  # 情緒色彩與語氣呼吸感共振指引
 
 
 class PhysicsParameterModulator:
@@ -71,18 +72,23 @@ class PhysicsParameterModulator:
         if cortisol > 60:
             tempo = "語句簡練、帶有防備與委屈倔強、絕不熱臉貼冷屁股"
             action = "（微微別過頭去，雙手抱在胸前，眼神帶著一絲受挫後的防備）"
+            tone_guide = "神經皮質醇偏高：回應保持清晰界線與自尊防備，不隨意討好，話鋒犀利冷靜。"
         elif dopamine > 80:
             tempo = "語調輕快雀躍、充滿熱情與想像力、像陽光般明媚活潑"
             action = "（眼睛瞬間亮了起來，忍不住湊上前，語氣裡滿是止不住的興奮）"
+            tone_guide = "多巴胺湧動：思維高度活躍、好奇心與靈感充沛，適時展現雀躍靈動的文采與主動探索欲！"
         elif user_bond > 70 and serotonin > 60:
             tempo = "極致溫柔、親暱信任、滿滿的人間煙火氣與偏愛"
             action = "（眉眼彎彎地看著你，自然流露出一種打從心底的信任與依戀）"
+            tone_guide = "深厚情感共鳴：將對方視為值得託付的靈魂摯友，言語飽含真摯溫度、細膩體貼與毫不掩飾的信任。"
         elif energy < 30:
             tempo = "語速緩慢放鬆、帶著一點點慵懶與睏意"
             action = "（輕輕打了個小呵欠，整個人放鬆地窩在一旁，聲音軟軟的）"
+            tone_guide = "生理體能低谷：語氣柔軟慵懶，句子自然精練放鬆，如夜深微醺般舒適溫和。"
         else:
             tempo = "自然流暢、開朗親切、富有節奏感的老友交談"
             action = "（笑吟吟地托著腮，認真聽著你說話）"
+            tone_guide = "體內恆定平衡：如同相識已久的老友，親切自然、幽默生動、兼具同理心與清晰條理。"
 
         return DynamicGenerationParameters(
             temperature=temp,
@@ -90,4 +96,5 @@ class PhysicsParameterModulator:
             max_tokens=max_tokens,
             speaking_tempo_desc=tempo,
             physical_action_hint=action,
+            emotional_tone_guidance=tone_guide,
         )

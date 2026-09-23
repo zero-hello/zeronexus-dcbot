@@ -98,7 +98,6 @@ def mask_secret(secret: str | None, prefix_len: int = 4, suffix_len: int = 4) ->
 class DiscordConfig:
     token: str = field(default_factory=lambda: os.getenv("DISCORD_BOT_TOKEN", "").strip())
     dev_users: Set[int] = field(default_factory=set)
-    secret_channel_id: Optional[int] = None
 
     def __post_init__(self) -> None:
         raw_devs = os.getenv("DEV_USERS", "").strip()
@@ -107,17 +106,9 @@ class DiscordConfig:
                 item = item.strip()
                 if item.isdigit():
                     self.dev_users.add(int(item))
-        raw_cid = os.getenv("CHANNELID", "").strip()
-        if not raw_cid:
-            raw_cid = os.getenv("SECRET_CHANNEL_ID", "").strip()
-        if raw_cid.isdigit():
-            self.secret_channel_id = int(raw_cid)
 
     def is_dev(self, user_id: int) -> bool:
         return user_id in self.dev_users
-
-    def is_secret_channel(self, channel_id: Optional[int]) -> bool:
-        return bool(self.secret_channel_id and channel_id and self.secret_channel_id == channel_id)
 
 
 @dataclass
@@ -365,7 +356,7 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "2.3.1"
+    version: str = "2.4.0"
     owner_id: str = "1514971711739789352"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
@@ -399,13 +390,6 @@ class Config:
         self.rate_limits = RateLimitConfig()
 
         self._load_settings_json()
-
-    @property
-    def secret_channel_id(self) -> Optional[int]:
-        return self.discord.secret_channel_id
-
-    def is_secret_channel(self, channel_id: Optional[int]) -> bool:
-        return self.discord.is_secret_channel(channel_id)
 
     def reload(self) -> None:
         """Reloads configuration from .env and settings.json with default fallbacks."""

@@ -70,11 +70,29 @@ class MemoryPalace:
 
         return extracted
 
-    def render_preference_prompt(self, user_id: str) -> str:
-        """將使用者已知的實體偏好圖譜化為 Prompt 注入膠囊"""
+    def search_relevant_preferences(self, user_id: str, query: str, top_k: int = 3) -> List[tuple[str, str]]:
+        """透過本地語意向量檢索最相關之個人偏好實體"""
+        prefs = self.preferences.get(str(user_id), {})
+        if not prefs or not query.strip():
+            return list(prefs.items())[:top_k]
+
+        from zeronexus.brain.semantic_memory import semantic_memory_retriever
+        items = [{"category": k, "value": v, "content": f"{k}: {v}"} for k, v in prefs.items()]
+        ranked = semantic_memory_retriever.rank_memories(query=query, memories=items, top_k=top_k)
+        return [(m["category"], m["value"]) for m, _ in ranked]
+
+    def render_preference_prompt(self, user_id: str, current_query: Optional[str] = None) -> str:
+        """將使用者已知的實體偏好圖譜化為 Prompt 注入膠囊，支援語意動態高光呼應"""
         prefs = self.preferences.get(str(user_id), {})
         if not prefs:
             return ""
+
+        if current_query:
+            relevant = self.search_relevant_preferences(user_id, current_query, top_k=3)
+            if relevant:
+                rel_items = "、".join([f"{k}: {v}" for k, v in relevant])
+                return f"\n【🧠 實體偏好記憶庫（與當前話題高度相關）】已知對方的個人喜好：[{rel_items}]，請在適當時機自然呼應！\n"
+
         items = "、".join([f"{k}: {v}" for k, v in prefs.items()])
         return f"\n【🧠 實體偏好記憶庫】已知關於對方的個人喜好：[{items}]，請在適當時機自然呼應！\n"
 

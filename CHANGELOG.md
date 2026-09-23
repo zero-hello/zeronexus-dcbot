@@ -2,6 +2,31 @@
 
 ---
 
+## [2.4.0] - 2026-09-24
+
+### 🧠 ZeroNexus AI 大腦超級進化與架構純粹化 (Super Brain Evolution & Architecture Purification)
+- **四大智能支柱超級進化 (Super Brain Evolution)**：
+  - **認知推理與深度思考 (Cognitive & Deep Thinking)**：
+    - 升級蒙地卡羅思維樹（`MCTSThoughtSearchEngine`），新增自適應高複雜度命題辨識器（`is_high_complexity_problem`）與思考骨幹生成器（`generate_deliberation_skeleton`）。
+    - 面對多步驟規劃、因果推論、邏輯矛盾與演算法分析時，自動展開「目標分解 ➔ 假說演繹 ➔ 批判審查 ➔ 邊界檢驗」，並在上下文前置注入結構化思維導引骨架，顯著提高回覆嚴謹度與自洽性。
+  - **語意向量長期記憶 (Vector RAG & Memory Palace)**：
+    - 打造本地離線語意向量記憶檢索器（`SemanticMemoryRetriever`），直接調用本地已就緒之 BGE-Small-ZH 與 MiniLM 神經模型，0 外部 API 額度消耗實現毫秒級向量化。
+    - 導入多維綜合相關度評分機制（語意相似度 50% + 艾賓浩斯遺忘衰減 25% + 重要性 15% + 情緒共鳴 10%）。
+    - 升級立體記憶宮殿（`MemoryPalace`）與 `context_builder.py`，跨對話精準檢索並主動喚醒使用者過去曾提及的客製事實與生活喜好。
+  - **仿生情緒與情感羈絆 (Bio-Brain & Emotional Resonance)**：
+    - 升級物理超參數自適應調製器（`PhysicsParameterModulator`），新增情緒色彩與語氣呼吸感指引（`emotional_tone_guidance`）。
+    - 大腦多巴胺、皮質醇、催產素等荷爾蒙濃度直接動態調製底層大模型的採樣溫度（Temperature）與詞彙採樣核（Top-P），使每次生成直接連動內在神經生化狀態。
+  - **自主 Agent 工具呼叫與多步行動 (Autonomous Tool Router)**：
+    - 新增零延遲自主工具意圖仲裁器（`AutonomousToolArbiter`），在推論前即時捕捉精準數學運算、台灣中央氣象署觀測、主機效能診斷、Minecraft 伺服器狀態等意圖。
+    - 在訊息預處理階段預先異步執行受限唯讀工具，注入客觀確定性資料（Grounded Facts），徹底杜絕模型幻覺。
+- **架構純粹化與彩蛋頻道全面移除**：
+  - 徹底移除 `CHANNELID` / `SECRET_CHANNEL_ID` / 獨立彩蛋頻道相關設定、專用提示詞與特判邏輯。
+  - 記憶庫與上下文構建回歸標準統一的個人短期、個人長期與頻道共享三層架構，專案架構回歸極致純粹。
+- **全套單元測試 100% 通過**：
+  - 新增 13 項超級大腦專屬自動化測試，總測試數自 62 項擴增至 75 項，全數綠燈通過。
+
+---
+
 ## [2.3.1] - 2026-09-24
 
 ### 🚀 AI 核心端點全面升級、生圖架構現代化與 Web Panel 解耦 (AI Gateway & Architecture Modernization)

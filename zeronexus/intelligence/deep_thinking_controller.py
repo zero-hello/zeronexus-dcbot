@@ -415,12 +415,22 @@ class DeepThinkingController:
             coherence_score=report.coherence_score,
             contradictions_found=report.conflict_details,
             best_thought_path=[],
-            final_synthesis="",
             model_native_thought=None,
             is_autonomously_triggered=is_autonomously_triggered,
             autonomous_reason=autonomous_reason,
             autonomous_domain=autonomous_domain,
         )
+
+    def deliberate_query(
+        self,
+        query: str,
+        context_facts: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        """
+        自適應思維推演：若問題具備較高複雜度，調用 MCTS 搜尋引擎生成思維導引骨架。
+        """
+        from zeronexus.intelligence.thought_search_mcts import thought_search_engine
+        return thought_search_engine.generate_deliberation_skeleton(query, context_facts)
 
 
 # 全域深度思考控制器單例

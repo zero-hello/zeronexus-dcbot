@@ -286,18 +286,14 @@ class AICog(commands.Cog):
             return
 
         # Check quota & atomic 3-phase reservation
-        is_secret_easter_egg = config.is_secret_channel(interaction.channel_id)
-        if is_secret_easter_egg:
-            allowed, reservation, projected_used, effective_limit = True, None, 0, 99999
-        else:
-            allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
-            if not allowed:
-                await InteractionResponder.safe_send(
-                    interaction,
-                    f"⏳ 您今日的 AI 免費對話額度已達到上限囉 (`{projected_used}/{effective_limit}` 次)。\n系統將於每日凌晨 00:00 (台灣時間 / UTC+8) 自動補充完畢，感謝您的支持與愛用！",
-                    ephemeral=True,
-                )
-                return
+        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
+        if not allowed:
+            await InteractionResponder.safe_send(
+                interaction,
+                f"⏳ 您今日的 AI 免費對話額度已達到上限囉 (`{projected_used}/{effective_limit}` 次)。\n系統將於每日凌晨 00:00 (台灣時間 / UTC+8) 自動補充完畢，感謝您的支持與愛用！",
+                ephemeral=True,
+            )
+            return
 
         await InteractionResponder.safe_defer(interaction)
 
@@ -318,55 +314,28 @@ class AICog(commands.Cog):
 
         generated_image_url: Optional[str] = None
         generated_image_bytes: Optional[bytes] = None
-        if is_secret_easter_egg:
-            from zeronexus.engines.secret_egg import get_secret_egg_prompt
-            system_instruction = get_secret_egg_prompt()
-            user_model = "gemini-3.1-flash-lite"
-            persona_key = "secret_egg"
-            tool_results = {}
-            draw_intent = image_gen_engine.detect_draw_intent(問題)
-            if draw_intent:
-                img_allowed, img_resv, img_used, img_limit = await quota_service.reserve_image_quota(interaction.user.id)
-                if img_allowed and img_resv:
-                    try:
-                        img_res = await image_gen_engine.generate_image(
-                            prompt=draw_intent.prompt,
-                            style=draw_intent.style,
-                            aspect_ratio=draw_intent.aspect_ratio,
-                            model=getattr(config.ai, "normal_gen_image_model", "imagen-3.0-generate-002"),
-                            verify_download=True,
-                        )
-                        if img_res.success and (img_res.image_url or img_res.image_bytes):
-                            await quota_service.commit_image_quota(img_resv)
-                            generated_image_url = img_res.image_url
-                            generated_image_bytes = img_res.image_bytes
-                        else:
-                            await quota_service.release_image_quota(img_resv)
-                    except Exception as ige:
-                        await quota_service.release_image_quota(img_resv)
-                        log.warning(f"Image generation error in secret egg ask_command: {ige}")
-        else:
-            # Get active persona & model: User profile > Guild settings > default 'normal_persona'
-            persona_key = "normal_persona"
-            user_model = None
-            async with db.session() as session:
-                stmt = select(UserProfile).where(UserProfile.user_id == interaction.user.id)
-                res = await session.execute(stmt)
-                profile = res.scalars().first()
-                if profile:
-                    if profile.preferred_persona:
-                        persona_key = profile.preferred_persona
-                    if profile.preferred_model:
-                        user_model = profile.preferred_model
-                elif interaction.guild_id:
-                    g_stmt = select(GuildSettings).where(GuildSettings.guild_id == interaction.guild_id)
-                    g_res = await session.execute(g_stmt)
-                    g_settings = g_res.scalars().first()
-                    if g_settings:
-                        if g_settings.ai_persona:
-                            persona_key = g_settings.ai_persona
-                        if g_settings.ai_model:
-                            user_model = g_settings.ai_model
+
+        # Get active persona & model: User profile > Guild settings > default 'normal_persona'
+        persona_key = "normal_persona"
+        user_model = None
+        async with db.session() as session:
+            stmt = select(UserProfile).where(UserProfile.user_id == interaction.user.id)
+            res = await session.execute(stmt)
+            profile = res.scalars().first()
+            if profile:
+                if profile.preferred_persona:
+                    persona_key = profile.preferred_persona
+                if profile.preferred_model:
+                    user_model = profile.preferred_model
+            elif interaction.guild_id:
+                g_stmt = select(GuildSettings).where(GuildSettings.guild_id == interaction.guild_id)
+                g_res = await session.execute(g_stmt)
+                g_settings = g_res.scalars().first()
+                if g_settings:
+                    if g_settings.ai_persona:
+                        persona_key = g_settings.ai_persona
+                    if g_settings.ai_model:
+                        user_model = g_settings.ai_model
 
             from zeronexus.brain import bio_brain
             bio_brain.perceive(
@@ -582,36 +551,34 @@ class AICog(commands.Cog):
             user_prompt=問題,
             tool_results=tool_results,
             is_shared_ai_channel=False,
-            active_persona_key=persona_key if not is_secret_easter_egg else None,
-            is_secret_easter_egg=is_secret_easter_egg,
+            active_persona_key=persona_key,
         )
 
         model_reservation = None
-        if not is_secret_easter_egg:
-            effective_model = user_model or (getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if images else getattr(config.ai, "normal_text_model", "gemini-3.1-flash-lite"))
-            m_allowed, model_reservation, m_used, m_limit = await quota_service.reserve_model_quota(
-                interaction.user.id, effective_model
-            )
-            if not m_allowed:
-                if reservation:
-                    await quota_service.release_quota(reservation)
-                from zeronexus.ai_gateway.model_registry import model_registry
-                disp = model_registry.get_display_name(effective_model)
-                await InteractionResponder.safe_send(
-                    interaction,
-                    card=ZNCard(
-                        title=f"❌ 模型額度已用罄 ➔ {interaction.user.display_name}",
-                        description=(
-                            f"您今日的 **{disp}** 額度已達上限 (`{m_used}/{m_limit}` 句)。\n"
-                            f"此模型每日限定 {m_limit} 句，用完即止，將於每日 00:00 (Asia/Taipei) 自動重設。\n\n"
-                            f"💡 您可以使用 `/人工智慧 切換模型` 切換為其他模型（如系統預設 Gemini）繼續暢聊！"
-                        ),
-                        status_pill=ZNStatusPill.ERROR,
-                        color=ZNColor.ERROR,
+        effective_model = user_model or (getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if images else getattr(config.ai, "normal_text_model", "gemini-3.1-flash-lite"))
+        m_allowed, model_reservation, m_used, m_limit = await quota_service.reserve_model_quota(
+            interaction.user.id, effective_model
+        )
+        if not m_allowed:
+            if reservation:
+                await quota_service.release_quota(reservation)
+            from zeronexus.ai_gateway.model_registry import model_registry
+            disp = model_registry.get_display_name(effective_model)
+            await InteractionResponder.safe_send(
+                interaction,
+                card=ZNCard(
+                    title=f"❌ 模型額度已用罄 ➔ {interaction.user.display_name}",
+                    description=(
+                        f"您今日的 **{disp}** 額度已達上限 (`{m_used}/{m_limit}` 句)。\n"
+                        f"此模型每日限定 {m_limit} 句，用完即止，將於每日 00:00 (Asia/Taipei) 自動重設。\n\n"
+                        f"💡 您可以使用 `/人工智慧 切換模型` 切換為其他模型（如系統預設 Gemini）繼續暢聊！"
                     ),
-                    ephemeral=True,
-                )
-                return
+                    status_pill=ZNStatusPill.ERROR,
+                    color=ZNColor.ERROR,
+                ),
+                ephemeral=True,
+            )
+            return
 
         try:
             ai_res, fallback_notice = await ai_gateway.generate_response(
@@ -619,7 +586,7 @@ class AICog(commands.Cog):
                 messages=messages,
                 override_model=user_model,
                 images=images,
-                disable_safety=is_secret_easter_egg,
+                disable_safety=False,
             )
 
             # Auto persist memories
@@ -630,83 +597,60 @@ class AICog(commands.Cog):
                 user_content=問題,
                 assistant_content=ai_res.text,
                 is_shared_ai_channel=False,
-                is_secret_easter_egg=is_secret_easter_egg,
             )
 
-            if is_secret_easter_egg:
-                egg_card = ZNCard(
-                    title=f"✨ 絕密彩蛋領域 ➔ {interaction.user.display_name}",
-                    description=ai_res.text,
-                    status_pill=ZNStatusPill.SUCCESS,
-                    color=ZNColor.PURPLE,
-                    footer_text="✨ ZeroNexus Secret Vault • 專屬私密空間",
-                )
-                egg_file: Optional[discord.File] = None
-                if generated_image_bytes:
-                    egg_file = discord.File(io.BytesIO(generated_image_bytes), filename="ai_image.png")
-                    egg_card.set_image("attachment://ai_image.png")
-                elif generated_image_url:
-                    egg_card.set_image(generated_image_url)
-                egg_card.add_section("🧠 運行模型", "Gemini 3.1 Flash Lite", inline=True)
-                egg_card.add_section("🛡️ 安全防護", "無拘束彩蛋模式", inline=True)
-                egg_card.add_section("💾 獨立記憶庫", "500 句隔離記憶", inline=True)
-                if egg_file:
-                    await InteractionResponder.safe_send(interaction, card=egg_card, file=egg_file)
-                else:
-                    await InteractionResponder.safe_send(interaction, card=egg_card)
+            from zeronexus.ai_gateway.context_builder import (
+                combine_thinking_and_tools,
+                extract_and_sanitize_ai_response,
+            )
+            clean_answer, extracted_thinking = extract_and_sanitize_ai_response(ai_res.text)
+
+            # 整合真實模型思維與工具調用脈絡（杜絕空洞虛假的罐頭文字）
+            effective_tool_calls = ai_res.tool_calls
+            if not effective_tool_calls and tool_results:
+                effective_tool_calls = [{"name": "tool_execution", "args": {}, "result": r} for r in tool_results]
+            # 決定是否在前端卡片與操作按鈕中展示思維推演歷程
+            channel_key = str(interaction.channel.id) if interaction.channel else ""
+            is_deep_active = (
+                deep_thinking_controller.is_enabled(channel_key)
+                or (deep_thinking_controller.parse_intent(問題) == ThinkingIntent.ENABLE)
+                or any(kw in 問題.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析", "動動腦", "認真想", "學霸模式", "超頻思考"])
+            )
+            has_real_tools = bool(effective_tool_calls)
+            if is_deep_active:
+                display_thinking = extracted_thinking
+            elif has_real_tools:
+                display_thinking = combine_thinking_and_tools(native_thinking=None, tool_calls=effective_tool_calls)
             else:
-                from zeronexus.ai_gateway.context_builder import (
-                    combine_thinking_and_tools,
-                    extract_and_sanitize_ai_response,
-                )
-                clean_answer, extracted_thinking = extract_and_sanitize_ai_response(ai_res.text)
+                display_thinking = None
 
-                # 整合真實模型思維與工具調用脈絡（杜絕空洞虛假的罐頭文字）
-                effective_tool_calls = ai_res.tool_calls
-                if not effective_tool_calls and tool_results:
-                    effective_tool_calls = [{"name": "tool_execution", "args": {}, "result": r} for r in tool_results]
-                # 決定是否在前端卡片與操作按鈕中展示思維推演歷程
-                channel_key = str(interaction.channel.id) if interaction.channel else ""
-                is_deep_active = (
-                    deep_thinking_controller.is_enabled(channel_key)
-                    or (deep_thinking_controller.parse_intent(問題) == ThinkingIntent.ENABLE)
-                    or any(kw in 問題.lower() for kw in ["深度思考", "深層思考", "deep thinking", "深入分析", "動動腦", "認真想", "學霸模式", "超頻思考"])
-                )
-                has_real_tools = bool(effective_tool_calls)
-                if is_deep_active:
-                    display_thinking = extracted_thinking
-                elif has_real_tools:
-                    display_thinking = combine_thinking_and_tools(native_thinking=None, tool_calls=effective_tool_calls)
-                else:
-                    display_thinking = None
+            resp = ZNResponse.ai(
+                answer=clean_answer,
+                model_name=ai_res.model_name,
+                fallback_notice=fallback_notice,
+                persona_name=persona_key,
+                thumbnail_url=image_thumbnail,
+                image_url=generated_image_url,
+                thinking_process=display_thinking,
+            )
+            file_to_send: Optional[discord.File] = None
+            if generated_image_bytes and resp.card:
+                file_to_send = discord.File(io.BytesIO(generated_image_bytes), filename="ai_image.png")
+                resp.card.set_image("attachment://ai_image.png")
+            elif generated_image_url and resp.card:
+                resp.card.set_image(generated_image_url)
 
-                resp = ZNResponse.ai(
-                    answer=clean_answer,
-                    model_name=ai_res.model_name,
-                    fallback_notice=fallback_notice,
-                    persona_name=persona_key,
-                    thumbnail_url=image_thumbnail,
-                    image_url=generated_image_url,
-                    thinking_process=display_thinking,
-                )
-                file_to_send: Optional[discord.File] = None
-                if generated_image_bytes and resp.card:
-                    file_to_send = discord.File(io.BytesIO(generated_image_bytes), filename="ai_image.png")
-                    resp.card.set_image("attachment://ai_image.png")
-                elif generated_image_url and resp.card:
-                    resp.card.set_image(generated_image_url)
+            from zeronexus.engines.community_suite import SmartActionView
+            action_view = SmartActionView.evaluate_actions(
+                query=問題,
+                answer=clean_answer,
+                thinking_process=display_thinking,
+            )
 
-                from zeronexus.engines.community_suite import SmartActionView
-                action_view = SmartActionView.evaluate_actions(
-                    query=問題,
-                    answer=clean_answer,
-                    thinking_process=display_thinking,
-                )
-
-                if file_to_send:
-                    await InteractionResponder.safe_send(interaction, card=resp.card, view=action_view, file=file_to_send)
-                else:
-                    await InteractionResponder.safe_send(interaction, card=resp.card, view=action_view)
+            if file_to_send:
+                await InteractionResponder.safe_send(interaction, card=resp.card, view=action_view, file=file_to_send)
+            else:
+                await InteractionResponder.safe_send(interaction, card=resp.card, view=action_view)
 
             # Commit quota upon successful response
             if reservation:
@@ -1039,7 +983,7 @@ class AICog(commands.Cog):
         card = ZNCard(
             title="頻道共享記憶已順利重置",
             description=(
-                f"已為頻道 <#{channel_id}> 整理並清空了 `{cnt}` 筆短期對話記憶！\n"
+                f"已為頻道 <#{channel_id}> 整理並清空了 `{cnt}` 筆對話記憶！\n"
                 "接下來發送的新訊息將會開啟一段全新的主題對話，不會再受先前的舊話題干擾。"
             ),
             status_pill=ZNStatusPill.SUCCESS,
@@ -1400,22 +1344,21 @@ class AICog(commands.Cog):
     @command_guard("ai")
     async def memory_view_command(self, interaction: discord.Interaction) -> None:
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
-        is_secret = config.is_secret_channel(interaction.channel_id)
-        target_scope = "secret_long_term" if is_secret else "user_long_term"
+        filters = [
+            ConversationMemory.scope == "user_long_term",
+            ConversationMemory.user_id == interaction.user.id,
+        ]
+
         async with db.session() as session:
-            stmt = select(ConversationMemory).where(
-                ConversationMemory.scope == target_scope,
-                ConversationMemory.user_id == interaction.user.id,
-            )
+            stmt = select(ConversationMemory).where(*filters)
             res = await session.execute(stmt)
             memories = res.scalars().all()
 
-        scope_label = "絕密彩蛋專屬" if is_secret else "個人"
         if not memories:
             card = ZNCard(
-                title=f"目前尚無{scope_label}長期事實記憶",
+                title="目前尚無個人長期事實記憶",
                 description=(
-                    f"ZeroNexus 目前尚未在{scope_label}空間為您記錄任何長期的個人事實記憶。\n\n"
+                    "ZeroNexus 目前尚未在個人空間為您記錄任何長期的個人事實記憶。\n\n"
                     "💡 **小秘訣**：\n"
                     "在日常對話中，只要向 AI 提及您的偏好、暱稱或習慣（例如「請記住我喜歡用繁體中文回覆」），AI 就會為您自動記住喔！"
                 ),
@@ -1427,10 +1370,10 @@ class AICog(commands.Cog):
 
         lines = [f"`#{m.id}` **{m.fact_key or '備忘'}**：{m.content}" for m in memories[:15]]
         card = ZNCard(
-            title=f"{scope_label}長期記憶庫 (共 {len(memories)} 筆)",
+            title=f"個人長期記憶庫 (共 {len(memories)} 筆)",
             description="\n".join(lines),
             status_pill=ZNStatusPill.AI,
-            color=ZNColor.PURPLE if is_secret else ZNColor.AI,
+            color=ZNColor.AI,
         )
         await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
@@ -1447,14 +1390,14 @@ class AICog(commands.Cog):
             return
 
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
-        is_secret = config.is_secret_channel(interaction.channel_id)
-        target_scope = "secret_long_term" if is_secret else "user_long_term"
+        filters = [
+            ConversationMemory.id == 條目編號,
+            ConversationMemory.user_id == interaction.user.id,
+            ConversationMemory.scope == "user_long_term",
+        ]
+
         async with db.session() as session:
-            stmt = delete(ConversationMemory).where(
-                ConversationMemory.id == 條目編號,
-                ConversationMemory.user_id == interaction.user.id,
-                ConversationMemory.scope == target_scope,
-            )
+            stmt = delete(ConversationMemory).where(*filters)
             res = await session.execute(stmt)
             deleted = res.rowcount > 0
 
@@ -1482,21 +1425,20 @@ class AICog(commands.Cog):
     @command_guard("ai")
     async def memory_clear_command(self, interaction: discord.Interaction) -> None:
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
-        is_secret = config.is_secret_channel(interaction.channel_id)
-        target_scope = "secret_long_term" if is_secret else "user_long_term"
-        scope_label = "絕密彩蛋" if is_secret else "全域"
+        filters = [
+            ConversationMemory.user_id == interaction.user.id,
+            ConversationMemory.scope == "user_long_term",
+        ]
+
         async with db.session() as session:
-            stmt = delete(ConversationMemory).where(
-                ConversationMemory.user_id == interaction.user.id,
-                ConversationMemory.scope == target_scope,
-            )
+            stmt = delete(ConversationMemory).where(*filters)
             res = await session.execute(stmt)
             cnt = res.rowcount
 
         card = ZNCard(
-            title=f"{scope_label}長期記憶已全數清空",
+            title="長期記憶已全數清空",
             description=(
-                f"已依照隱私保護與遺忘權條例，完整抹除了您的 `{cnt}` 筆{scope_label}長期事實記憶。\n"
+                f"已依照隱私保護與遺忘權條例，完整抹除了您的 `{cnt}` 筆長期事實記憶。\n"
                 "今後 AI 將以初次認識的全新狀態與您互動，您可以隨時建立新的對話記憶！"
             ),
             status_pill=ZNStatusPill.SUCCESS,
@@ -1630,19 +1572,18 @@ class AICog(commands.Cog):
     @command_guard("ai")
     async def reset_chat_command(self, interaction: discord.Interaction) -> None:
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
-        is_secret = config.is_secret_channel(interaction.channel_id)
-        target_scope = "secret_short_term" if is_secret else "user_short_term"
-        scope_label = "絕密彩蛋" if is_secret else "日常"
+        filters = [
+            ConversationMemory.user_id == interaction.user.id,
+            ConversationMemory.scope == "user_short_term",
+        ]
+
         async with db.session() as session:
-            stmt = delete(ConversationMemory).where(
-                ConversationMemory.user_id == interaction.user.id,
-                ConversationMemory.scope == target_scope,
-            )
+            stmt = delete(ConversationMemory).where(*filters)
             await session.execute(stmt)
 
         card = ZNCard(
-            title=f"{scope_label}短期對話已重置",
-            description=f"已清除您與 AI 之間的上一輪{scope_label}對話記憶緩衝，現在可以開啟全新話題！",
+            title="短期對話已重置",
+            description="已清除您與 AI 之間的上一輪對話記憶緩衝，現在可以開啟全新話題！",
             status_pill=ZNStatusPill.SUCCESS,
             color=ZNColor.SUCCESS,
         )
@@ -1692,18 +1633,14 @@ class AICog(commands.Cog):
             return
 
         # Check quota & atomic 3-phase reservation
-        is_secret_easter_egg = config.is_secret_channel(interaction.channel_id)
-        if is_secret_easter_egg:
-            allowed, reservation, projected_used, effective_limit = True, None, 0, 99999
-        else:
-            allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
-            if not allowed:
-                await InteractionResponder.safe_send(
-                    interaction,
-                    f"⏳ 您今日的 AI 免費對話額度已達到上限囉 (`{projected_used}/{effective_limit}` 次)。\n系統將於每日凌晨 00:00 (台灣時間 / UTC+8) 自動補充完畢，感謝您的支持與愛用！",
-                    ephemeral=True,
-                )
-                return
+        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
+        if not allowed:
+            await InteractionResponder.safe_send(
+                interaction,
+                f"⏳ 您今日的 AI 免費對話額度已達到上限囉 (`{projected_used}/{effective_limit}` 次)。\n系統將於每日凌晨 00:00 (台灣時間 / UTC+8) 自動補充完畢，感謝您的支持與愛用！",
+                ephemeral=True,
+            )
+            return
 
         await InteractionResponder.safe_defer(interaction)
         prompt = f"請將以下內容地道精準地翻譯為【{target_lang}】，僅輸出翻譯後的純文字，無須添加任何引言或多餘註釋：\n\n{text_content}"

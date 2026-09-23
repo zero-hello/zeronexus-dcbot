@@ -1161,27 +1161,6 @@ class ZeroNexusBot(commands.Bot):
                 except Exception as sb_err:
                     log.warning(f"Safe Browsing inspection error on message {message.id}: {sb_err}")
 
-        # Check if in secret Easter egg channel (in guild or DM)
-        if config.is_secret_channel(message.channel.id):
-            clean_content = (message.content or "").strip()
-            if clean_content.startswith("-") or clean_content.startswith("!zn") or clean_content.startswith("zn!") or clean_content.startswith(config.platform.default_prefix):
-                await self.process_commands(message)
-                return
-
-            task = asyncio.create_task(
-                self._handle_ai_channel_message(
-                    message,
-                    settings=None,
-                    prompt_override=clean_content,
-                    is_shared_ai_channel=False,
-                    is_secret_easter_egg=True,
-                ),
-                name=f"secret_egg_msg_{message.id}",
-            )
-            self._background_tasks.add(task)
-            task.add_done_callback(self._on_background_task_done)
-            return
-
         # Check if in designated AI Channel or mentioned
         is_mentioned = bool(self.user and self.user in message.mentions)
         raw_content = message.content or ""
@@ -1259,7 +1238,6 @@ class ZeroNexusBot(commands.Bot):
                         settings=settings,
                         prompt_override=clean_content,
                         is_shared_ai_channel=False if is_heart_thread else bool(settings and settings.ai_channel_id == message.channel.id),
-                        is_secret_easter_egg=False,
                     ),
                     name=f"ai_channel_msg_{message.id}",
                 )
@@ -1280,7 +1258,6 @@ class ZeroNexusBot(commands.Bot):
                     settings=None,
                     prompt_override=clean_content,
                     is_shared_ai_channel=False,
-                    is_secret_easter_egg=False,
                 ),
                 name=f"ai_dm_msg_{message.id}",
             )
@@ -1357,7 +1334,6 @@ class ZeroNexusBot(commands.Bot):
         settings: Optional[GuildSettings] = None,
         prompt_override: Optional[str] = None,
         is_shared_ai_channel: bool = True,
-        is_secret_easter_egg: bool = False,
         channel_override: Optional[discord.abc.Messageable] = None,
     ) -> None:
         """Entry point for AI channel processing with in-flight concurrency tracking."""
@@ -1396,7 +1372,6 @@ class ZeroNexusBot(commands.Bot):
                 settings=settings,
                 prompt_override=prompt_override,
                 is_shared_ai_channel=is_shared_ai_channel,
-                is_secret_easter_egg=is_secret_easter_egg,
                 channel_override=channel_override,
             )
         finally:
@@ -1409,7 +1384,6 @@ class ZeroNexusBot(commands.Bot):
         settings: Optional[GuildSettings] = None,
         prompt_override: Optional[str] = None,
         is_shared_ai_channel: bool = True,
-        is_secret_easter_egg: bool = False,
         channel_override: Optional[discord.abc.Messageable] = None,
     ) -> None:
         """Responds in designated AI channel or mentions with immutable RequestContext, decoupled typing, and quota reservation."""
@@ -1494,27 +1468,25 @@ class ZeroNexusBot(commands.Bot):
             return
 
         # 1.2. 新用戶初次對話專屬獨立迎新卡片（固定模板，內容由 AI 動態生成，不回應原問題）
-        if not is_secret_easter_egg:
-            try:
-                from zeronexus.engines.affinity_engine import affinity_engine
-                is_first_chat = await affinity_engine.is_new_user(message.author.id)
-                if is_first_chat:
-                    await self._handle_first_time_user_onboarding(
-                        message=message,
-                        effective_channel=effective_channel,
-                        channel_override=channel_override,
-                        req_ctx=req_ctx,
-                    )
-                    return
-            except Exception as n_err:
-                log.debug(f"Failed to handle first-time user onboarding: {n_err}")
+        try:
+            from zeronexus.engines.affinity_engine import affinity_engine
+            is_first_chat = await affinity_engine.is_new_user(message.author.id)
+            if is_first_chat:
+                await self._handle_first_time_user_onboarding(
+                    message=message,
+                    effective_channel=effective_channel,
+                    channel_override=channel_override,
+                    req_ctx=req_ctx,
+                )
+                return
+        except Exception as n_err:
+            log.debug(f"Failed to handle first-time user onboarding: {n_err}")
 
         # 1.5. Natural Language Private Heart Thread Intent Check (自然語言意圖觸發私密討論串)
         if (
             message.guild
             and not isinstance(message.channel, discord.Thread)
             and channel_override is None
-            and not is_secret_easter_egg
         ):
             is_private_intent, extracted_topic = private_dialogue_engine.detect_private_chat_intent(user_prompt)
             if is_private_intent:
@@ -1554,11 +1526,8 @@ class ZeroNexusBot(commands.Bot):
                     return
 
         # 2. Quota Check & Reservation (atomic 3-phase)
-        if is_secret_easter_egg:
-            allowed, reservation, projected_used, effective_limit = True, None, 0, 99999
-        else:
-            t_q0 = time.perf_counter()
-            allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id)
+        t_q0 = time.perf_counter()
+        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id)
             pipeline_metrics.quota_check_ms = (time.perf_counter() - t_q0) * 1000.0
 
             if not allowed:
@@ -1591,20 +1560,12 @@ class ZeroNexusBot(commands.Bot):
             task=asyncio.current_task(),
         )
 
-        if is_secret_easter_egg:
-            status_card = ZNCard(
-                title=f"✨ 絕密彩蛋領域 ➔ {req_ctx.author_name}",
-                description="正在連結專屬思維網絡與 500 句獨立記憶…",
-                status_pill=ZNStatusPill.PROCESSING,
-                color=ZNColor.PURPLE,
-            )
-        else:
-            status_card = ZNCard(
-                title=f"🧠 正在思考中… ➔ {req_ctx.author_name}",
-                description="正在整理上下文與認知推論…",
-                status_pill=ZNStatusPill.PROCESSING,
-                color=ZNColor.AI,
-            )
+        status_card = ZNCard(
+            title=f"🧠 正在思考中… ➔ {req_ctx.author_name}",
+            description="正在整理上下文與認知推論…",
+            status_pill=ZNStatusPill.PROCESSING,
+            color=ZNColor.AI,
+        )
         t_defer0 = time.perf_counter()
         try:
             if channel_override is not None:
@@ -1639,121 +1600,6 @@ class ZeroNexusBot(commands.Bot):
         pipeline_metrics.defer_ms = (time.perf_counter() - t_defer0) * 1000.0
 
         try:
-            # 4. Handle Secret Easter Egg Mode
-            if is_secret_easter_egg:
-                from zeronexus.engines.secret_egg import get_secret_egg_prompt
-                system_instruction = get_secret_egg_prompt()
-                active_model = "gemini-3.1-flash-lite"
-
-                images, image_thumbnail, attachment_tool_results, attachment_notes = await self._ingest_attachments(message.attachments)
-                if not user_prompt:
-                    if images and not attachment_tool_results:
-                        user_prompt = "（使用者分享了圖片，請仔細觀察圖片內容並進行解析說明）"
-                    elif attachment_tool_results:
-                        user_prompt = "（使用者上傳了附加檔案，請詳細閱讀並解析檔案內容）"
-
-                if attachment_notes:
-                    system_instruction += "\n\n【使用者附加檔案內容與資訊】：\n" + "\n\n".join(attachment_notes)
-
-                dispute_context = await self._trace_dispute_context(message)
-                if dispute_context:
-                    system_instruction += "\n\n" + dispute_context
-
-                draw_intent = image_gen_engine.detect_draw_intent(user_prompt)
-                generated_image_url: Optional[str] = None
-                generated_image_bytes: Optional[bytes] = None
-                generated_image_model: Optional[str] = None
-                if draw_intent:
-                    img_allowed, img_resv, img_used, img_limit = await quota_service.reserve_image_quota(message.author.id)
-                    if img_allowed and img_resv:
-                        try:
-                            img_res = await image_gen_engine.generate_image(
-                                prompt=draw_intent.prompt,
-                                style=draw_intent.style,
-                                aspect_ratio=draw_intent.aspect_ratio,
-                                model=getattr(config.ai, "normal_gen_image_model", "imagen-3.0-generate-002"),
-                                verify_download=True,
-                            )
-                            if img_res.success and (img_res.image_url or img_res.image_bytes):
-                                await quota_service.commit_image_quota(img_resv)
-                                generated_image_url = img_res.image_url
-                                generated_image_bytes = img_res.image_bytes
-                                generated_image_model = img_res.model
-                            else:
-                                await quota_service.release_image_quota(img_resv)
-                        except Exception as ige:
-                            await quota_service.release_image_quota(img_resv)
-                            log.warning(f"Image generation error in secret egg AI channel: {ige}")
-
-                t_ctx0 = time.perf_counter()
-                messages = await context_builder.build_messages(
-                    user=message.author,
-                    channel=message.channel,
-                    guild=message.guild,
-                    user_prompt=user_prompt,
-                    tool_results=None,
-                    is_shared_ai_channel=False,
-                    active_persona_key=None,
-                    is_secret_easter_egg=True,
-                )
-                pipeline_metrics.context_build_ms = (time.perf_counter() - t_ctx0) * 1000.0
-
-                t_prov0 = time.perf_counter()
-                ai_res, fallback = await ai_gateway.generate_response(
-                    system_instruction=system_instruction,
-                    messages=messages,
-                    override_model=active_model,
-                    images=images if images else None,
-                    disable_safety=True,
-                    thinking_budget=0,
-                )
-                pipeline_metrics.provider_request_ms = (time.perf_counter() - t_prov0) * 1000.0
-                pipeline_metrics.model_total_ms = pipeline_metrics.provider_request_ms
-
-                from zeronexus.ai_gateway.context_builder import _clean_stored_turn
-                clean_answer = _clean_stored_turn(ai_res.text, "assistant")
-                await context_builder.save_interaction_memories(
-                    user=message.author,
-                    channel=message.channel,
-                    guild=message.guild,
-                    user_content=user_prompt,
-                    assistant_content=ai_res.text,
-                    is_shared_ai_channel=False,
-                    is_secret_easter_egg=True,
-                )
-
-                egg_card = ZNCard(
-                    title=f"✨ 絕密彩蛋領域 ➔ {req_ctx.author_name}",
-                    description=clean_answer,
-                    status_pill=ZNStatusPill.SUCCESS,
-                    color=ZNColor.PURPLE,
-                    footer_text="✨ ZeroNexus Secret Vault • 專屬私密空間",
-                )
-                gen_egg_file: Optional[discord.File] = None
-                if generated_image_bytes:
-                    gen_egg_file = discord.File(io.BytesIO(generated_image_bytes), filename="ai_image.png")
-                    egg_card.set_image("attachment://ai_image.png")
-                elif generated_image_url:
-                    egg_card.set_image(generated_image_url)
-                if generated_image_model:
-                    egg_card.add_section("🎨 生圖引擎", "Google Gemini 2.5 Flash Image", inline=True)
-                else:
-                    egg_card.add_section("🧠 運行模型", "Gemini 3.1 Flash Lite", inline=True)
-                egg_card.add_section("🛡️ 安全防護", "無拘束彩蛋模式", inline=True)
-                egg_card.add_section("💾 獨立記憶庫", "500 句隔離記憶", inline=True)
-
-                cancel_view.stop()
-                await self._trigger_typing_safe(message.channel)
-                t_send = time.perf_counter()
-                if gen_egg_file:
-                    await self._safe_edit_status_message(status_msg, message.channel, card=egg_card, view=None, attachments=[gen_egg_file])
-                else:
-                    await self._safe_edit_status_message(status_msg, message.channel, card=egg_card, view=None)
-                pipeline_metrics.discord_send_ms = (time.perf_counter() - t_send) * 1000.0
-                pipeline_metrics.total_latency_ms = (time.perf_counter() - t0) * 1000.0
-                stats.record_ai_pipeline(pipeline_metrics)
-                return
-
             # 4. Resolve active persona & model: User preference takes precedence over guild setting
             user_persona = None
             user_model = None
@@ -1975,6 +1821,14 @@ class ZeroNexusBot(commands.Bot):
             tool_results: Dict[str, Any] = {}
             if attachment_tool_results:
                 tool_results.update(attachment_tool_results)
+
+            try:
+                from zeronexus.agent.tool_arbiter import autonomous_tool_arbiter
+                auto_tools = await autonomous_tool_arbiter.arbitrate_and_execute(user_prompt, guild=message.guild)
+                if auto_tools:
+                    tool_results.update(auto_tools)
+            except Exception as auto_tool_err:
+                log.warning(f"自主工具意圖仲裁執行異常: {auto_tool_err}")
 
             status_msg_alive = True
 
@@ -2651,6 +2505,7 @@ class ZeroNexusBot(commands.Bot):
             # Generate response from AI Gateway with autonomous function calling enabled & strict timeout defense
             t_prov0 = time.perf_counter()
             call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
+            brain_model_params = bio_brain.get_model_params(str(message.author.id))
             ai_res, fallback = await asyncio.wait_for(
                 ai_gateway.generate_response(
                     system_instruction=system_instruction,
@@ -2660,6 +2515,8 @@ class ZeroNexusBot(commands.Bot):
                     allow_tools=allow_tools_for_query,
                     tool_executor=dynamic_tool_executor,
                     thinking_budget=4096 if is_deep_thinking_active else 0,
+                    temperature=brain_model_params.temperature,
+                    top_p=brain_model_params.top_p,
                 ),
                 timeout=call_timeout,
             )
