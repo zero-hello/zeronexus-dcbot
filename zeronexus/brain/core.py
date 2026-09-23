@@ -28,6 +28,8 @@ from zeronexus.evolution.dataset_builder import dataset_builder
 from zeronexus.external.cohere_client import cohere_service
 from zeronexus.brain.cognitive_cortex import CognitiveCortex, ConsciousIdea
 from zeronexus.brain.heartbeat_system import BrainHeartbeatDaemon
+from zeronexus.brain.synaptic_bonding import SynapticBondingManager
+from zeronexus.brain.memory_palace import MemoryPalace
 
 log = logging.getLogger("ZeroNexus.Brain.Core")
 
@@ -59,6 +61,8 @@ class BioBrainCore:
         self.memory_vault = EncryptedMemoryVault()
         self.circadian_engine = CircadianRhythmEngine()
         self.attachment_engine = PersonalAttachmentEngine()
+        self.synaptic_bonding = SynapticBondingManager()
+        self.memory_palace = MemoryPalace()
 
         # 高階類腦認知皮層 (Cognitive Cortex) 與自主心跳守護程序
         self.cognitive_cortex = CognitiveCortex(
@@ -173,6 +177,22 @@ class BioBrainCore:
                     )
         except Exception as ex:
             log.warning(f"認知中樞預測落差與動機計算失敗: {ex}")
+
+        # 11. 長效突觸增強 (LTP) 與記憶宮殿實體偏好抽取
+        try:
+            self.memory_palace.extract_preferences_from_text(str(user_id), message_text)
+            affinity_delta = 0.5
+            if analysis.threat_level > 0.5:
+                affinity_delta = -1.0
+            elif analysis.valence > 0.4:
+                affinity_delta = 0.8
+            self.synaptic_bonding.record_interaction(
+                user_id=str(user_id),
+                user_name=user_name,
+                delta_affinity=affinity_delta,
+            )
+        except Exception as ex:
+            log.warning(f"長效突觸羈絆與偏好抽取失敗: {ex}")
 
         return analysis, new_chem
 
@@ -331,7 +351,13 @@ class BioBrainCore:
         except Exception as ex:
             log.warning(f"全域工作空間意識聚光燈計算失敗: {ex}")
 
+        # 6. 長效突觸羈絆階層與實體偏好記憶庫
+        bond_prompt = self.synaptic_bonding.render_bond_prompt(str(user_id), user_name)
+        pref_prompt = self.memory_palace.render_preference_prompt(str(user_id))
+
         capsule = (
+            f"{bond_prompt}"
+            f"{pref_prompt}"
             f"{attachment_capsule}"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"# 【本地大腦即時生理與生物鐘狀態（最高優先級生理基石，不可違背）】\n"
@@ -351,6 +377,10 @@ class BioBrainCore:
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
         return capsule
+
+    def get_recent_diary(self, days_ago: int = 0) -> Optional[str]:
+        """讀取最近的深夜秘密手札日記 (0 表示今天，1 表示昨天)"""
+        return self.memory_palace.get_recent_diary(days_ago)
 
     def get_model_params(self, user_id: str) -> DynamicGenerationParameters:
         """獲取當前大腦狀態對應之模型物理生成參數"""

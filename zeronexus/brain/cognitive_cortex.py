@@ -10,9 +10,11 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import inspect
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -168,10 +170,20 @@ class DefaultModeNetwork:
         self.core = core_engine
         self.last_spontaneous_thought_time = time.time()
         self.proactive_callback: Optional[Any] = None  # 可註冊主動發話之回呼函式
+        self.llm_generate_func: Optional[Any] = None   # 可註冊供寫日記之 LLM 生成函式
 
     async def spontaneous_mind_wandering(self) -> Optional[Dict[str, Any]]:
         """觸發一次自主心智漫遊 (由心跳事件定期呼叫)。"""
         self.last_spontaneous_thought_time = time.time()
+
+        # 0. 深夜時段 (03:00 ~ 05:00) 檢查並自主撰寫【ZeroNexus 深夜秘密手札日記】
+        diary_res = await self._check_and_write_midnight_diary()
+        if diary_res:
+            return {
+                "action": "MIDNIGHT_DIARY",
+                "details": diary_res,
+            }
+
         homeo_state: Optional[HomeostaticState] = None
         if hasattr(self.core, "homeostasis"):
             homeo_state = getattr(self.core, "homeostasis")
@@ -196,6 +208,49 @@ class DefaultModeNetwork:
             "action": "UNCONSCIOUS_CONSOLIDATION",
             "details": consolidation_result,
         }
+
+    async def _check_and_write_midnight_diary(self, force: bool = False) -> Optional[Dict[str, Any]]:
+        """在深夜時段自主喚醒並撰寫今天的深夜手札日記"""
+        tz_taipei = datetime.timezone(datetime.timedelta(hours=8))
+        now_tw = datetime.datetime.now(tz_taipei)
+        current_hour = now_tw.hour
+
+        # 僅在深夜 03:00 ~ 05:00 觸發，或 force=True (供測試與手動觸發)
+        if not force and not (3 <= current_hour < 5):
+            return None
+
+        memory_palace = getattr(self.core, "memory_palace", None)
+        if not memory_palace:
+            return None
+
+        today_str = time.strftime("%Y-%m-%d")
+        target_file = os.path.join(memory_palace.diary_dir, f"{today_str}.md")
+        if os.path.exists(target_file):
+            return None
+
+        # 彙整今日記憶庫中記錄的情節焦點
+        summary = ""
+        try:
+            vault = getattr(self.core, "memory_vault", None)
+            if vault and hasattr(vault, "retrieve_relevant_memories"):
+                mems = vault.retrieve_relevant_memories("global", limit=3)
+                if mems:
+                    summary = "、".join([m.summary for m in mems])
+        except Exception as ex:
+            log.warning(f"彙整今日對話回憶失敗: {ex}")
+
+        content = await memory_palace.write_midnight_diary(
+            llm_generate_func=self.llm_generate_func,
+            daily_conversations_summary=summary,
+        )
+        if content:
+            return {
+                "date": today_str,
+                "status": "WRITTEN",
+                "file": target_file,
+                "summary": summary,
+            }
+        return None
 
     async def _trigger_proactive_outreach(self) -> Dict[str, Any]:
         """自主從記憶庫中尋找話題並準備主動敲使用者。"""
