@@ -93,6 +93,9 @@
         <p class="text-sm text-zinc-400 mb-6">
           登入你的 Discord 帳號以管理具備管理員權限的伺服器與 AI 行為設定。
         </p>
+        <div id="login-error-banner" class="hidden mb-6 p-4 rounded bg-red-950/70 border border-red-800 text-left text-xs text-red-200">
+          <!-- JS 動態注入詳細錯誤提示與引導 -->
+        </div>
         <a href="/auth/login" class="inline-flex items-center justify-center w-full px-4 py-2.5 bg-zinc-100 hover:bg-white text-zinc-900 rounded font-medium text-sm transition-colors">
           <svg class="w-4 h-4 mr-2" viewBox="0 0 24 24" fill="currentColor">
             <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.893.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028z"/>
@@ -323,6 +326,47 @@
 
     // 初始化與檢查登入狀態
     async function init() {
+      // 檢查 URL 是否帶有 OAuth2 錯誤參數
+      const urlParams = new URLSearchParams(window.location.search);
+      const authErr = urlParams.get('error');
+      const errBanner = document.getElementById('login-error-banner');
+
+      if (authErr && errBanner) {
+        errBanner.classList.remove('hidden');
+        if (authErr === 'missing_client_secret') {
+          errBanner.innerHTML = `
+            <div class="font-semibold text-red-100 mb-1">⚠️ 尚未設定 DISCORD_CLIENT_SECRET</div>
+            <p class="text-zinc-300 mb-2 leading-relaxed">
+              Discord OAuth2 登入需要應用程式密鑰 (Client Secret) 才能換取授權 Token。<br>
+              請依照以下步驟設定：
+            </p>
+            <ol class="list-decimal list-inside space-y-1 text-zinc-300 font-mono text-[11px] bg-black/40 p-2.5 rounded border border-red-900/50 mb-2">
+              <li>前往 <a href="https://discord.com/developers/applications" target="_blank" class="underline text-blue-400">Discord Developer Portal</a> 選擇機器人</li>
+              <li>點選左側選單 <b>OAuth2</b> ➔ 複製 <b>Client Secret</b></li>
+              <li>在專案根目錄 <code class="text-amber-300">.env</code> 檔案加入：<br><span class="text-emerald-400">DISCORD_CLIENT_SECRET=你的密鑰內容</span></li>
+              <li>重啟機器人後重新點選登入！</li>
+            </ol>
+          `;
+        } else if (authErr === 'token_exchange_failed') {
+          errBanner.innerHTML = `
+            <div class="font-semibold text-red-100 mb-1">❌ Discord Token 換取失敗</div>
+            <p class="text-zinc-300 leading-relaxed">
+              向 Discord 伺服器驗證授權碼失敗，可能原因：<br>
+              1. <code class="text-amber-300">.env</code> 中的 <code class="text-amber-300">DISCORD_CLIENT_SECRET</code> 填寫不正確。<br>
+              2. Discord 後台的 Redirect URI 未正確設定為：<code class="text-emerald-400">http://localhost:8080/auth/callback</code>。
+            </p>
+          `;
+        } else if (authErr === 'auth_denied') {
+          errBanner.innerHTML = `
+            <div class="font-semibold text-zinc-200">ℹ️ 您已取消或拒絕 Discord 授權。</div>
+          `;
+        } else {
+          errBanner.innerHTML = `
+            <div class="font-semibold text-red-100">⚠️ 登入遭遇問題 (${authErr})，請重試或檢查伺服器後台日誌。</div>
+          `;
+        }
+      }
+
       try {
         const res = await fetch('/api/me');
         if (res.status === 200) {

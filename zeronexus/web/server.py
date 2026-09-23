@@ -75,13 +75,18 @@ class WebPanelServer:
 
     async def _handle_login(self, request: web.Request) -> web.Response:
         """引導至官方 Discord OAuth2 授權頁面"""
+        client_secret = config.web_panel.client_secret or os.getenv("DISCORD_CLIENT_SECRET", "").strip()
+        if not client_secret:
+            log.warning("尚未配置 DISCORD_CLIENT_SECRET，提前攔截並提醒使用者！")
+            return web.HTTPFound("/?error=missing_client_secret")
+
         try:
             auth_url = get_oauth2_login_url()
             return web.HTTPFound(auth_url)
         except Exception as e:
             log.error(f"產生 OAuth2 授權跳轉連結失敗: {e}", exc_info=True)
             return web.Response(
-                text=f"無法跳轉至 Discord OAuth2 登入：{e}。\n請檢查 .env 檔案中是否已設定 DISCORD_CLIENT_ID 與 DISCORD_CLIENT_SECRET。",
+                text=f"無法跳轉至 Discord OAuth2 登入：{e}。\n請檢查 .env 檔案中是否已設定 DISCORD_CLIENT_SECRET。",
                 status=500,
                 content_type="text/plain",
                 charset="utf-8",
@@ -89,6 +94,11 @@ class WebPanelServer:
 
     async def _handle_auth_callback(self, request: web.Request) -> web.Response:
         """處理 Discord OAuth2 回呼並簽發 Session Cookie"""
+        client_secret = config.web_panel.client_secret or os.getenv("DISCORD_CLIENT_SECRET", "").strip()
+        if not client_secret:
+            log.warning("OAuth2 回呼時發現未設定 DISCORD_CLIENT_SECRET！")
+            return web.HTTPFound("/?error=missing_client_secret")
+
         try:
             code = request.query.get("code")
             error = request.query.get("error")
