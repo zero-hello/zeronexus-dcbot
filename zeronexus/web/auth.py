@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
@@ -40,10 +41,33 @@ def has_guild_admin_permission(permissions: int | str) -> bool:
         return False
 
 
+def get_discord_client_id() -> str:
+    """獲取 Discord Client ID，若未明確配置則自動自 Bot Token 或環境變數解析"""
+    if config.web_panel.client_id:
+        return config.web_panel.client_id.strip()
+
+    env_id = os.getenv("DISCORD_CLIENT_ID", "").strip() or os.getenv("CLIENT_ID", "").strip()
+    if env_id:
+        return env_id
+
+    # 嘗試從 Bot Token 的 Base64 前綴逆向解析 Client ID
+    token = (config.discord.token or "").strip()
+    if token and "." in token:
+        try:
+            part = token.split(".")[0]
+            padding = "=" * (-len(part) % 4)
+            decoded = base64.b64decode(part + padding).decode("utf-8")
+            if decoded.isdigit():
+                return decoded
+        except Exception:
+            pass
+    return ""
+
+
 def get_oauth2_login_url(state: str = "") -> str:
     """產生官方 Discord OAuth2 授權跳轉連結"""
-    client_id = config.web_panel.client_id or config.discord.client_id
-    redirect_uri = config.web_panel.redirect_uri
+    client_id = get_discord_client_id()
+    redirect_uri = config.web_panel.redirect_uri or f"http://localhost:{config.web_panel.port}/auth/callback"
 
     params = {
         "client_id": client_id,
@@ -60,8 +84,9 @@ def get_oauth2_login_url(state: str = "") -> str:
 
 async def exchange_code_for_token(code: str) -> Optional[Dict[str, Any]]:
     """以 Authorization Code 換取 Discord Access Token"""
-    client_id = config.web_panel.client_id or config.discord.client_id
-    client_secret = config.web_panel.client_secret
+    client_id = get_discord_client_id()
+    client_secret = config.web_panel.client_secret or os.getenv("DISCORD_CLIENT_SECRET", "").strip()
+    redirect_uri = config.web_panel.redirect_uri or f"http://localhost:{config.web_panel.port}/auth/callback"
 
     if not client_id or not client_secret:
         log.warning("未設定 DISCORD_CLIENT_ID 或 DISCORD_CLIENT_SECRET，無法完成 OAuth2 認證！")
@@ -72,7 +97,7 @@ async def exchange_code_for_token(code: str) -> Optional[Dict[str, Any]]:
         "client_secret": client_secret,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": config.web_panel.redirect_uri,
+        "redirect_uri": redirect_uri,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 

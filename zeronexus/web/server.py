@@ -75,28 +75,42 @@ class WebPanelServer:
 
     async def _handle_login(self, request: web.Request) -> web.Response:
         """引導至官方 Discord OAuth2 授權頁面"""
-        auth_url = get_oauth2_login_url()
-        return web.HTTPFound(auth_url)
+        try:
+            auth_url = get_oauth2_login_url()
+            return web.HTTPFound(auth_url)
+        except Exception as e:
+            log.error(f"產生 OAuth2 授權跳轉連結失敗: {e}", exc_info=True)
+            return web.Response(
+                text=f"無法跳轉至 Discord OAuth2 登入：{e}。\n請檢查 .env 檔案中是否已設定 DISCORD_CLIENT_ID 與 DISCORD_CLIENT_SECRET。",
+                status=500,
+                content_type="text/plain",
+                charset="utf-8",
+            )
 
     async def _handle_auth_callback(self, request: web.Request) -> web.Response:
         """處理 Discord OAuth2 回呼並簽發 Session Cookie"""
-        code = request.query.get("code")
-        error = request.query.get("error")
+        try:
+            code = request.query.get("code")
+            error = request.query.get("error")
 
-        if error or not code:
-            log.warning(f"OAuth2 授權遭到拒絕或取消: {error}")
-            return web.HTTPFound("/?error=auth_denied")
+            if error or not code:
+                log.warning(f"OAuth2 授權遭到拒絕或取消: {error}")
+                return web.HTTPFound("/?error=auth_denied")
 
-        token_data = await exchange_code_for_token(code)
-        if not token_data or "access_token" not in token_data:
-            return web.HTTPFound("/?error=token_exchange_failed")
+            token_data = await exchange_code_for_token(code)
+            if not token_data or "access_token" not in token_data:
+                return web.HTTPFound("/?error=token_exchange_failed")
 
-        access_token = token_data["access_token"]
-        user_profile = await fetch_user_profile(access_token)
-        if not user_profile:
-            return web.HTTPFound("/?error=fetch_profile_failed")
+            access_token = token_data["access_token"]
+            user_profile = await fetch_user_profile(access_token)
+            if not user_profile:
+                return web.HTTPFound("/?error=fetch_profile_failed")
 
-        user_guilds = await fetch_user_guilds(access_token)
+            user_guilds = await fetch_user_guilds(access_token)
+        except Exception as ce:
+            log.error(f"OAuth2 回呼處理發生異常: {ce}", exc_info=True)
+            return web.HTTPFound("/?error=oauth_callback_exception")
+
 
         # 封裝 Session Token
         session_token = create_session_token({

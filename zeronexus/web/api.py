@@ -32,20 +32,43 @@ def get_current_session(request: web.Request) -> Optional[Dict[str, Any]]:
     return verify_session_token(cookie_token)
 
 
+import functools
+
+
 def require_auth(handler):
     """API 認證裝飾器：要求必須具備有效 Session"""
-    async def wrapper(request: web.Request):
+    @functools.wraps(handler)
+    async def wrapper(*args, **kwargs):
+        request = next((a for a in args if isinstance(a, web.Request)), None)
+        if request is None and "request" in kwargs:
+            request = kwargs["request"]
+        if request is None and args:
+            request = args[-1]
+
+        if not isinstance(request, web.Request):
+            return web.json_response({"error": "無效的請求對象！"}, status=500)
+
         session = get_current_session(request)
         if not session:
             return web.json_response({"error": "未登入或憑證已失效，請重新登入！"}, status=401)
         request["user_session"] = session
-        return await handler(request)
+        return await handler(*args, **kwargs)
     return wrapper
 
 
 def require_owner(handler):
     """API 權限裝飾器：要求必須為造物主 Zero"""
-    async def wrapper(request: web.Request):
+    @functools.wraps(handler)
+    async def wrapper(*args, **kwargs):
+        request = next((a for a in args if isinstance(a, web.Request)), None)
+        if request is None and "request" in kwargs:
+            request = kwargs["request"]
+        if request is None and args:
+            request = args[-1]
+
+        if not isinstance(request, web.Request):
+            return web.json_response({"error": "無效的請求對象！"}, status=500)
+
         session = get_current_session(request)
         if not session:
             return web.json_response({"error": "未登入！"}, status=401)
@@ -54,7 +77,7 @@ def require_owner(handler):
         if user_id != owner_id and user_id != "1514971711739789352":
             return web.json_response({"error": "權限不足，此操作僅限造物主執行！"}, status=403)
         request["user_session"] = session
-        return await handler(request)
+        return await handler(*args, **kwargs)
     return wrapper
 
 
