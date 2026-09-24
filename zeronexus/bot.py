@@ -1528,29 +1528,29 @@ class ZeroNexusBot(commands.Bot):
         # 2. Quota Check & Reservation (atomic 3-phase)
         t_q0 = time.perf_counter()
         allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id)
-            pipeline_metrics.quota_check_ms = (time.perf_counter() - t_q0) * 1000.0
+        pipeline_metrics.quota_check_ms = (time.perf_counter() - t_q0) * 1000.0
 
-            if not allowed:
-                card = ZNCard(
-                    title=f"❌ AI 每日額度已用罄 ➔ {req_ctx.author_name}",
-                    description=(
-                        f"您今日的 AI 免費對話配額已達上限 (`{projected_used}/{effective_limit}`)。\n"
-                        "額度將於每日 00:00 (Asia/Taipei) 自動重設。"
-                    ),
-                    status_pill=ZNStatusPill.ERROR,
-                    color=ZNColor.ERROR,
-                )
+        if not allowed:
+            card = ZNCard(
+                title=f"❌ AI 每日額度已用罄 ➔ {req_ctx.author_name}",
+                description=(
+                    f"您今日的 AI 免費對話配額已達上限 (`{projected_used}/{effective_limit}`)。\n"
+                    "額度將於每日 00:00 (Asia/Taipei) 自動重設。"
+                ),
+                status_pill=ZNStatusPill.ERROR,
+                color=ZNColor.ERROR,
+            )
+            try:
+                if channel_override is not None:
+                    await effective_channel.send(embed=card.to_embed())
+                else:
+                    await message.reply(embed=card.to_embed(), mention_author=False)
+            except (discord.NotFound, discord.HTTPException):
                 try:
-                    if channel_override is not None:
-                        await effective_channel.send(embed=card.to_embed())
-                    else:
-                        await message.reply(embed=card.to_embed(), mention_author=False)
-                except (discord.NotFound, discord.HTTPException):
-                    try:
-                        await effective_channel.send(embed=card.to_embed())
-                    except Exception:
-                        pass
-                return
+                    await effective_channel.send(embed=card.to_embed())
+                except Exception:
+                    pass
+            return
 
         # 3. Create Cancel View & Send Thinking message immediately (with Red Cancel Button)
         from zeronexus.ui.views import AICancelView

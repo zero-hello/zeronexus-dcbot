@@ -2,6 +2,15 @@
 
 ---
 
+## [2.5.1] - 2026-09-24
+
+### 🐛 緊急修復 (Hotfix)
+- **修復開機 IndentationError 縮排異常**：
+  - 修復 `zeronexus/bot.py` 第 1531~1553 行因先前重構移除多餘條件式所導致之意外多餘縮排（`unexpected indent`），解決服務啟動時無法載入 `ZeroNexusBot` 的崩潰問題。
+  - 對全專案所有 Python 程式碼執行嚴格編譯驗證，確保開機載入無任何語法錯誤。
+
+---
+
 ## [2.5.0] - 2026-09-24
 
 ### 🛡️ 全專案安全加固、極致效能優化與去 AI 腔調人話重構 (Security Hardening, Performance & Humanization)
