@@ -2,6 +2,23 @@
 
 ---
 
+## [2.6.0] - 2026-09-25
+
+### 🚀 重大新功能：本地 GGUF 神經推論引擎與選單精簡重組 (Local GGUF Engine & Menu Redesign)
+- **整合本地 GGUF 離線推論適配器 (Local GGUF Adapter)**：
+  - 引進 `llama-cpp-python` 核心，全速下載並串接 `Qwen2.5-0.5B-Instruct-GGUF`（`qwen2.5-0.5b-instruct-q8_0.gguf`）。
+  - **延遲加載 (Lazy Loading) 與執行緒隔離**：僅在使用者選用本地模型時才加載權重至記憶體，推論過程全面由 `asyncio.to_thread` 隔離於執行緒池，絕不卡頓主 Event Loop。
+  - **端點自主 0 延遲 0 額度**：無須外部 API Key，不受任何網路波動與廠商配額限制，每日配額設定為無上限。
+- **Discord 互動選單優化與 Gemini 2.5 汰換**：
+  - 自選單中徹底移除已被停用或退役之 Gemini 2.5 系列模型（`gemini-2.5-flash`、`gemini-2.5-pro`、`gemini-2.5-flash-lite`、`gemini-2.5-flash-image`）。
+  - 將本地自主運算模型 `Qwen 2.5 0.5B GGUF` 配置於選單**第二個順位**（緊隨預設模型 `gemini-3.1-flash-lite` 之後）。
+  - 選單總項數維持在 18 項，嚴格符合 Discord Select Menu 25 項上限限制。
+- **健全性測試與防護**：
+  - 新增 `tests/test_local_gguf_adapter.py` 單元測試套件，涵蓋選單排程檢驗、模型註冊元數據、缺少檔案錯誤防護與推論輸出回傳。
+  - 在 `.gitignore` 中完善 `*.gguf` 規則，防範大型二進位模型權重意外進入版本控制。
+
+---
+
 ## [2.5.3] - 2026-09-25
 
 ### 🐛 關鍵修復與穩定性加固 (Critical Fixes & Robustness)

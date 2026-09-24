@@ -217,6 +217,30 @@ class ModelRegistry:
                 description="DeepSeek R1 蒸餾強化推理模型（Hugging Face 官方路由）。",
             ),
 
+            # Local GGUF Autonomous Edge Models
+            ModelMetadata(
+                model_id="qwen2.5-0.5b-instruct-q8_0",
+                display_name="Qwen 2.5 0.5B Instruct GGUF",
+                provider="local",
+                vendor="qwen",
+                status=ModelStatus.ACTIVE,
+                context_window=4096,
+                capabilities={"text", "reasoning"},
+                is_free=True,
+                description="本地端極速 GGUF 自主運算模型，零延遲、離線自主運行、無任何 API 額度限制。",
+            ),
+            ModelMetadata(
+                model_id="local/qwen2.5-0.5b-instruct",
+                display_name="Qwen 2.5 0.5B Instruct (Local Alias)",
+                provider="local",
+                vendor="qwen",
+                status=ModelStatus.ACTIVE,
+                context_window=4096,
+                capabilities={"text", "reasoning"},
+                is_free=True,
+                description="本地端極速 GGUF 自主運算模型別名。",
+            ),
+
             # Google Gemini Series (Native Google API & OpenRouter Routes)
             ModelMetadata(
                 model_id="gemini-2.5-flash",

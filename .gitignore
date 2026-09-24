@@ -46,6 +46,7 @@ data/
 logs/
 *.log
 *.onnx
+*.gguf
 *.enc
 
 # Archives & Backups

@@ -23,6 +23,7 @@ from zeronexus.ai_gateway.adapters.manus import ManusAdapter
 from zeronexus.ai_gateway.adapters.cohere import CohereAdapter
 from zeronexus.ai_gateway.adapters.mistral import MistralAdapter
 from zeronexus.ai_gateway.adapters.groq import GroqAdapter
+from zeronexus.ai_gateway.adapters.local_gguf import LocalGGUFAdapter
 from zeronexus.ai_gateway.adapters.openrouter import (
     OPENROUTER_STRICT_FREE_MODELS,
     OpenRouterAdapter,
@@ -49,6 +50,7 @@ class AIGateway:
             "cohere": CohereAdapter(),
             "mistral": MistralAdapter(),
             "groq": GroqAdapter(),
+            "local": LocalGGUFAdapter(),
         }
 
         hf_keys = getattr(config.ai, "huggingface_keys", None) or ([config.ai.huggingface_token] if config.ai.huggingface_token else [])
@@ -65,6 +67,7 @@ class AIGateway:
             "cohere": ProviderKeyPool("cohere", cohere_keys),
             "mistral": ProviderKeyPool("mistral", mistral_keys),
             "groq": ProviderKeyPool("groq", groq_keys),
+            "local": ProviderKeyPool("local", ["local-autonomous-gguf"]),
         }
 
     async def generate_response(
@@ -147,6 +150,8 @@ class AIGateway:
                 primary = "mistral"
             elif any(k in clean_override.lower() for k in ("groq", "llama-3.3", "llama-3.1", "deepseek-r1-distill")):
                 primary = "groq"
+            elif any(k in clean_override.lower() for k in ("local", "qwen2.5-0.5b", "gguf")):
+                primary = "local"
             else:
                 primary = "openrouter"
 

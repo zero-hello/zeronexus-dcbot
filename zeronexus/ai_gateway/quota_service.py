@@ -467,6 +467,10 @@ class QuotaService:
     # =========================================================================
 
     MODEL_DEFAULT_QUOTAS: Dict[str, int] = {
+        # 本地自主運算 GGUF 模型 (無額度限制)
+        "qwen2.5-0.5b-instruct-q8_0": 999999,
+        "local/qwen2.5-0.5b-instruct": 999999,
+
         # 極速輕量旗艦 (50 次/天)
         "gemini-3.1-flash-lite": 50,
         "gemini-2.5-flash": 50,
@@ -641,7 +645,9 @@ class QuotaService:
     async def format_model_quota_desc(self, user_id: int, model_id: str, tag: str = "") -> str:
         """Formats a descriptive string for Discord Select Menu options (< 100 characters)."""
         info = await self.get_user_model_quota(user_id, model_id)
-        if info["is_dev"]:
+        if "qwen2.5-0.5b" in model_id.lower() or "local" in model_id.lower():
+            prefix = "今日剩餘：無上限 (本地運算)"
+        elif info["is_dev"]:
             prefix = "今日剩餘：無上限"
         else:
             prefix = f"今日剩餘：{info['remaining']}/{info['limit']} 次"
