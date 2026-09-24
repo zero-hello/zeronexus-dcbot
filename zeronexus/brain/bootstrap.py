@@ -65,15 +65,32 @@ def check_and_repair_dependencies() -> bool:
     if not shutil.which("g++"):
         env.pop("CXX", None)
 
-    cmd = [
-        sys.executable, "-m", "pip", "install",
-        "--no-cache-dir",
-        "--prefer-binary",
-        "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cpu",
-    ] + missing_pip_names
+    has_avx2 = True
+    if os.path.exists("/proc/cpuinfo"):
+        try:
+            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
+                has_avx2 = "avx2" in f.read().lower()
+        except Exception:
+            pass
+
+    if has_avx2:
+        cmd = [
+            sys.executable, "-m", "pip", "install",
+            "--no-cache-dir",
+            "--prefer-binary",
+            "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cpu",
+        ] + missing_pip_names
+    else:
+        # 主機不支援 AVX2，啟用無 AVX 原始碼構建相容模式
+        env["CMAKE_ARGS"] = "-DGGML_AVX2=OFF -DGGML_AVX=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"
+        cmd = [
+            sys.executable, "-m", "pip", "install",
+            "--no-cache-dir",
+            "--no-binary", "llama-cpp-python",
+        ] + missing_pip_names
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
         if res.returncode == 0:
             print("\033[38;5;48m✔ 依賴套件動態安裝成功！已恢復神經大腦執行環境。\033[0m")
             return True
@@ -83,7 +100,10 @@ def check_and_repair_dependencies() -> bool:
         log.warning(f"嘗試自動安裝套件異常: {e}")
 
     print("\033[38;5;196m✘ 自動安裝套件受限。請於環境或容器內手動安裝：\033[0m")
-    print(f"\033[38;5;220m  pip install --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu {' '.join(missing_pip_names)}\033[0m")
+    if has_avx2:
+        print(f"\033[38;5;220m  pip install --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu {' '.join(missing_pip_names)}\033[0m")
+    else:
+        print(f"\033[38;5;220m  CMAKE_ARGS=\"-DGGML_AVX2=OFF -DGGML_AVX=OFF -DGGML_FMA=OFF\" pip install --no-binary llama-cpp-python {' '.join(missing_pip_names)}\033[0m")
     print("\033[38;5;244m若使用 Docker 部署，請重新建置映像檔：docker compose build --no-cache\033[0m\n")
     return False
 

@@ -2,6 +2,21 @@
 
 ---
 
+## [2.6.5] - 2026-09-25
+
+### ⚡ 無 AVX2 伺服器相容構建與動態自癒 (Zero-AVX Auto-Compilation & Universal Resilience)
+- **Dockerfile 智慧 CPU 特徵偵測與相容構建**：
+  - 更新 [`Dockerfile`](Dockerfile)：
+    - 建置階段自動探測主機 `/proc/cpuinfo`。
+    - 若主機支援 AVX2，自動秒級下載官方預編譯優化 Wheel。
+    - 若檢測到主機 CPU 未具備 AVX2，自動啟用相容性原始碼編譯參數 `CMAKE_ARGS="-DGGML_AVX2=OFF -DGGML_AVX=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"`，在本地自動編譯出完全相容當前 CPU 之二進位執行檔，使老舊或虛擬化 VPS CPU 亦能無礙運行本地模型。
+- **大腦依賴自癒無 AVX 自動調度**：
+  - 更新 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py) 中的 `check_and_repair_dependencies()`，開機動態安裝時若探測到缺少 AVX2，自動切換至無 AVX 編譯環境，杜絕預編譯 AVX2 輪子導致的指令集衝突。
+- **錯誤提示與重建指引深化**：
+  - 於 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py) 增強錯誤日誌指引，明確引導使用者透過 `docker compose build --no-cache` 一鍵由系統自動編譯相容版本。
+
+---
+
 ## [2.6.4] - 2026-09-25
 
 ### 🛡️ 沙盒獨立子行程硬體安全探測與 SIGILL 零崩潰隔離 (Subprocess Sandbox Probe & SIGILL Immunity)
