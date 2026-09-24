@@ -2,6 +2,21 @@
 
 ---
 
+## [2.6.4] - 2026-09-25
+
+### 🛡️ 沙盒獨立子行程硬體安全探測與 SIGILL 零崩潰隔離 (Subprocess Sandbox Probe & SIGILL Immunity)
+- **沙盒隔離硬體相容性探測（防止主進程 SIGILL 暴斃重啟）**：
+  - 在 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py) 實作 `LocalGGUFAdapter.probe_hardware_safety()` 機制。
+  - 在主程序加載 C++ 動態函式庫前，優先啟動沙盒獨立子行程執行微型實例化探測。若底層 CPU 缺少 AVX2 指令集並觸發 `Illegal instruction`（SIGILL，退出代碼 `-4` 或 `132`），主程序在毫秒級精準攔截。
+  - **主行程零崩潰保證**：主程式與 Discord 連線絲毫不受波及，機器人永不重啟，徹底告別 `CRASHED` 狀態。
+- **快取記憶與智慧降級 (Zero-Overhead Safe Fallback)**：
+  - 探測結果自動快取至 `_hardware_probe_cache`，避免反覆啟動子進程。
+  - 遇到指令集不相容之硬體環境時，適配器主動拋出友善保護異常，觸發 AI Gateway 智慧降級路由，無縫切換至備援雲端模型（Gemini、DeepSeek 等）。
+- **單元測試強化**：
+  - 於 `tests/test_local_gguf_adapter.py` 新增 `test_hardware_safety_probe_sigill_protection`，以 mock 模擬子行程回傳 SIGILL (-4)，驗證硬體探測保護、快取紀錄與主行程零崩潰拋出防護異常之完整生命週期。
+
+---
+
 ## [2.6.3] - 2026-09-25
 
 ### 🚀 預編譯二進位 Wheel 與無編譯器環境相容強化 (Prebuilt Wheels & Zero-Compiler Fallback)

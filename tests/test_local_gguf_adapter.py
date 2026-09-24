@@ -115,3 +115,28 @@ class TestLocalGGUFIntegration:
             res = ensure_gguf_model_ready(models_dir=str(tmp_path), console_output=False)
             assert res is True
             mock_dl.assert_called_once()
+
+    def test_hardware_safety_probe_sigill_protection(self, tmp_path) -> None:
+        """測試 CPU 缺少指令集時觸發 SIGILL 的沙盒隔離與主行程零崩潰防護機制。"""
+        adapter = LocalGGUFAdapter(models_dir=str(tmp_path))
+        dummy_model = tmp_path / "test.gguf"
+        dummy_model.write_bytes(b"dummy")
+
+        LocalGGUFAdapter._hardware_probe_cache.clear()
+
+        # 模擬子行程回傳 SIGILL (-4)
+        mock_completed = MagicMock()
+        mock_completed.returncode = -4
+        mock_completed.stderr = "Illegal instruction (core dumped)"
+
+        with patch("subprocess.run", return_value=mock_completed):
+            safe, reason = LocalGGUFAdapter.probe_hardware_safety(str(dummy_model))
+            assert safe is False
+            assert "SIGILL" in reason
+
+            # 快取生效
+            assert str(dummy_model) in LocalGGUFAdapter._hardware_probe_cache
+
+            # 驗證 _get_or_load_llm 攔截保護，主行程安全拋出例外防護
+            with pytest.raises(RuntimeError, match="SIGILL"):
+                adapter._get_or_load_llm(str(dummy_model))
