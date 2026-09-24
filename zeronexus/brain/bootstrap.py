@@ -36,20 +36,31 @@ GGUF_MODEL_SPEC = {
 
 
 def check_and_repair_dependencies() -> bool:
-    """自動偵測並自癒修復 Python 神經推論依賴環境 (onnxruntime, tokenizers 等)"""
-    packages = ["onnxruntime", "tokenizers", "huggingface_hub", "cryptography"]
-    missing = [pkg for pkg in packages if importlib.util.find_spec(pkg) is None]
+    """自動偵測並自癒修復 Python 神經推論依賴環境 (onnxruntime, tokenizers, llama_cpp 等)"""
+    package_map = {
+        "onnxruntime": "onnxruntime",
+        "tokenizers": "tokenizers",
+        "huggingface_hub": "huggingface_hub",
+        "cryptography": "cryptography",
+        "llama_cpp": "llama-cpp-python",
+    }
+    missing_mods = []
+    missing_pip_names = []
+    for mod_name, pip_name in package_map.items():
+        if importlib.util.find_spec(mod_name) is None:
+            missing_mods.append(mod_name)
+            missing_pip_names.append(pip_name)
 
-    if not missing:
+    if not missing_mods:
         return True
 
-    print(f"\033[38;5;208m⚠️  [大腦守護者] 偵測到當前環境缺少神經運算套件: {', '.join(missing)}\033[0m")
+    print(f"\033[38;5;208m⚠️  [大腦守護者] 偵測到當前環境缺少神經運算套件: {', '.join(missing_mods)}\033[0m")
     print("\033[38;5;244m正在嘗試自動動態安裝依賴...\033[0m")
 
     import subprocess
     try:
-        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + missing
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + missing_pip_names
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if res.returncode == 0:
             print("\033[38;5;48m✔ 依賴套件動態安裝成功！已恢復神經大腦執行環境。\033[0m")
             return True
@@ -59,8 +70,8 @@ def check_and_repair_dependencies() -> bool:
         log.warning(f"嘗試自動安裝套件異常: {e}")
 
     print("\033[38;5;196m✘ 自動安裝套件受限。請於環境或容器內手動安裝：\033[0m")
-    print(f"\033[38;5;220m  pip install {' '.join(missing)}\033[0m")
-    print("\033[38;5;244m若使用 Docker 部署，請重新建置映象檔：docker compose build --no-cache\033[0m\n")
+    print(f"\033[38;5;220m  pip install {' '.join(missing_pip_names)}\033[0m")
+    print("\033[38;5;244m若使用 Docker 部署，請重新建置映像檔：docker compose build --no-cache\033[0m\n")
     return False
 
 

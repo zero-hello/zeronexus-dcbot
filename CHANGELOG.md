@@ -2,6 +2,18 @@
 
 ---
 
+## [2.6.2] - 2026-09-25
+
+### 🔧 容器與依賴自癒韌性強化 (Docker & Dependency Self-Healing Resilience)
+- **正式納入 `llama-cpp-python` 依賴管理**：
+  - 在 [`requirements.txt`](requirements.txt) 與 [`pyproject.toml`](pyproject.toml) 正式將 `llama-cpp-python>=0.2.89` 納入生產依賴。
+  - 在 [`Dockerfile`](Dockerfile) 系統建置階段加入 `cmake` 工具，確保容器建置與輪子編譯無阻。
+- **動態環境自癒與熱安裝機制**：
+  - 更新 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py) 中的 `check_and_repair_dependencies()`，建立 Python 模組名稱（`llama_cpp`）與 pip 套件名稱（`llama-cpp-python`）之映射自癒機制。
+  - 在 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py) 載入模型時若遇缺少套件，自動啟動熱修復動態安裝嘗試，並提供容器重新建置之繁體中文友善指引。
+
+---
+
 ## [2.6.1] - 2026-09-25
 
 ### 🛡️ 守衛與模型自癒強化 (Model Bootstrap & Self-Healing Guard)

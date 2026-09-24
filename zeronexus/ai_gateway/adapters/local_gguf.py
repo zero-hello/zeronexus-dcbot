@@ -82,10 +82,17 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
             try:
                 import llama_cpp
-            except ImportError as err:
-                raise RuntimeError(
-                    "未安裝 llama-cpp-python 套件，無法執行本地 GGUF 模型推論。"
-                ) from err
+            except ImportError:
+                log.warning("偵測到環境缺少 llama-cpp-python 套件，嘗試啟動大腦自動修復機制進行安裝...")
+                try:
+                    from zeronexus.brain.bootstrap import check_and_repair_dependencies
+                    check_and_repair_dependencies()
+                    import llama_cpp
+                except Exception as repair_err:
+                    raise RuntimeError(
+                        "未安裝 llama-cpp-python 套件且動態修復受限，無法執行本地 GGUF 模型推論。"
+                        "若在 Docker 容器內運行，請執行 'docker compose build --no-cache' 重新建置映像檔。"
+                    ) from repair_err
 
             threads = max(1, (os.cpu_count() or 4) - 1)
             llm = llama_cpp.Llama(

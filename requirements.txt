@@ -26,3 +26,4 @@ onnxruntime>=1.20.0
 tokenizers>=0.20.0
 cryptography>=43.0.0
 huggingface-hub>=0.25.0
+llama-cpp-python>=0.2.89

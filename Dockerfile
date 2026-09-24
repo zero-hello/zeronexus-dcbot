@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install system dependencies for Pillow, Git, and build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    cmake \
     libjpeg-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*

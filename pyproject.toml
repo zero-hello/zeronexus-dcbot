@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zeronexus"
-version = "2.6.1"
+version = "2.6.2"
 description = "ZeroNexus (ZN) — Advanced Modular Discord Platform"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,6 +36,7 @@ dependencies = [
     "tokenizers>=0.20.0",
     "cryptography>=43.0.0",
     "huggingface-hub>=0.25.0",
+    "llama-cpp-python>=0.2.89",
 ]
 
 [project.optional-dependencies]
