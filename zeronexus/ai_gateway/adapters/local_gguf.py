@@ -101,9 +101,9 @@ class LocalGGUFAdapter(BaseAIAdapter):
             # 檢查是否遭遇 SIGILL (Illegal instruction, 代碼 -4 或 132) 或崩潰
             if res.returncode in (-4, 132) or "illegal instruction" in (res.stderr or "").lower():
                 err_msg = (
-                    f"主機 CPU 不支援該套件之向量加速指令集 (Illegal instruction / SIGILL){cpu_features_warning}。"
+                    f"主機或託管伺服器 CPU 不支援該套件之向量加速指令集 (Illegal instruction / SIGILL){cpu_features_warning}。"
                     f"為保護機器人穩定運行，已安全停用本地推論模組，自動切換至雲端備援模型。"
-                    f"提示：可執行 'docker compose build --no-cache'，系統已內建自動編譯相容於當前 CPU 之版本。"
+                    f"（若為第三方託管環境，因虛擬 CPU 通常未提供 AVX2 指令集且無法本地編譯，建議直接於選單選用雲端頂級模型）"
                 )
                 cls._hardware_probe_cache[model_path] = (False, err_msg)
                 return False, err_msg

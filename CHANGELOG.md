@@ -2,6 +2,16 @@
 
 ---
 
+## [2.6.6] - 2026-09-25
+
+### ☁️ 託管環境友善指引與選單標註 (Hosting Environment Guidance & UI Tags)
+- **Discord 互動選單規格標註**：
+  - 更新 [`zeronexus/ui/model_select_view.py`](zeronexus/ui/model_select_view.py)，在 `Qwen 2.5 0.5B GGUF` 選單標籤中明確註明 `(需主機支援 AVX2，託管伺服器請選雲端模型)`，防範託管平台使用者誤選進入沙盒降級流程。
+- **日誌與防護提示通俗化**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py) 的錯誤診斷訊息，移除對無 Docker 權限之託管使用者無意義之指令指引，給予針對託管環境 CPU 特性之清楚說明與最佳實踐推薦。
+
+---
+
 ## [2.6.5] - 2026-09-25
 
 ### ⚡ 無 AVX2 伺服器相容構建與動態自癒 (Zero-AVX Auto-Compilation & Universal Resilience)
