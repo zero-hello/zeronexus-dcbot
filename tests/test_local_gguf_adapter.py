@@ -1,6 +1,7 @@
 """單元測試：本地 GGUF 推論引擎、適配器整合與模型選單項次驗證。"""
 
 import os
+import time
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -51,8 +52,9 @@ class TestLocalGGUFIntegration:
         os.makedirs(empty_dir, exist_ok=True)
 
         adapter = LocalGGUFAdapter(models_dir=empty_dir)
-        with pytest.raises(FileNotFoundError, match="本地 GGUF 模型檔案不存在"):
-            adapter._get_or_load_llm(adapter._resolve_model_path("non_existent_model"))
+        with patch("zeronexus.brain.bootstrap.ensure_gguf_model_ready", return_value=False):
+            with pytest.raises(FileNotFoundError, match="本地 GGUF 模型檔案不存在"):
+                adapter._get_or_load_llm(adapter._resolve_model_path("non_existent_model"))
 
     @pytest.mark.asyncio
     async def test_local_gguf_adapter_generate_mock(self) -> None:
@@ -75,8 +77,12 @@ class TestLocalGGUFIntegration:
             },
         }
 
-        # 模擬 _get_or_load_llm 回傳 mock_llm
-        with patch.object(adapter, "_get_or_load_llm", return_value=mock_llm):
+        # 模擬無原生二進位執行檔時，走 Python 套件推論路徑
+        with (
+            patch.object(adapter, "_get_llama_server_path", return_value=None),
+            patch.object(adapter, "_get_llama_cli_path", return_value=None),
+            patch.object(adapter, "_get_or_load_llm", return_value=mock_llm),
+        ):
             result = await adapter.generate(
                 system_instruction="請使用繁體中文回應",
                 messages=[{"role": "user", "content": "你好"}],
@@ -140,3 +146,55 @@ class TestLocalGGUFIntegration:
             # 驗證 _get_or_load_llm 攔截保護，主行程安全拋出例外防護
             with pytest.raises(RuntimeError, match="SIGILL"):
                 adapter._get_or_load_llm(str(dummy_model))
+
+    def test_bootstrap_ensure_llama_binaries(self, tmp_path) -> None:
+        """測試 bootstrap 中的 llama.cpp 二進位執行檔自癒管理邏輯。"""
+        from zeronexus.brain.bootstrap import (
+            ensure_llama_binaries_ready,
+            LLAMA_BIN_SPEC,
+        )
+
+        dummy_bin = tmp_path / LLAMA_BIN_SPEC["key_bin"]
+
+        # 1. 檔案不存在，觸發下載
+        with patch("zeronexus.brain.bootstrap.download_and_extract_llama_binaries", return_value=True) as mock_dl:
+            res = ensure_llama_binaries_ready(bin_dir=str(tmp_path), console_output=False)
+            assert res is True
+            mock_dl.assert_called_once()
+
+        # 2. 檔案已存在，秒速通過
+        dummy_bin.write_bytes(b"bin" * 1024)
+        with patch("zeronexus.brain.bootstrap.download_and_extract_llama_binaries") as mock_dl2:
+            res2 = ensure_llama_binaries_ready(bin_dir=str(tmp_path), console_output=False)
+            assert res2 is True
+            mock_dl2.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generate_via_server_mode(self, tmp_path) -> None:
+        """測試 LocalGGUFAdapter 的 llama-server HTTP 端點推論調用與結果解析。"""
+        adapter = LocalGGUFAdapter(models_dir=str(tmp_path))
+        dummy_model = tmp_path / "test.gguf"
+        dummy_model.write_bytes(b"dummy")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "測試早安回應"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 8},
+        }
+
+        with patch("httpx.AsyncClient.post", return_value=mock_response):
+            res = await adapter._generate_via_server(
+                server_url="http://127.0.0.1:8089",
+                system_instruction="系統提示",
+                messages=[{"role": "user", "content": "你好"}],
+                max_tokens=20,
+                temperature=0.7,
+                timeout=30.0,
+                model="local/test",
+                start_time=time.perf_counter(),
+                model_path=str(dummy_model),
+            )
+            assert res.text == "測試早安回應"
+            assert res.provider == "local"
+            assert res.completion_tokens == 8

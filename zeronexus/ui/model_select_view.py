@@ -27,7 +27,7 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "id": "qwen2.5-0.5b-instruct-q8_0",
         "label": "Qwen 2.5 0.5B GGUF (本地端自主運算・0延遲0額度)",
         "emoji": "⚡",
-        "tag": "本地離線推論 (需主機支援 AVX2，託管伺服器請選雲端模型)",
+        "tag": "本地離線推論 (自適應 CPU / 零雲端依賴)",
     },
     {
         "id": "deepseek/deepseek-v4-flash-vision-exp",

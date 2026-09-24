@@ -2,6 +2,24 @@
 
 ---
 
+## [2.7.0] - 2026-09-25
+
+### 🚀 方案 B：官方多 CPU 動態自適應二進位推論引擎 (Dynamic Binary Inference Engine)
+- **免 gcc、免 root、免 AVX2 限制之本地原生推論**：
+  - 徹底克服無 AVX2、無 C/C++ 編譯器環境（如各種 PaaS/虛擬機器託管伺服器）無法安裝 `llama-cpp-python` 的痛點。
+  - 整合官方原生預編譯二進位執行檔套件（含動態載入之 `libggml-cpu-x64.so`、`libggml-cpu-ivybridge.so`、`libggml-cpu-sse42.so` 等）。
+- **全自動依賴自癒下載（Zero-Touch Bootstrap）**：
+  - 在 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py) 新增 `ensure_llama_binaries_ready()`，於開機偵測主機環境時，自動自官方儲存庫高速下載並解壓縮原生二進位推論引擎至 `data/bin/llama/`。
+- **雙模推論服務架構（Server HTTP + CLI Fallback）**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - **優先模式（llama-server HTTP API）**：背景守護行程常駐，透過本機回環標準 OpenAI 格式端點（`http://127.0.0.1:8089/v1/chat/completions`）提供毫秒級串流與快速推論，避免程序頻繁重複啟動加載模型。
+    - **備援模式（llama-cli 命令列）**：若伺服器通訊逾時或受限，自動切換命令列管道推論。
+    - **終端安全釋放**：實作非同步 `close()` 自動探測並終止本機常駐程序，確保系統記憶體安全釋放。
+- **UI 與選單體驗升級**：
+  - 恢復選單友好標籤，在託管伺服器上亦可順暢體驗純 CPU 本地模型。
+
+---
+
 ## [2.6.6] - 2026-09-25
 
 ### ☁️ 託管環境友善指引與選單標註 (Hosting Environment Guidance & UI Tags)

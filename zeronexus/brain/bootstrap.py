@@ -34,6 +34,14 @@ GGUF_MODEL_SPEC = {
     "min_bytes": 600 * 1024 * 1024,  # 約 600MB
 }
 
+# 跨架構通用自適應 llama.cpp 二進位執行檔規格 (方案 B / 免 gcc / 免 AVX2 限制)
+LLAMA_BIN_SPEC = {
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11167/llama-b11167-bin-ubuntu-x64.tar.gz",
+    "desc": "llama.cpp 官方動態自適應二進位推論引擎 (方案 B / 跨 CPU 通用)",
+    "bin_dir_rel": os.path.join("data", "bin", "llama"),
+    "key_bin": "llama-cli",
+}
+
 
 def check_and_repair_dependencies() -> bool:
     """自動偵測並自癒修復 Python 神經推論依賴環境 (onnxruntime, tokenizers, llama_cpp 等)"""
@@ -256,8 +264,71 @@ def ensure_gguf_model_ready(models_dir: str | None = None, console_output: bool 
     return True
 
 
+def download_and_extract_llama_binaries(target_dir: str, max_retries: int = 3) -> bool:
+    """下載並解壓縮官方自適應 Linux x86_64 llama.cpp 二進位執行檔包 (方案 B)。"""
+    os.makedirs(target_dir, exist_ok=True)
+    tar_path = os.path.join(target_dir, "llama_bin.tar.gz")
+    url = LLAMA_BIN_SPEC["url"]
+    desc = LLAMA_BIN_SPEC["desc"]
+
+    print(f"\033[38;5;214m  ⏳ [大腦守護者] 正在下載 {desc}...\033[0m")
+    import urllib.request
+    import tarfile
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            import subprocess
+            cmd = ["curl", "-L", "-C", "-", "--retry", "3", "--retry-delay", "2", "-o", tar_path, url]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if res.returncode != 0 or not os.path.exists(tar_path) or os.path.getsize(tar_path) < 1024 * 1024:
+                urllib.request.urlretrieve(url, tar_path)
+
+            if os.path.exists(tar_path) and os.path.getsize(tar_path) >= 1024 * 1024:
+                with tarfile.open(tar_path, "r:gz") as tar:
+                    for member in tar.getmembers():
+                        parts = member.name.split("/", 1)
+                        if len(parts) > 1 and parts[1]:
+                            member.name = parts[1]
+                            tar.extract(member, path=target_dir)
+
+                if os.path.exists(tar_path):
+                    os.remove(tar_path)
+
+                key_bin = os.path.join(target_dir, LLAMA_BIN_SPEC["key_bin"])
+                server_bin = os.path.join(target_dir, "llama-server")
+                for b in (key_bin, server_bin):
+                    if os.path.exists(b):
+                        os.chmod(b, 0o755)
+
+                if os.path.exists(key_bin):
+                    print(f"\033[38;5;48m  ✔ {desc} 就緒！可執行檔已賦權。\033[0m")
+                    return True
+        except Exception as e:
+            log.warning(f"下載/解壓 llama 二進位檔異常 (嘗試 {attempt}/{max_retries}): {e}")
+            time.sleep(2 * attempt)
+
+    return False
+
+
+def ensure_llama_binaries_ready(bin_dir: str | None = None, console_output: bool = True) -> bool:
+    """確保跨 CPU 通用之自適應 llama.cpp 二進位執行檔就緒。"""
+    if bin_dir is None:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        bin_dir = os.path.join(base_dir, LLAMA_BIN_SPEC["bin_dir_rel"])
+
+    key_bin = os.path.join(bin_dir, LLAMA_BIN_SPEC["key_bin"])
+    if os.path.exists(key_bin) and os.path.getsize(key_bin) > 1024:
+        if console_output:
+            print("\033[38;5;48m  ✔ 獨立端點：llama.cpp 跨架構自適應推論引擎就緒 (支援託管與無 AVX2 CPU)\033[0m")
+        return True
+
+    print(f"\n\033[38;5;208m🧠 【ZeroNexus 模型開機守護者】檢測到缺少自適應二進位引擎！\033[0m")
+    success = download_and_extract_llama_binaries(bin_dir)
+    return success
+
+
 def ensure_brain_models_ready(console_output: bool = True) -> bool:
-    """在機器人開機前，確保所有 6 個離線神經模型與本地 GGUF 模型全部就緒且完好無損"""
+    """在機器人開機前，確保所有 6 個離線神經模型、本地 GGUF 模型與二進位引擎全部就緒且完好無損"""
     # 0. 環境依賴檢查與熱修復
     check_and_repair_dependencies()
 
@@ -277,8 +348,9 @@ def ensure_brain_models_ready(console_output: bool = True) -> bool:
     if not missing_or_corrupted:
         if console_output:
             print("\033[38;5;48m  ✔ 本地大腦：六核離線神經感官矩陣已就緒 (~360MB 全核健康)\033[0m")
-        # 同步確保本地 GGUF 模型健康
+        # 同步確保本地 GGUF 模型健康與二進位引擎就緒
         ensure_gguf_model_ready(console_output=console_output)
+        ensure_llama_binaries_ready(console_output=console_output)
         return True
 
     # 3. 若有缺失或損壞，啟動自癒下載
