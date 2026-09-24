@@ -579,7 +579,6 @@ class ZeroNexusBot(commands.Bot):
                 pass
 
         # 4.2 Global Blacklist App Command Interceptor
-        @self.tree.interaction_check
         async def global_tree_interaction_check(interaction: discord.Interaction) -> bool:
             if global_blacklist.is_banned(interaction.user.id):
                 ban_info = global_blacklist.get_ban_info(interaction.user.id) or {}
@@ -605,6 +604,8 @@ class ZeroNexusBot(commands.Bot):
                     pass
                 return False
             return True
+
+        self.tree.interaction_check = global_tree_interaction_check
 
         # 5. Start Background Scheduler & Jobs
         self._register_scheduled_jobs()

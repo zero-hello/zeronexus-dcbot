@@ -2,6 +2,17 @@
 
 ---
 
+## [2.5.2] - 2026-09-24
+
+### 🐛 修復與核心穩定性 (Fixes & Stability)
+- **修復開機 CommandTree.interaction_check 協程未等待警告 (RuntimeWarning)**：
+  - 排查並修正 `zeronexus/bot.py` 中 `setup_hook` 對 `self.tree.interaction_check` 的錯誤裝飾器用法（原先誤用 `@self.tree.interaction_check` 將回呼函式當作 interaction 傳入造成協程未 await 警告），改為標準的協程指派覆寫 `self.tree.interaction_check = global_tree_interaction_check`。
+  - 確保機器人全域黑名單（Global Blacklist）對斜線指令（Slash Commands）的攔截防禦機制百分之百正常運作，且開機與運作過程完全無任何協程洩漏或警告。
+- **測試防護網補強**：
+  - 於 `tests/test_web_panel_and_blacklist.py` 新增 `test_tree_interaction_check_blacklist` 單元測試，嚴格驗證全域黑名單斜線指令攔截與無 `RuntimeWarning` 警告保證。
+
+---
+
 ## [2.5.1] - 2026-09-24
 
 ### 🐛 緊急修復 (Hotfix)

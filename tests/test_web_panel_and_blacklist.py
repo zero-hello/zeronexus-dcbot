@@ -59,3 +59,47 @@ def test_creator_cannot_be_blacklisted(tmp_path):
     with pytest.raises(ValueError, match="不可封鎖造物主 Zero"):
         mgr.ban_user(1514971711739789352, reason="測試無效封鎖")
     assert mgr.is_banned(1514971711739789352) is False
+
+
+@pytest.mark.asyncio
+async def test_tree_interaction_check_blacklist(monkeypatch):
+    import warnings
+    from unittest.mock import MagicMock, AsyncMock
+    import discord
+    from discord import app_commands
+    from zeronexus.security.blacklist import global_blacklist
+
+    # 模擬 discord.Client 與 CommandTree
+    client = MagicMock()
+    client._connection._command_tree = None
+    tree = app_commands.CommandTree(client)
+
+    # 實作與 bot.py setup_hook 中完全相同的 interaction_check 邏輯
+    async def global_tree_interaction_check(interaction: discord.Interaction) -> bool:
+        if global_blacklist.is_banned(interaction.user.id):
+            return False
+        return True
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        tree.interaction_check = global_tree_interaction_check
+
+        # 模擬正常使用者的 interaction
+        normal_interaction = MagicMock(spec=discord.Interaction)
+        normal_interaction.user = MagicMock()
+        normal_interaction.user.id = 999999999
+        allowed = await tree.interaction_check(normal_interaction)
+        assert allowed is True
+
+        # 模擬被封鎖使用者的 interaction
+        monkeypatch.setattr(global_blacklist, "is_banned", lambda uid: uid == 888888888)
+        banned_interaction = MagicMock(spec=discord.Interaction)
+        banned_interaction.user = MagicMock()
+        banned_interaction.user.id = 888888888
+        blocked = await tree.interaction_check(banned_interaction)
+        assert blocked is False
+
+        # 驗證沒有觸發任何 coroutine never awaited 的 RuntimeWarning
+        runtime_warnings = [w for w in recorded_warnings if issubclass(w.category, RuntimeWarning)]
+        assert len(runtime_warnings) == 0
+
