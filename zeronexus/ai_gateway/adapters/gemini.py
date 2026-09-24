@@ -106,6 +106,10 @@ class GeminiAdapter(BaseAIAdapter):
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
+        if "top_p" in kwargs and kwargs["top_p"] is not None:
+            gen_config["topP"] = kwargs["top_p"]
+        if "top_k" in kwargs and kwargs["top_k"] is not None:
+            gen_config["topK"] = kwargs["top_k"]
         # 思考設定：日常對話預設關閉思考 (thinkingBudget: 0) 以達到毫秒級極速回覆並節省 90%+ Token，避免 API 額度瞬間見底
         thinking_budget = kwargs.get("thinking_budget")
         if thinking_budget is not None:

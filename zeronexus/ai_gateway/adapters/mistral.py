@@ -107,6 +107,8 @@ class MistralAdapter(BaseAIAdapter):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if "top_p" in kwargs and kwargs["top_p"] is not None:
+            payload["top_p"] = kwargs["top_p"]
 
         response = await client.post(endpoint, headers=headers, json=payload, timeout=timeout)
         latency_ms = (time.perf_counter() - start_time) * 1000

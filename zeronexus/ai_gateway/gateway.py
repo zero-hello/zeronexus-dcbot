@@ -92,6 +92,28 @@ class AIGateway:
         if override_model and isinstance(override_model, str) and override_model.strip():
             clean_override = override_model.strip()
 
+        # 萃取動態推理參數，優先採用外部傳入的覆寫值，並排除顯式傳遞之具名引數以防衝突
+        dispatch_kwargs = dict(kwargs)
+        req_temperature = float(dispatch_kwargs.pop("temperature", config.ai.temperature))
+        req_max_tokens = int(dispatch_kwargs.pop("max_tokens", config.ai.max_tokens))
+        req_timeout = float(dispatch_kwargs.pop("timeout", config.ai.request_timeout_seconds))
+
+        for explicit_key in (
+            "system_instruction",
+            "messages",
+            "model",
+            "api_key",
+            "images",
+            "allow_fallback",
+            "disable_safety",
+            "tools",
+            "tool_executor",
+            "max_tool_rounds",
+            "free_only",
+            "thinking_budget",
+        ):
+            dispatch_kwargs.pop(explicit_key, None)
+
         # Determine primary provider based on override_model or images
         primary: Optional[str] = None
         if clean_override:
@@ -290,9 +312,9 @@ class AIGateway:
                     messages=messages,
                     model=model,
                     api_key=key_obj.raw_key,
-                    max_tokens=config.ai.max_tokens,
-                    temperature=config.ai.temperature,
-                    timeout=config.ai.request_timeout_seconds,
+                    max_tokens=req_max_tokens,
+                    temperature=req_temperature,
+                    timeout=req_timeout,
                     images=images,
                     allow_fallback=allow_fallback,
                     disable_safety=disable_safety,
@@ -301,7 +323,7 @@ class AIGateway:
                     max_tool_rounds=max_tool_rounds,
                     free_only=is_fallback_key,
                     thinking_budget=thinking_budget,
-                    **kwargs,
+                    **dispatch_kwargs,
                 )
 
                 latency = (time.perf_counter() - start_ts) * 1000
@@ -389,9 +411,9 @@ class AIGateway:
                                 messages=messages,
                                 model=chosen_free,
                                 api_key=free_key.raw_key,
-                                max_tokens=config.ai.max_tokens,
-                                temperature=config.ai.temperature,
-                                timeout=config.ai.request_timeout_seconds,
+                                max_tokens=req_max_tokens,
+                                temperature=req_temperature,
+                                timeout=req_timeout,
                                 images=images,
                                 allow_fallback=True,
                                 disable_safety=disable_safety,
@@ -399,6 +421,7 @@ class AIGateway:
                                 tool_executor=tool_executor,
                                 max_tool_rounds=max_tool_rounds,
                                 free_only=True,
+                                **dispatch_kwargs,
                             )
                             fb_latency = (time.perf_counter() - fb_start) * 1000
                             free_key.mark_success(fb_latency)

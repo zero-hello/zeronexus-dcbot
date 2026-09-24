@@ -2,6 +2,20 @@
 
 ---
 
+## [2.5.3] - 2026-09-25
+
+### 🐛 關鍵修復與穩定性加固 (Critical Fixes & Robustness)
+- **修復 AI 閘道動態參數多重值衝突 (TypeError: got multiple values for keyword argument 'temperature')**：
+  - **根本原因**：當上層模組（如 `bio_brain` 情感動力學神經中樞）向 `ai_gateway.generate_response` 傳遞動態推論參數（例如 `temperature`、`top_p`）時，原閘道函式在呼叫底層適配器（Adapter）時顯式指定了 `temperature=config.ai.temperature`，同時又展開了 `**kwargs`，造成 Python 解釋器在引數綁定時拋出 `got multiple values for keyword argument 'temperature'` 錯誤，引發所有提供者連鎖誤判失敗並進入冷卻。
+  - **修復處置**：
+    1. 在 `AIGateway.generate_response` 中重構參數派發邏輯，統一萃取 `req_temperature`、`req_max_tokens` 與 `req_timeout`，優先採用外部傳入之動態數值，未提供時優雅回退至系統配置預設值。
+    2. 安全過濾所有顯式具名引數（如 `api_key`、`messages`、`system_instruction` 等），避免 `**dispatch_kwargs` 二次解包引發任何衝突。
+    3. 全面升級所有適配器（Gemini、Groq、Mistral、OpenRouter、Cohere、HuggingFace、DeepSeek）原生對 `top_p`（或 Cohere `p`）、`top_k` 等動態神經採樣參數的支援。
+- **單元測試網保障**：
+  - 於 `tests/test_v250_hardening.py` 新增 `test_ai_gateway_parameter_dispatch_no_conflict`，嚴格驗證動態參數覆寫、無引數衝突與各適配器正確接收行為。
+
+---
+
 ## [2.5.2] - 2026-09-24
 
 ### 🐛 修復與核心穩定性 (Fixes & Stability)

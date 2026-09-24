@@ -97,6 +97,8 @@ class HuggingFaceAdapter(BaseAIAdapter):
                 "max_tokens": max_tokens,
                 "temperature": temperature,
             }
+            if "top_p" in kwargs and kwargs["top_p"] is not None:
+                payload["top_p"] = kwargs["top_p"]
 
             endpoints = [
                 self.primary_endpoint,

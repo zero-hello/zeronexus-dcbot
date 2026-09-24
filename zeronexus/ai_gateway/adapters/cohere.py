@@ -116,6 +116,9 @@ class CohereAdapter(BaseAIAdapter):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        top_p_val = kwargs.get("p") if "p" in kwargs else kwargs.get("top_p")
+        if top_p_val is not None:
+            payload["p"] = top_p_val
 
         response = await client.post(endpoint, headers=headers, json=payload, timeout=timeout)
         latency_ms = (time.perf_counter() - start_time) * 1000

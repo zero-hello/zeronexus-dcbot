@@ -49,3 +49,60 @@ class TestV250HardeningSuite:
         assert "ghp_abcdefghijklmnopqrstuvwxyz0123456789" not in redacted
         assert "sk-proj-1234567890abcdef1234567890abcdef1234567890" not in redacted
         assert "••••" in redacted
+
+    @pytest.mark.asyncio
+    async def test_ai_gateway_parameter_dispatch_no_conflict(self) -> None:
+        """測試 AI Gateway 傳入 temperature/top_p/max_tokens/timeout 時無多重值衝突。"""
+        from unittest.mock import AsyncMock, MagicMock
+        from zeronexus.ai_gateway.gateway import AIGateway
+        from zeronexus.ai_gateway.adapters.base import AIResult
+
+        gw = AIGateway()
+        mock_adapter = MagicMock()
+        captured_kwargs = {}
+
+        async def fake_generate(**kwargs):
+            nonlocal captured_kwargs
+            captured_kwargs = dict(kwargs)
+            return AIResult(
+                text="測試回覆",
+                model_name=kwargs.get("model", "test-model"),
+                provider="gemini",
+                latency_ms=12.5,
+                prompt_tokens=10,
+                completion_tokens=20,
+            )
+
+        mock_adapter.generate = AsyncMock(side_effect=fake_generate)
+        gw.adapters["gemini"] = mock_adapter
+
+        # 模擬 key pool 有可用 key
+        mock_key = MagicMock()
+        mock_key.raw_key = "AIzaSyTestMockKey"
+        mock_key.masked = "••••Test"
+        mock_key.is_available = True
+        mock_pool = MagicMock()
+        mock_pool.get_available_key.return_value = mock_key
+        gw.key_pools["gemini"] = mock_pool
+
+        # 傳遞覆寫參數呼叫 generate_response
+        result, notice = await gw.generate_response(
+            system_instruction="系統指引",
+            messages=[{"role": "user", "content": "你好"}],
+            override_model="gemini-2.5-flash",
+            temperature=0.85,
+            top_p=0.92,
+            max_tokens=2048,
+            timeout=45.0,
+            custom_extra_param="custom_value",
+        )
+
+        assert result.text == "測試回覆"
+        assert captured_kwargs["temperature"] == 0.85
+        assert captured_kwargs["max_tokens"] == 2048
+        assert captured_kwargs["timeout"] == 45.0
+        assert captured_kwargs["top_p"] == 0.92
+        assert captured_kwargs["custom_extra_param"] == "custom_value"
+        # 顯式具名引數不應在額外解包中重覆出現
+        assert "api_key" in captured_kwargs
+

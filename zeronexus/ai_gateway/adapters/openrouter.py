@@ -243,6 +243,8 @@ class OpenRouterAdapter(BaseAIAdapter):
                 "temperature": temperature,
                 "include_reasoning": True,
             }
+            if "top_p" in kwargs and kwargs["top_p"] is not None:
+                payload["top_p"] = kwargs["top_p"]
             if formatted_tools:
                 payload["tools"] = formatted_tools
                 payload["tool_choice"] = "auto"
