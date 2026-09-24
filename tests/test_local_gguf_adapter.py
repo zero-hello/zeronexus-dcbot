@@ -91,3 +91,27 @@ class TestLocalGGUFIntegration:
             assert result.completion_tokens == 25
             assert result.total_tokens == 40
             assert result.latency_ms > 0
+
+    def test_bootstrap_gguf_verify_and_ensure(self, tmp_path) -> None:
+        """測試 bootstrap 中的 GGUF 檔案健康校驗與缺失自癒邏輯。"""
+        from zeronexus.brain.bootstrap import (
+            verify_gguf_model,
+            ensure_gguf_model_ready,
+            GGUF_MODEL_SPEC,
+        )
+
+        dummy_model = tmp_path / GGUF_MODEL_SPEC["filename"]
+
+        # 1. 檔案不存在
+        assert verify_gguf_model(str(dummy_model)) is False
+
+        # 2. 檔案過小 (殘缺/被截斷)
+        dummy_model.write_bytes(b"x" * 2048)
+        assert verify_gguf_model(str(dummy_model), min_bytes=1024) is True
+        assert verify_gguf_model(str(dummy_model), min_bytes=GGUF_MODEL_SPEC["min_bytes"]) is False
+
+        # 3. 模擬自癒觸發
+        with patch("zeronexus.brain.bootstrap.download_gguf_model", return_value=True) as mock_dl:
+            res = ensure_gguf_model_ready(models_dir=str(tmp_path), console_output=False)
+            assert res is True
+            mock_dl.assert_called_once()

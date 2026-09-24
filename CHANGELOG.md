@@ -2,6 +2,18 @@
 
 ---
 
+## [2.6.1] - 2026-09-25
+
+### 🛡️ 守衛與模型自癒強化 (Model Bootstrap & Self-Healing Guard)
+- **Qwen 2.5 GGUF 本地模型自動下載與健康守護**：
+  - 在 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py) 中正式納入 `Qwen 2.5 0.5B Instruct GGUF` 模型守護規格（`GGUF_MODEL_SPEC`）。
+  - **開機前置驗證與自癒補齊**：`ensure_brain_models_ready()` 在開機健康檢測中同步校驗 `qwen2.5-0.5b-instruct-q8_0.gguf`。若檔案缺失或檔案遭截斷損壞，自動啟動多階段自癒下載（優先使用 `huggingface_hub` 高速 API，若受阻則自動切換至 `curl` 斷點續傳備援），確保本地自主運算 100% 隨時可用。
+  - **運行時動態自癒**：在 `LocalGGUFAdapter` 載入模型時若偵測到實體檔案意外丟失，亦會主動觸發 `ensure_gguf_model_ready()` 自癒補齊，絕不拋出不可恢復之錯誤。
+- **單元測試防護網擴展**：
+  - 於 `tests/test_local_gguf_adapter.py` 增補 `test_bootstrap_gguf_verify_and_ensure` 測試，涵蓋檔案不存在、截斷壞檔偵測與自癒調度行為驗證。
+
+---
+
 ## [2.6.0] - 2026-09-25
 
 ### 🚀 重大新功能：本地 GGUF 神經推論引擎與選單精簡重組 (Local GGUF Engine & Menu Redesign)

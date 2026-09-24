@@ -25,6 +25,15 @@ MODELS_SPEC = [
     ("hostility_sentinel", "Xenova/toxic-bert", "自尊防衛哨兵模型", 90 * 1024 * 1024),
 ]
 
+# 本地 GGUF 神經推論模型規格 (Qwen 2.5 0.5B Instruct)
+GGUF_MODEL_SPEC = {
+    "filename": "qwen2.5-0.5b-instruct-q8_0.gguf",
+    "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+    "direct_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf?download=true",
+    "desc": "Qwen 2.5 0.5B Instruct 本地端 GGUF 自主運算模型",
+    "min_bytes": 600 * 1024 * 1024,  # 約 600MB
+}
+
 
 def check_and_repair_dependencies() -> bool:
     """自動偵測並自癒修復 Python 神經推論依賴環境 (onnxruntime, tokenizers 等)"""
@@ -120,8 +129,91 @@ def download_single_model(folder: str, repo: str, desc: str, models_root: str, m
     return False
 
 
+def verify_gguf_model(model_path: str, min_bytes: int = 600 * 1024 * 1024) -> bool:
+    """驗證本地 GGUF 模型檔案是否存在且大小正常 (防截斷與零位元組檔案)。"""
+    if not os.path.exists(model_path):
+        return False
+    return os.path.getsize(model_path) >= min_bytes
+
+
+def download_gguf_model(target_path: str, max_retries: int = 3) -> bool:
+    """乾淨下載或重新下載 Qwen 2.5 0.5B GGUF 本地推論模型。"""
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    temp_path = f"{target_path}.part"
+
+    desc = GGUF_MODEL_SPEC["desc"]
+    repo = GGUF_MODEL_SPEC["repo"]
+    filename = GGUF_MODEL_SPEC["filename"]
+    direct_url = GGUF_MODEL_SPEC["direct_url"]
+    min_bytes = GGUF_MODEL_SPEC["min_bytes"]
+
+    print(f"\033[38;5;214m  ⏳ [大腦守護者] 正在下載/修復 {desc}...\033[0m")
+
+    # 策略 1: 優先透過 huggingface_hub 下載
+    for attempt in range(1, max_retries + 1):
+        try:
+            from huggingface_hub import hf_hub_download
+            downloaded = hf_hub_download(
+                repo_id=repo,
+                filename=filename,
+                local_dir=os.path.dirname(target_path),
+            )
+            if verify_gguf_model(downloaded, min_bytes):
+                print(f"\033[38;5;48m  ✔ {desc} 下載完成並校驗通過！\033[0m")
+                return True
+        except Exception as e:
+            log.warning(f"透過 HF Hub 下載 GGUF 失敗 (嘗試 {attempt}/{max_retries}): {e}")
+            time.sleep(2 * attempt)
+
+    # 策略 2: 備援使用 curl 續傳下載
+    print(f"\033[38;5;220m  ⚠️  HF Hub 下載受阻，啟動 curl 全速備援續傳機制...\033[0m")
+    import subprocess
+    try:
+        cmd = [
+            "curl", "-L", "-C", "-",
+            "--retry", "3",
+            "--retry-delay", "2",
+            "-o", target_path,
+            direct_url,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if res.returncode == 0 and verify_gguf_model(target_path, min_bytes):
+            print(f"\033[38;5;48m  ✔ {desc} (curl 備援) 下載完成並校驗通過！\033[0m")
+            return True
+    except Exception as e:
+        log.warning(f"curl 備援下載 GGUF 失敗: {e}")
+
+    return False
+
+
+def ensure_gguf_model_ready(models_dir: str | None = None, console_output: bool = True) -> bool:
+    """確保 Qwen 2.5 0.5B 本地 GGUF 模型檔案已完整就緒，若缺失則自動自癒下載。"""
+    if models_dir is None:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        models_dir = os.path.join(base_dir, "data", "models")
+
+    os.makedirs(models_dir, exist_ok=True)
+    target_path = os.path.join(models_dir, GGUF_MODEL_SPEC["filename"])
+    min_bytes = GGUF_MODEL_SPEC["min_bytes"]
+
+    # 1. 快速健康檢查
+    if verify_gguf_model(target_path, min_bytes):
+        if console_output:
+            print("\033[38;5;48m  ✔ 本地端點：Qwen 2.5 0.5B GGUF 自主運算模型已就緒 (~645MB 全核健康)\033[0m")
+        return True
+
+    # 2. 自動觸發下載
+    print(f"\n\033[38;5;208m🧠 【ZeroNexus 模型開機守護者】檢測到本地 GGUF 模型缺失或未完成！\033[0m")
+    print(f"\033[38;5;244m正在自癒下載 {GGUF_MODEL_SPEC['desc']}...\033[0m")
+    success = download_gguf_model(target_path)
+    if not success:
+        log.error(f"嚴重錯誤：無法自動下載 {GGUF_MODEL_SPEC['desc']}")
+        return False
+    return True
+
+
 def ensure_brain_models_ready(console_output: bool = True) -> bool:
-    """在機器人開機前，確保所有 6 個離線神經模型全部就緒且完好無損"""
+    """在機器人開機前，確保所有 6 個離線神經模型與本地 GGUF 模型全部就緒且完好無損"""
     # 0. 環境依賴檢查與熱修復
     check_and_repair_dependencies()
 
@@ -141,6 +233,8 @@ def ensure_brain_models_ready(console_output: bool = True) -> bool:
     if not missing_or_corrupted:
         if console_output:
             print("\033[38;5;48m  ✔ 本地大腦：六核離線神經感官矩陣已就緒 (~360MB 全核健康)\033[0m")
+        # 同步確保本地 GGUF 模型健康
+        ensure_gguf_model_ready(console_output=console_output)
         return True
 
     # 3. 若有缺失或損壞，啟動自癒下載
@@ -156,6 +250,9 @@ def ensure_brain_models_ready(console_output: bool = True) -> bool:
 
     print("\033[38;5;48m\n✔ 大腦模型矩陣修復完成！所有六大模型均已就緒，繼續開機！\033[0m")
     print("\033[38;5;208m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n")
+
+    # 同步確保本地 GGUF 模型健康
+    ensure_gguf_model_ready(console_output=console_output)
     return True
 
 

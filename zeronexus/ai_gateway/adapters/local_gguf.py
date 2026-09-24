@@ -64,10 +64,18 @@ class LocalGGUFAdapter(BaseAIAdapter):
                 return self._llm
 
             if not os.path.exists(model_path):
-                raise FileNotFoundError(
-                    f"本地 GGUF 模型檔案不存在：'{model_path}'。"
-                    f"請確認模型是否已下載至 data/models/ 目錄中。"
-                )
+                log.warning(f"偵測到本地 GGUF 模型檔案不存在：'{model_path}'，啟動自動自癒補齊下載...")
+                try:
+                    from zeronexus.brain.bootstrap import ensure_gguf_model_ready
+                    ensure_gguf_model_ready(models_dir=self.models_dir, console_output=True)
+                except Exception as down_err:
+                    log.warning(f"嘗試自動補齊 GGUF 模型異常: {down_err}")
+
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(
+                        f"本地 GGUF 模型檔案不存在且自動自癒失敗：'{model_path}'。"
+                        f"請確認模型是否已下載至 data/models/ 目錄中。"
+                    )
 
             log.info(f"正在載入本地 GGUF 模型至記憶體：{model_path} (n_ctx={n_ctx})")
             t0 = time.perf_counter()
