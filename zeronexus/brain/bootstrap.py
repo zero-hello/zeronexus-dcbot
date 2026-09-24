@@ -55,12 +55,25 @@ def check_and_repair_dependencies() -> bool:
         return True
 
     print(f"\033[38;5;208m⚠️  [大腦守護者] 偵測到當前環境缺少神經運算套件: {', '.join(missing_mods)}\033[0m")
-    print("\033[38;5;244m正在嘗試自動動態安裝依賴...\033[0m")
+    print("\033[38;5;244m正在嘗試自癒安裝（優先下載二進位預編譯 Wheel）...\033[0m")
 
     import subprocess
+    env = os.environ.copy()
+    # 若系統未安裝 gcc/g++，清除可能殘留的 CC/CXX 環境變數，避免 CMake 誤找不存在的編譯器報錯
+    if not shutil.which("gcc"):
+        env.pop("CC", None)
+    if not shutil.which("g++"):
+        env.pop("CXX", None)
+
+    cmd = [
+        sys.executable, "-m", "pip", "install",
+        "--no-cache-dir",
+        "--prefer-binary",
+        "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cpu",
+    ] + missing_pip_names
+
     try:
-        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + missing_pip_names
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
         if res.returncode == 0:
             print("\033[38;5;48m✔ 依賴套件動態安裝成功！已恢復神經大腦執行環境。\033[0m")
             return True
@@ -70,7 +83,7 @@ def check_and_repair_dependencies() -> bool:
         log.warning(f"嘗試自動安裝套件異常: {e}")
 
     print("\033[38;5;196m✘ 自動安裝套件受限。請於環境或容器內手動安裝：\033[0m")
-    print(f"\033[38;5;220m  pip install {' '.join(missing_pip_names)}\033[0m")
+    print(f"\033[38;5;220m  pip install --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu {' '.join(missing_pip_names)}\033[0m")
     print("\033[38;5;244m若使用 Docker 部署，請重新建置映像檔：docker compose build --no-cache\033[0m\n")
     return False
 

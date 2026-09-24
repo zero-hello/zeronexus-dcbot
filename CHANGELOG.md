@@ -2,6 +2,20 @@
 
 ---
 
+## [2.6.3] - 2026-09-25
+
+### 🚀 預編譯二進位 Wheel 與無編譯器環境相容強化 (Prebuilt Wheels & Zero-Compiler Fallback)
+- **CPU 預編譯 Wheel 索引整合**：
+  - 在 [`requirements.txt`](requirements.txt) 與 [`Dockerfile`](Dockerfile) 中全面引入官方二進位預編譯索引源 `--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu` 與 `--prefer-binary` 參數，杜絕容器因缺少編譯器而嘗試原始碼構建失敗。
+- **無效 CC/CXX 環境變數隔離與環境自癒**：
+  - 更新 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py) 的 `check_and_repair_dependencies()`：
+    - 在調用 pip 之前自動檢驗系統是否存在 `gcc` / `g++`；若不存在，隔離清理可能殘留的無效 `CC` / `CXX` 環境變數，防範 CMake 報錯 `Could not find the compiler specified in the environment variable CC: gcc`。
+    - 自癒安裝命令全面採用 `--prefer-binary`，在無 C++ 編譯器的容器環境中直接下載官方預編譯 CPU 輪子，秒級完成安裝。
+- **Dockerfile 雙重保險完善**：
+  - 在 [`Dockerfile`](Dockerfile) 額外補齊系統依賴套件 `gcc`、`g++` 與 `curl`，使容器同時兼備「直接安裝預編譯 Wheel」與「本地 C++ 原始碼編譯」雙重防禦。
+
+---
+
 ## [2.6.2] - 2026-09-25
 
 ### 🔧 容器與依賴自癒韌性強化 (Docker & Dependency Self-Healing Resilience)
