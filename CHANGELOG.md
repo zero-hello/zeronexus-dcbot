@@ -2,6 +2,21 @@
 
 ---
 
+## [2.7.4] - 2026-09-25
+
+### 🚀 提示詞智慧精簡與上下文擴展 (Context Expansion & Smart Compaction)
+- **8192 Tokens 上下文擴展與自動熱重啟**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - 將 `llama-server` 上下文大小由 1024 擴增至 `-c 8192`，徹底解決 `exceed_context_size_error` (HTTP 400) 報錯。
+    - 啟動前自動探測端點 `/props`，若現有伺服器之上下文小於 8192，自動進行背景進程平滑熱重啟升級。
+- **本地小模型提示詞智慧精簡機制 (Smart Prompt Compaction)**：
+  - 新增 `_compact_system_instruction()`，針對 0.5B 本地輕量模型自動提取核心繁體中文規範與身分設定，過濾冗長雲端專用工具描述，將高達 6000+ tokens 的龐大提示詞緊湊壓縮至 500~800 tokens 範圍。
+  - 對話歷史自動保留最近 8 則輪次，避免長對話導致賽揚 CPU 計算時間過長。
+- **請求逾時自適應放寬**：
+  - 伺服器通訊超時時間放寬至 `max(timeout, 120.0)` 秒，為賽揚 CPU 之 Prompt Evaluation 預留充裕運算緩衝。
+
+---
+
 ## [2.7.3] - 2026-09-25
 
 ### ⚡ 賽揚/奔騰無 AVX2 實體 CPU 專屬 SSE4.2 二進位直通通道 (Celeron / Pentium Direct Path)

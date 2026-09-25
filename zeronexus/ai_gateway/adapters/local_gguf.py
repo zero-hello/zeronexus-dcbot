@@ -77,11 +77,28 @@ class LocalGGUFAdapter(BaseAIAdapter):
         import httpx
         url = f"http://127.0.0.1:{self._server_port}"
 
+        target_ctx = 8192
         try:
             async with httpx.AsyncClient(timeout=1.0) as client:
-                res = await client.get(f"{url}/health")
+                res = await client.get(f"{url}/props")
                 if res.status_code == 200:
-                    return url
+                    current_ctx = res.json().get("default_generation_settings", {}).get("n_ctx", 0)
+                    if current_ctx >= target_ctx:
+                        return url
+                    log.info(f"現有 llama-server context={current_ctx} 小於目標 {target_ctx}，正在自動熱重啟升級...")
+                    if self._server_process is not None:
+                        try:
+                            self._server_process.kill()
+                        except Exception:
+                            pass
+                        self._server_process = None
+                    import subprocess
+                    subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
+                    await asyncio.sleep(1.0)
+                else:
+                    h_res = await client.get(f"{url}/health")
+                    if h_res.status_code == 200:
+                        return url
         except Exception:
             pass
 
@@ -118,7 +135,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
             "-m", model_path,
             "--port", str(self._server_port),
             "-t", str(threads),
-            "-c", "1024",
+            "-c", "8192",
             "--log-disable",
         ]
 
@@ -154,6 +171,21 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
         return url
 
+    @staticmethod
+    def _compact_system_instruction(instruction: str, max_chars: int = 1200) -> str:
+        """針對本地端端點輕量模型 (0.5B) 智慧精簡龐大之系統提示詞，大幅減少 CPU 計算耗時並確保秒級回應。"""
+        if not instruction or len(instruction) <= max_chars:
+            return instruction
+
+        core_header = (
+            "你是由 ZeroNexus (ZN) 驅動的本地端自主神經模型 (基於 Qwen 2.5 0.5B 架構)。\n"
+            "請一律使用自然流暢、專業精準的道地臺灣繁體中文 (Traditional Chinese - Taiwan) 回覆。\n"
+            "語氣親切專業、條理清晰，杜絕機械式套話。\n"
+        )
+        # 截取前段關鍵規範 (過濾掉龐大雲端工具清單與冗長 prompt)
+        truncated_body = instruction[:max_chars].strip()
+        return f"{core_header}\n核心指引：\n{truncated_body}"
+
     async def _generate_via_server(
         self,
         server_url: str,
@@ -168,10 +200,13 @@ class LocalGGUFAdapter(BaseAIAdapter):
     ) -> AIResult:
         """透過本地 llama-server 執行標準 OpenAI Chat Completion 推論。"""
         formatted_messages: List[Dict[str, str]] = []
-        if system_instruction:
-            formatted_messages.append({"role": "system", "content": system_instruction})
+        compact_sys = self._compact_system_instruction(system_instruction)
+        if compact_sys:
+            formatted_messages.append({"role": "system", "content": compact_sys})
 
-        for msg in messages:
+        # 本地輕量模型僅保留最近 8 則對話，防止上下文無限膨脹
+        recent_messages = messages[-8:] if len(messages) > 8 else messages
+        for msg in recent_messages:
             role = msg.get("role", "user")
             if role in ("bot", "model"):
                 role = "assistant"
@@ -197,8 +232,9 @@ class LocalGGUFAdapter(BaseAIAdapter):
             "temperature": temperature,
         }
 
+        server_timeout = max(timeout, 120.0)
         import httpx
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=server_timeout) as client:
             resp = await client.post(f"{server_url}/v1/chat/completions", json=payload)
             if resp.status_code != 200:
                 raise RuntimeError(f"llama-server 請求失敗 (HTTP {resp.status_code}): {resp.text}")
