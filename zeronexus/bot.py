@@ -2505,7 +2505,12 @@ class ZeroNexusBot(commands.Bot):
 
             # Generate response from AI Gateway with autonomous function calling enabled & strict timeout defense
             t_prov0 = time.perf_counter()
-            call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
+            is_local_model = any(k in active_model.lower() for k in ("local", "qwen2.5-0.5b", "gguf"))
+            if is_local_model:
+                # 本地 CPU 推論（尤其無 AVX2 賽揚環境）給予更寬裕之超時保護 (240s)，杜絕外層中斷
+                call_timeout = 240.0
+            else:
+                call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
             brain_model_params = bio_brain.get_model_params(str(message.author.id))
             ai_res, fallback = await asyncio.wait_for(
                 ai_gateway.generate_response(

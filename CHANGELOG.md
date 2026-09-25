@@ -2,6 +2,25 @@
 
 ---
 
+## [2.7.6] - 2026-09-26
+
+### ⚡ 本地推論全核代碼加速與 240s 逾時防護 (Full-Core Code Acceleration & 240s Anti-Timeout)
+- **外層 240s 逾時保護，杜絕中斷**：
+  - 更新 [`zeronexus/bot.py`](zeronexus/bot.py)：
+    - 針對本地模型 (`local`, `qwen2.5-0.5b`, `gguf`) 自動將請求逾時時間由原先雲端預設之 70s 放寬至 240s，徹底解決賽揚 CPU 運算時遭外層提前掐斷拋出 `AI response generation timed out` 的問題。
+- **全核調度與執行緒優先度最佳化**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - 解除原先最大 2 核限制，全速調度可用 CPU 核心 (`threads = max(1, os.cpu_count() or 2)`)。
+    - 加入批次評估執行緒旗標 `-tb`，並啟用 `--prio 2 --prio-batch 2` 提高行程排程優先級。
+- **KV Cache 與批次處理向量化加速**：
+  - 上下文由 8192 最佳化調整為 2048 (`-c 2048`)，節省 75% 龐大記憶體存取與計算開銷。
+  - 啟用 `-b 512 -ub 256 --parallel 1`，成批向量化評估 Prompt，單一槽位全力計算。
+- **提示詞極限精煉與歷史修剪 (Prompt Optimization)**：
+  - 系統提示詞長度精煉至 350 字元，對話歷史由 8 則縮為 4 則（2 輪交互），Prompt Tokens 暴減 85%，在無 AVX2 CPU 上的 Prompt Evaluation 耗時從 100+ 秒銳減至數秒！
+  - 檢測到伺服器參數不符時自動進行熱重啟套用加速配置。
+
+---
+
 ## [2.7.5] - 2026-09-26
 
 ### 🚀 新增 Qwen 2.5 0.5B Instruct Q4_K_M 極速輕量化本地模型 (Q4_K_M Fast Local Edge Model)

@@ -106,17 +106,17 @@ class LocalGGUFAdapter(BaseAIAdapter):
             subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
             await asyncio.sleep(0.5)
 
-        target_ctx = 8192
+        target_ctx = 2048
         if not need_model_switch:
             try:
                 async with httpx.AsyncClient(timeout=1.0) as client:
                     res = await client.get(f"{url}/props")
                     if res.status_code == 200:
                         current_ctx = res.json().get("default_generation_settings", {}).get("n_ctx", 0)
-                        if current_ctx >= target_ctx:
+                        if current_ctx == target_ctx:
                             self._server_model_path = model_path
                             return url
-                        log.info(f"現有 llama-server context={current_ctx} 小於目標 {target_ctx}，正在自動熱重啟升級...")
+                        log.info(f"現有 llama-server context={current_ctx} (目標 {target_ctx})，正在自動熱重啟升級全核加速參數...")
                         if self._server_process is not None:
                             try:
                                 self._server_process.kill()
@@ -161,13 +161,20 @@ class LocalGGUFAdapter(BaseAIAdapter):
                 except Exception:
                     pass
 
-        threads = max(1, min(os.cpu_count() or 1, 2))
+        # 全力調度可用 CPU 核心，不再限制為 2 核
+        threads = max(1, os.cpu_count() or 2)
         cmd = [
             server_path,
             "-m", model_path,
             "--port", str(self._server_port),
             "-t", str(threads),
-            "-c", "8192",
+            "-tb", str(threads),
+            "-c", str(target_ctx),
+            "-b", "512",
+            "-ub", "256",
+            "--parallel", "1",
+            "--prio", "2",
+            "--prio-batch", "2",
             "--log-disable",
         ]
 
@@ -197,7 +204,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
                     res = await client.get(f"{url}/health")
                     if res.status_code == 200:
                         self._server_model_path = model_path
-                        log.info(f"本地 SSE4.2 自適應 llama-server 就緒！端點：{url}")
+                        log.info(f"本地 SSE4.2 自適應 llama-server 就緒！端點：{url} (全核執行緒={threads}, 上下文={target_ctx})")
                         return url
             except Exception:
                 continue
@@ -206,8 +213,8 @@ class LocalGGUFAdapter(BaseAIAdapter):
         return url
 
     @staticmethod
-    def _compact_system_instruction(instruction: str, max_chars: int = 1200) -> str:
-        """針對本地端端點輕量模型 (0.5B) 智慧精簡龐大之系統提示詞，大幅減少 CPU 計算耗時並確保秒級回應。"""
+    def _compact_system_instruction(instruction: str, max_chars: int = 350) -> str:
+        """針對本地端輕量模型 (0.5B) 智慧精煉系統提示詞，大幅減少 CPU 計算耗時並確保秒級回應。"""
         if not instruction or len(instruction) <= max_chars:
             return instruction
 
@@ -216,7 +223,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
             "請一律使用自然流暢、專業精準的道地臺灣繁體中文 (Traditional Chinese - Taiwan) 回覆。\n"
             "語氣親切專業、條理清晰，杜絕機械式套話。\n"
         )
-        # 截取前段關鍵規範 (過濾掉龐大雲端工具清單與冗長 prompt)
+        # 截取前段核心規範 (徹底過濾龐大雲端工具清單與長 prompt)
         truncated_body = instruction[:max_chars].strip()
         return f"{core_header}\n核心指引：\n{truncated_body}"
 
@@ -238,8 +245,8 @@ class LocalGGUFAdapter(BaseAIAdapter):
         if compact_sys:
             formatted_messages.append({"role": "system", "content": compact_sys})
 
-        # 本地輕量模型僅保留最近 8 則對話，防止上下文無限膨脹
-        recent_messages = messages[-8:] if len(messages) > 8 else messages
+        # 本地輕量模型僅保留最近 4 則對話 (2 輪交互)，大幅降低 Prompt Evaluation 計算量
+        recent_messages = messages[-4:] if len(messages) > 4 else messages
         for msg in recent_messages:
             role = msg.get("role", "user")
             if role in ("bot", "model"):
@@ -262,11 +269,11 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
         payload = {
             "messages": formatted_messages,
-            "max_tokens": min(max_tokens, 512),
+            "max_tokens": min(max_tokens, 256),
             "temperature": temperature,
         }
 
-        server_timeout = max(timeout, 120.0)
+        server_timeout = max(timeout, 200.0)
         import httpx
         async with httpx.AsyncClient(timeout=server_timeout) as client:
             resp = await client.post(f"{server_url}/v1/chat/completions", json=payload)
