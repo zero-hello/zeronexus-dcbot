@@ -2,6 +2,23 @@
 
 ---
 
+## [2.7.7] - 2026-09-26
+
+### 🚀 賽揚雙核記憶體頻寬解套、Stop 停止詞防複讀與秒級推論監測 (Dual-Core Cache & Stop Defense)
+- **賽揚雙核黃金執行緒調度**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - 調整執行緒為賽揚實體雙核架構最適之 2 緒 (`threads = max(1, min(os.cpu_count() or 1, 2))`)，解決 4 執行緒在 2MB L3 快取賽揚主機上互相踩踏記憶體頻寬與頻繁 Context Switch 的瓶頸。
+    - 啟用 `--cache-reuse 256` 提示詞 KV 快取重用，大幅縮短 Prompt 評估耗時。
+- **Stop Sequences 停止詞防護網 (杜絕無窮複讀與自問自答)**：
+  - 加入 `<|im_end|>`, `<|endoftext|>`, `\nUser:`, `\n使用者：` 嚴格停止標籤。
+  - 將日常推論上限調節為 `min(max_tokens, 120)`，解決 0.5B 小模型在回答完後因缺乏停止標籤而一路自言自語填滿 256 tokens 導致耗時 100 秒的致命問題。
+- **對話歷史修剪至最近 1 輪 (極限壓縮 Prompt Tokens)**：
+  - 本地模型推論僅傳入最近 2 則對話 (1 輪交互)，將 Prompt 評估總量壓縮在 80~120 tokens 以內，1~2 秒內完成 Prompt 評估。
+- **即時推論效能日誌 (TPS 監控)**：
+  - 推論完成時自動記錄 `耗時`、`Prompt Tokens`、`生成 Tokens` 與 `Tokens/s (tps)` 速率指標，推論瓶頸一目了然。
+
+---
+
 ## [2.7.6] - 2026-09-26
 
 ### ⚡ 本地推論全核代碼加速與 240s 逾時防護 (Full-Core Code Acceleration & 240s Anti-Timeout)

@@ -161,8 +161,8 @@ class LocalGGUFAdapter(BaseAIAdapter):
                 except Exception:
                     pass
 
-        # 全力調度可用 CPU 核心，不再限制為 2 核
-        threads = max(1, os.cpu_count() or 2)
+        # 針對賽揚/奔騰雙核架構最佳化執行緒，避免 4 執行緒爭搶記憶體頻寬與排程切換延遲
+        threads = max(1, min(os.cpu_count() or 1, 2))
         cmd = [
             server_path,
             "-m", model_path,
@@ -172,6 +172,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
             "-c", str(target_ctx),
             "-b", "512",
             "-ub", "256",
+            "--cache-reuse", "256",
             "--parallel", "1",
             "--prio", "2",
             "--prio-batch", "2",
@@ -245,8 +246,8 @@ class LocalGGUFAdapter(BaseAIAdapter):
         if compact_sys:
             formatted_messages.append({"role": "system", "content": compact_sys})
 
-        # 本地輕量模型僅保留最近 4 則對話 (2 輪交互)，大幅降低 Prompt Evaluation 計算量
-        recent_messages = messages[-4:] if len(messages) > 4 else messages
+        # 本地輕量模型僅保留最近 2 則對話 (1 輪交互)，極限降低 Prompt 計算耗時
+        recent_messages = messages[-2:] if len(messages) > 2 else messages
         for msg in recent_messages:
             role = msg.get("role", "user")
             if role in ("bot", "model"):
@@ -267,10 +268,24 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
             formatted_messages.append({"role": role, "content": content_str})
 
+        # 針對 0.5B 本地小模型，設置明確停止詞與上限 (120 tokens)，防止模型無限複讀自問自答
+        stop_words = [
+            "<|im_end|>",
+            "<|endoftext|>",
+            "<|im_start|>",
+            "\nUser:",
+            "\n使用者：",
+            "\n\nUser:",
+            "\n\n使用者：",
+        ]
         payload = {
             "messages": formatted_messages,
-            "max_tokens": min(max_tokens, 256),
+            "max_tokens": min(max_tokens, 120),
             "temperature": temperature,
+            "top_p": 0.85,
+            "presence_penalty": 0.3,
+            "frequency_penalty": 0.3,
+            "stop": stop_words,
         }
 
         server_timeout = max(timeout, 200.0)
@@ -290,6 +305,13 @@ class LocalGGUFAdapter(BaseAIAdapter):
         prompt_tokens = usage.get("prompt_tokens", len(str(formatted_messages)) // 3)
         completion_tokens = usage.get("completion_tokens", len(content) // 3)
         latency_ms = (time.perf_counter() - start_time) * 1000.0
+
+        t_sec = max(0.001, latency_ms / 1000.0)
+        speed_tps = completion_tokens / t_sec
+        log.info(
+            f"⚡ 本地 GGUF 推論完成！耗時: {t_sec:.1f}s | Prompt: {prompt_tokens} tokens | "
+            f"生成: {completion_tokens} tokens | 速率: {speed_tps:.1f} tokens/s"
+        )
 
         return AIResult(
             text=content,

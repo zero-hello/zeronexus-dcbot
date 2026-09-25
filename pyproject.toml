@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zeronexus"
-version = "2.7.6"
+version = "2.7.7"
 description = "ZeroNexus (ZN) — Advanced Modular Discord Platform"
 readme = "README.md"
 requires-python = ">=3.11"
