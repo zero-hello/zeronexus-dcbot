@@ -2,6 +2,33 @@
 
 ---
 
+## [2.7.5] - 2026-09-26
+
+### 🚀 新增 Qwen 2.5 0.5B Instruct Q4_K_M 極速輕量化本地模型 (Q4_K_M Fast Local Edge Model)
+- **選單排序與清楚標示**：
+  - 更新 [`zeronexus/ui/model_select_view.py`](zeronexus/ui/model_select_view.py)：
+    - 將 `qwen2.5-0.5b-instruct-q4_k_m` 放置於選單第三個選項（index 2），緊接在 `gemini-3.1-flash-lite` 與 `qwen2.5-0.5b-instruct-q8_0` 之後。
+    - 嚴格標示清楚精確規格：第二項明確標記為 `[8-bit/Q8_0 高精度]`，第三項明確標記為 `[4-bit/Q4_K_M 極速推薦]`，便於使用者依設備負載快速挑選。
+- **全套自癒下載與完整規格註冊**：
+  - 更新 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py)：
+    - 擴充 `GGUF_MODELS_SPEC` 字典，新增 Q4_K_M 專屬 HuggingFace 下載來源（約 350MB，門檻 300MB）與直鏈備援。
+    - 支援 `match_gguf_spec()` 智慧匹配路徑與模型識別碼。
+    - `download_gguf_model()` 與 `ensure_gguf_model_ready()` 升級支援指定模型規格與自癒補齊。
+- **適配器多模型切換與平滑熱重啟**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - `_resolve_model_path()` 智慧識別 Q4 系列，避免誤退回 Q8，並於本地檔案缺失時自動觸發非同步自癒下載。
+    - `_ensure_server_running()` 新增 `_server_model_path` 切換感知，當使用者在 Q8_0 與 Q4_K_M 之間切換時，自動關閉舊伺服器並以新模型重啟。
+- **模型註冊表與配額體系完備**：
+  - 更新 [`zeronexus/ai_gateway/model_registry.py`](zeronexus/ai_gateway/model_registry.py)：
+    - 完整註冊 `qwen2.5-0.5b-instruct-q4_k_m` 及其別名 `local/qwen2.5-0.5b-instruct-q4_k_m`。
+  - 更新 [`zeronexus/ai_gateway/quota_service.py`](zeronexus/ai_gateway/quota_service.py)：
+    - 設定 Q4_K_M 本地自主運算模型之配額為無限額度（999999 次）。
+- **完整單元測試覆蓋**：
+  - 更新 [`tests/test_local_gguf_adapter.py`](tests/test_local_gguf_adapter.py)：
+    - 驗證選單第三項為 Q4_K_M、標籤 8 與 4 區分清楚、註冊表元數據正確以及路徑解析自癒，11 項本地推論測試全數通過，全系統 92 項回歸測試全綠。
+
+---
+
 ## [2.7.4] - 2026-09-25
 
 ### 🚀 提示詞智慧精簡與上下文擴展 (Context Expansion & Smart Compaction)

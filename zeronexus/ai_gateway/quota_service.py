@@ -470,6 +470,8 @@ class QuotaService:
         # 本地自主運算 GGUF 模型 (無額度限制)
         "qwen2.5-0.5b-instruct-q8_0": 999999,
         "local/qwen2.5-0.5b-instruct": 999999,
+        "qwen2.5-0.5b-instruct-q4_k_m": 999999,
+        "local/qwen2.5-0.5b-instruct-q4_k_m": 999999,
 
         # 極速輕量旗艦 (50 次/天)
         "gemini-3.1-flash-lite": 50,

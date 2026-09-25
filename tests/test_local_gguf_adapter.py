@@ -14,15 +14,21 @@ class TestLocalGGUFIntegration:
     """本地 GGUF 模型各項整合邏輯測試。"""
 
     def test_model_select_entries_order_and_gemini25_removed(self) -> None:
-        """驗證選單中第二項為 GGUF 本地模型，且完全移除 Gemini 2.5 系列。"""
+        """驗證選單中第二項為 Q8_0 本地模型、第三項為 Q4_K_M 本地模型，且標籤清楚標記 8 與 4。"""
         # 1. 總數必須符合 Discord Select Menu 限制 (<= 25)
         assert len(MODEL_SELECT_ENTRIES) <= 25
 
-        # 2. 第二個選項 (index 1) 必須為 qwen2.5-0.5b-instruct-q8_0
+        # 2. 第二個選項 (index 1) 必須為 qwen2.5-0.5b-instruct-q8_0 且清楚標示 8-bit / Q8_0
         assert MODEL_SELECT_ENTRIES[1]["id"] == "qwen2.5-0.5b-instruct-q8_0"
+        assert "8" in MODEL_SELECT_ENTRIES[1]["label"] or "Q8" in MODEL_SELECT_ENTRIES[1]["label"]
         assert "GGUF" in MODEL_SELECT_ENTRIES[1]["label"]
 
-        # 3. 確保所有 Gemini 2.5 模型皆已自選單中移除
+        # 3. 第三個選項 (index 2) 必須為 qwen2.5-0.5b-instruct-q4_k_m 且清楚標示 4-bit / Q4_K_M
+        assert MODEL_SELECT_ENTRIES[2]["id"] == "qwen2.5-0.5b-instruct-q4_k_m"
+        assert "4" in MODEL_SELECT_ENTRIES[2]["label"] or "Q4" in MODEL_SELECT_ENTRIES[2]["label"]
+        assert "GGUF" in MODEL_SELECT_ENTRIES[2]["label"]
+
+        # 4. 確保所有 Gemini 2.5 模型皆已自選單中移除
         gemini_25_ids = [
             "gemini-2.5-flash",
             "gemini-2.5-pro",
@@ -34,17 +40,30 @@ class TestLocalGGUFIntegration:
             assert g25 not in current_ids, f"Gemini 2.5 模型 {g25} 應自選單中移除"
 
     def test_model_registry_contains_local_model(self) -> None:
-        """驗證模型註冊表中已正確註冊該本地模型及其元數據。"""
-        meta = model_registry.get("qwen2.5-0.5b-instruct-q8_0")
-        assert meta is not None
-        assert meta.provider == "local"
-        assert meta.vendor == "qwen"
-        assert meta.is_free is True
+        """驗證模型註冊表中已正確註冊 Q8 與 Q4 本地模型及其元數據。"""
+        # 驗證 Q8_0
+        meta_q8 = model_registry.get("qwen2.5-0.5b-instruct-q8_0")
+        assert meta_q8 is not None
+        assert meta_q8.provider == "local"
+        assert meta_q8.vendor == "qwen"
+        assert meta_q8.is_free is True
+        assert "8" in meta_q8.display_name or "Q8" in meta_q8.display_name
 
-        # 別名亦應可查詢
         alias_meta = model_registry.get("local/qwen2.5-0.5b-instruct")
         assert alias_meta is not None
         assert alias_meta.provider == "local"
+
+        # 驗證 Q4_K_M
+        meta_q4 = model_registry.get("qwen2.5-0.5b-instruct-q4_k_m")
+        assert meta_q4 is not None
+        assert meta_q4.provider == "local"
+        assert meta_q4.vendor == "qwen"
+        assert meta_q4.is_free is True
+        assert "4" in meta_q4.display_name or "Q4" in meta_q4.display_name
+
+        alias_q4 = model_registry.get("local/qwen2.5-0.5b-instruct-q4_k_m")
+        assert alias_q4 is not None
+        assert alias_q4.provider == "local"
 
     def test_local_gguf_adapter_file_not_found(self, tmp_path) -> None:
         """測試當 GGUF 模型檔案不存在時，適配器能拋出友善的 FileNotFoundError。"""
@@ -228,3 +247,25 @@ class TestLocalGGUFIntegration:
             assert res.text == "內部引擎優先回應"
             # 確保不會啟動外部伺服器程序
             mock_server.assert_not_called()
+
+    def test_q4_k_m_spec_and_resolution(self, tmp_path) -> None:
+        """驗證 Q4_K_M 規格匹配、最小位元組門檻與適配器路徑解析。"""
+        from zeronexus.brain.bootstrap import match_gguf_spec, GGUF_MODELS_SPEC
+
+        spec_q4 = match_gguf_spec("qwen2.5-0.5b-instruct-q4_k_m")
+        assert spec_q4["filename"] == "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        assert spec_q4["min_bytes"] == 300 * 1024 * 1024
+
+        spec_q8 = match_gguf_spec("qwen2.5-0.5b-instruct-q8_0")
+        assert spec_q8["filename"] == "qwen2.5-0.5b-instruct-q8_0.gguf"
+        assert spec_q8["min_bytes"] == 600 * 1024 * 1024
+
+        # 驗證適配器路徑解析
+        adapter = LocalGGUFAdapter(models_dir=str(tmp_path))
+        # 建立假的 q4 模型檔案
+        q4_file = tmp_path / "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        q4_file.write_bytes(b"dummy_q4")
+
+        resolved = adapter._resolve_model_path("qwen2.5-0.5b-instruct-q4_k_m")
+        assert resolved == str(q4_file)
+

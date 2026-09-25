@@ -25,14 +25,34 @@ MODELS_SPEC = [
     ("hostility_sentinel", "Xenova/toxic-bert", "自尊防衛哨兵模型", 90 * 1024 * 1024),
 ]
 
-# 本地 GGUF 神經推論模型規格 (Qwen 2.5 0.5B Instruct)
-GGUF_MODEL_SPEC = {
-    "filename": "qwen2.5-0.5b-instruct-q8_0.gguf",
-    "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-    "direct_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf?download=true",
-    "desc": "Qwen 2.5 0.5B Instruct 本地端 GGUF 自主運算模型",
-    "min_bytes": 600 * 1024 * 1024,  # 約 600MB
+# 本地 GGUF 神經推論模型規格清單 (Qwen 2.5 0.5B Instruct)
+GGUF_MODELS_SPEC = {
+    "qwen2.5-0.5b-instruct-q8_0": {
+        "filename": "qwen2.5-0.5b-instruct-q8_0.gguf",
+        "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "direct_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf?download=true",
+        "desc": "Qwen 2.5 0.5B Instruct 本地端 GGUF (8-bit / Q8_0 高精度)",
+        "min_bytes": 600 * 1024 * 1024,  # 約 600MB
+    },
+    "qwen2.5-0.5b-instruct-q4_k_m": {
+        "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "direct_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true",
+        "desc": "Qwen 2.5 0.5B Instruct 本地端 GGUF (4-bit / Q4_K_M 極速推薦/低負載)",
+        "min_bytes": 300 * 1024 * 1024,  # 約 350MB
+    },
 }
+
+# 預設單一模型規格相容常數（保留向後相容性）
+GGUF_MODEL_SPEC = GGUF_MODELS_SPEC["qwen2.5-0.5b-instruct-q8_0"]
+
+
+def match_gguf_spec(target_path_or_id: str) -> dict:
+    """根據路徑或模型識別碼智慧匹配對應之 GGUF 模型規格。"""
+    base = os.path.basename(target_path_or_id).lower()
+    if "q4" in base or "q4_k_m" in base:
+        return GGUF_MODELS_SPEC["qwen2.5-0.5b-instruct-q4_k_m"]
+    return GGUF_MODELS_SPEC["qwen2.5-0.5b-instruct-q8_0"]
 
 # 跨架構通用自適應 llama.cpp 二進位執行檔規格 (方案 B / 免 gcc / 免 AVX2 限制)
 LLAMA_BIN_SPEC = {
@@ -189,16 +209,17 @@ def verify_gguf_model(model_path: str, min_bytes: int = 600 * 1024 * 1024) -> bo
     return os.path.getsize(model_path) >= min_bytes
 
 
-def download_gguf_model(target_path: str, max_retries: int = 3) -> bool:
+def download_gguf_model(target_path: str, spec: dict | None = None, max_retries: int = 3) -> bool:
     """乾淨下載或重新下載 Qwen 2.5 0.5B GGUF 本地推論模型。"""
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     temp_path = f"{target_path}.part"
 
-    desc = GGUF_MODEL_SPEC["desc"]
-    repo = GGUF_MODEL_SPEC["repo"]
-    filename = GGUF_MODEL_SPEC["filename"]
-    direct_url = GGUF_MODEL_SPEC["direct_url"]
-    min_bytes = GGUF_MODEL_SPEC["min_bytes"]
+    model_spec = spec or match_gguf_spec(target_path)
+    desc = model_spec["desc"]
+    repo = model_spec["repo"]
+    filename = model_spec["filename"]
+    direct_url = model_spec["direct_url"]
+    min_bytes = model_spec["min_bytes"]
 
     print(f"\033[38;5;214m  ⏳ [大腦守護者] 正在下載/修復 {desc}...\033[0m")
 
@@ -239,28 +260,34 @@ def download_gguf_model(target_path: str, max_retries: int = 3) -> bool:
     return False
 
 
-def ensure_gguf_model_ready(models_dir: str | None = None, console_output: bool = True) -> bool:
+def ensure_gguf_model_ready(
+    models_dir: str | None = None,
+    model_name: str | None = None,
+    console_output: bool = True,
+) -> bool:
     """確保 Qwen 2.5 0.5B 本地 GGUF 模型檔案已完整就緒，若缺失則自動自癒下載。"""
     if models_dir is None:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         models_dir = os.path.join(base_dir, "data", "models")
 
     os.makedirs(models_dir, exist_ok=True)
-    target_path = os.path.join(models_dir, GGUF_MODEL_SPEC["filename"])
-    min_bytes = GGUF_MODEL_SPEC["min_bytes"]
+
+    spec = match_gguf_spec(model_name) if model_name else GGUF_MODEL_SPEC
+    target_path = os.path.join(models_dir, spec["filename"])
+    min_bytes = spec["min_bytes"]
 
     # 1. 快速健康檢查
     if verify_gguf_model(target_path, min_bytes):
         if console_output:
-            print("\033[38;5;48m  ✔ 本地端點：Qwen 2.5 0.5B GGUF 自主運算模型已就緒 (~645MB 全核健康)\033[0m")
+            print(f"\033[38;5;48m  ✔ 本地端點：{spec['desc']} 已就緒 ({min_bytes // (1024 * 1024)}MB+ 健康)\033[0m")
         return True
 
     # 2. 自動觸發下載
     print(f"\n\033[38;5;208m🧠 【ZeroNexus 模型開機守護者】檢測到本地 GGUF 模型缺失或未完成！\033[0m")
-    print(f"\033[38;5;244m正在自癒下載 {GGUF_MODEL_SPEC['desc']}...\033[0m")
-    success = download_gguf_model(target_path)
+    print(f"\033[38;5;244m正在自癒下載 {spec['desc']}...\033[0m")
+    success = download_gguf_model(target_path, spec=spec)
     if not success:
-        log.error(f"嚴重錯誤：無法自動下載 {GGUF_MODEL_SPEC['desc']}")
+        log.error(f"嚴重錯誤：無法自動下載 {spec['desc']}")
         return False
     return True
 

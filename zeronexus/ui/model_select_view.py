@@ -25,9 +25,15 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
     },
     {
         "id": "qwen2.5-0.5b-instruct-q8_0",
-        "label": "Qwen 2.5 0.5B GGUF (本地端自主運算・0延遲0額度)",
+        "label": "Qwen 2.5 0.5B GGUF [8-bit/Q8_0 高精度] (本地自主運算)",
         "emoji": "⚡",
-        "tag": "本地離線推論 (自適應 CPU / 零雲端依賴)",
+        "tag": "本地離線推論 [8-bit 高精度]・自適應 CPU・零雲端依賴",
+    },
+    {
+        "id": "qwen2.5-0.5b-instruct-q4_k_m",
+        "label": "Qwen 2.5 0.5B GGUF [4-bit/Q4_K_M 極速推薦] (本地低負載)",
+        "emoji": "🚀",
+        "tag": "本地離線推論 [4-bit 極速版]・賽揚/奔騰 CPU 推薦・推論速度倍增",
     },
     {
         "id": "deepseek/deepseek-v4-flash-vision-exp",

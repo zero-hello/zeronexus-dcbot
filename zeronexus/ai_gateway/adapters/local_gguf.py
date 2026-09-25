@@ -38,6 +38,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
         self._current_loaded_path: Optional[str] = None
         self._server_process: Optional[Any] = None
         self._server_port: int = 8089
+        self._server_model_path: Optional[str] = None
 
     def _resolve_model_path(self, model: str) -> str:
         """解析模型檔案之完整絕對路徑。"""
@@ -53,8 +54,18 @@ class LocalGGUFAdapter(BaseAIAdapter):
         if os.path.exists(target_path):
             return target_path
 
+        # 若使用者指定 Q4 系列但本地尚未就緒，優先嘗試自癒下載
+        if "q4" in clean_name.lower():
+            try:
+                from zeronexus.brain.bootstrap import ensure_gguf_model_ready
+                ensure_gguf_model_ready(models_dir=self.models_dir, model_name=clean_name, console_output=False)
+                if os.path.exists(target_path):
+                    return target_path
+            except Exception as e:
+                log.warning(f"自癒下載 Q4 GGUF 模型異常: {e}")
+
         default_path = os.path.join(self.models_dir, self.DEFAULT_MODEL_FILENAME)
-        if os.path.exists(default_path):
+        if os.path.exists(default_path) and "q4" not in clean_name.lower():
             return default_path
 
         return target_path
@@ -77,30 +88,51 @@ class LocalGGUFAdapter(BaseAIAdapter):
         import httpx
         url = f"http://127.0.0.1:{self._server_port}"
 
+        # 檢測是否有模型切換需求 (例如由 Q8_0 切換至 Q4_K_M)
+        need_model_switch = bool(
+            self._server_model_path and os.path.abspath(self._server_model_path) != os.path.abspath(model_path)
+        )
+        if need_model_switch:
+            log.info(
+                f"檢測到本地模型切換 ({os.path.basename(self._server_model_path)} -> {os.path.basename(model_path)})，準備重啟 llama-server..."
+            )
+            if self._server_process is not None:
+                try:
+                    self._server_process.kill()
+                except Exception:
+                    pass
+                self._server_process = None
+            import subprocess
+            subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
+            await asyncio.sleep(0.5)
+
         target_ctx = 8192
-        try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                res = await client.get(f"{url}/props")
-                if res.status_code == 200:
-                    current_ctx = res.json().get("default_generation_settings", {}).get("n_ctx", 0)
-                    if current_ctx >= target_ctx:
-                        return url
-                    log.info(f"現有 llama-server context={current_ctx} 小於目標 {target_ctx}，正在自動熱重啟升級...")
-                    if self._server_process is not None:
-                        try:
-                            self._server_process.kill()
-                        except Exception:
-                            pass
-                        self._server_process = None
-                    import subprocess
-                    subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
-                    await asyncio.sleep(1.0)
-                else:
-                    h_res = await client.get(f"{url}/health")
-                    if h_res.status_code == 200:
-                        return url
-        except Exception:
-            pass
+        if not need_model_switch:
+            try:
+                async with httpx.AsyncClient(timeout=1.0) as client:
+                    res = await client.get(f"{url}/props")
+                    if res.status_code == 200:
+                        current_ctx = res.json().get("default_generation_settings", {}).get("n_ctx", 0)
+                        if current_ctx >= target_ctx:
+                            self._server_model_path = model_path
+                            return url
+                        log.info(f"現有 llama-server context={current_ctx} 小於目標 {target_ctx}，正在自動熱重啟升級...")
+                        if self._server_process is not None:
+                            try:
+                                self._server_process.kill()
+                            except Exception:
+                                pass
+                            self._server_process = None
+                        import subprocess
+                        subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
+                        await asyncio.sleep(1.0)
+                    else:
+                        h_res = await client.get(f"{url}/health")
+                        if h_res.status_code == 200:
+                            self._server_model_path = model_path
+                            return url
+            except Exception:
+                pass
 
         bin_dir = os.path.dirname(server_path)
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -164,11 +196,13 @@ class LocalGGUFAdapter(BaseAIAdapter):
                 async with httpx.AsyncClient(timeout=1.0) as client:
                     res = await client.get(f"{url}/health")
                     if res.status_code == 200:
+                        self._server_model_path = model_path
                         log.info(f"本地 SSE4.2 自適應 llama-server 就緒！端點：{url}")
                         return url
             except Exception:
                 continue
 
+        self._server_model_path = model_path
         return url
 
     @staticmethod

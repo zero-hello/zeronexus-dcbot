@@ -220,14 +220,14 @@ class ModelRegistry:
             # Local GGUF Autonomous Edge Models
             ModelMetadata(
                 model_id="qwen2.5-0.5b-instruct-q8_0",
-                display_name="Qwen 2.5 0.5B Instruct GGUF",
+                display_name="Qwen 2.5 0.5B Instruct GGUF (8-bit / Q8_0 高精度)",
                 provider="local",
                 vendor="qwen",
                 status=ModelStatus.ACTIVE,
                 context_window=4096,
                 capabilities={"text", "reasoning"},
                 is_free=True,
-                description="本地端極速 GGUF 自主運算模型，零延遲、離線自主運行、無任何 API 額度限制。",
+                description="本地端 GGUF 自主運算模型 (8-bit 高精度)，離線自主運行、無任何 API 額度限制。",
             ),
             ModelMetadata(
                 model_id="local/qwen2.5-0.5b-instruct",
@@ -239,6 +239,28 @@ class ModelRegistry:
                 capabilities={"text", "reasoning"},
                 is_free=True,
                 description="本地端極速 GGUF 自主運算模型別名。",
+            ),
+            ModelMetadata(
+                model_id="qwen2.5-0.5b-instruct-q4_k_m",
+                display_name="Qwen 2.5 0.5B Instruct GGUF (4-bit / Q4_K_M 極速版)",
+                provider="local",
+                vendor="qwen",
+                status=ModelStatus.ACTIVE,
+                context_window=4096,
+                capabilities={"text", "reasoning"},
+                is_free=True,
+                description="本地端 4-bit 量化 GGUF 自主運算模型，記憶體佔用極低、賽揚/奔騰 CPU 推薦、推論速度倍增、無任何 API 額度限制。",
+            ),
+            ModelMetadata(
+                model_id="local/qwen2.5-0.5b-instruct-q4_k_m",
+                display_name="Qwen 2.5 0.5B Instruct Q4_K_M (Local Alias)",
+                provider="local",
+                vendor="qwen",
+                status=ModelStatus.ACTIVE,
+                context_window=4096,
+                capabilities={"text", "reasoning"},
+                is_free=True,
+                description="本地端極速 4-bit 量化 GGUF 模型別名。",
             ),
 
             # Google Gemini Series (Native Google API & OpenRouter Routes)
