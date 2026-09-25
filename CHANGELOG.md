@@ -2,6 +2,23 @@
 
 ---
 
+## [2.7.2] - 2026-09-25
+
+### 📦 專案內建 libgomp.so.1 與 Git-Pull 零維護即插即用 (Zero-Touch Git-Pull Deployment)
+- **內建 OpenMP 執行時期函式庫（zeronexus/assets/bin/libgomp.so.1）**：
+  - 針對各類限制 root 權限、無法執行 `apt-get` 的第三方託管容器（如 Pterodactyl 等），將標準輕量版 `libgomp.so.1` (僅 377KB) 直接納入專案資產進行 Git 版本追蹤。
+  - **使用者只需執行 `git pull` 即可自動送達**，無需任何 Linux 系統管理員權限或額外安裝步驟。
+- **開機自癒自動同步與動態路徑載入**：
+  - 更新 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py)：開機時若偵測到執行目錄缺少 `libgomp.so.1`，自動將專案內建庫複製就緒。
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - 啟動 `llama-server` / `llama-cli` 時，`LD_LIBRARY_PATH` 自動優先載入專案內建庫與執行目錄。
+    - 擴充 `_is_libgomp_available()`，優先探測本地資產，解決外部引擎被誤判略過之問題。
+- **無 AVX2 虛擬 CPU 之自動平滑切換**：
+  - 當主機 CPU 未具備 AVX2 或當前 Python 套件拋出 SIGILL 時，系統自動平滑切換至官方二進位引擎（`llama-server`）。
+  - 搭配內建 `libgomp.so.1` 與動態多世代 CPU 後端（`libggml-cpu-x64.so`），真正做到 **「Git Pull 即用、重啟即跑、零編譯、零報錯」**。
+
+---
+
 ## [2.7.1] - 2026-09-25
 
 ### 🛡️ 容器 OpenMP 系統依賴修復與相容推論優化 (Container OpenMP Fix & Robust Inference)

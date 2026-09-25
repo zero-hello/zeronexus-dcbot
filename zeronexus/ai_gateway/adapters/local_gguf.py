@@ -86,9 +86,24 @@ class LocalGGUFAdapter(BaseAIAdapter):
             pass
 
         bin_dir = os.path.dirname(server_path)
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        asset_bin = os.path.join(base_dir, "zeronexus", "assets", "bin")
+
+        # 確保 libgomp.so.1 就緒
+        target_gomp = os.path.join(bin_dir, "libgomp.so.1")
+        asset_gomp = os.path.join(asset_bin, "libgomp.so.1")
+        if not os.path.exists(target_gomp) and os.path.exists(asset_gomp):
+            try:
+                import shutil
+                shutil.copy2(asset_gomp, target_gomp)
+                os.chmod(target_gomp, 0o755)
+            except Exception:
+                pass
+
         env = os.environ.copy()
         current_ld = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = f"{bin_dir}:{current_ld}" if current_ld else bin_dir
+        paths = [p for p in (bin_dir, asset_bin, current_ld) if p]
+        env["LD_LIBRARY_PATH"] = ":".join(paths)
 
         threads = max(1, min(os.cpu_count() or 2, 4))
         cmd = [
@@ -384,9 +399,23 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
         threads = max(1, min(os.cpu_count() or 2, 4))
         bin_dir = os.path.dirname(cli_path)
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        asset_bin = os.path.join(base_dir, "zeronexus", "assets", "bin")
+
+        target_gomp = os.path.join(bin_dir, "libgomp.so.1")
+        asset_gomp = os.path.join(asset_bin, "libgomp.so.1")
+        if not os.path.exists(target_gomp) and os.path.exists(asset_gomp):
+            try:
+                import shutil
+                shutil.copy2(asset_gomp, target_gomp)
+                os.chmod(target_gomp, 0o755)
+            except Exception:
+                pass
+
         env = os.environ.copy()
         current_ld = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = f"{bin_dir}:{current_ld}" if current_ld else bin_dir
+        paths = [p for p in (bin_dir, asset_bin, current_ld) if p]
+        env["LD_LIBRARY_PATH"] = ":".join(paths)
 
         cmd = [
             cli_path,
@@ -455,7 +484,17 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
     @staticmethod
     def _is_libgomp_available() -> bool:
-        """檢查作業系統是否安裝 libgomp1 (OpenMP 執行時期函式庫，外部二進位引擎必要依賴)。"""
+        """檢查作業系統或專案資產目錄是否具備 libgomp.so.1 (OpenMP 執行時期函式庫)。"""
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        cand_files = [
+            os.path.join(os.getcwd(), "data", "bin", "llama", "libgomp.so.1"),
+            os.path.join(base_dir, "data", "bin", "llama", "libgomp.so.1"),
+            os.path.join(base_dir, "zeronexus", "assets", "bin", "libgomp.so.1"),
+        ]
+        for f in cand_files:
+            if os.path.exists(f) and os.path.getsize(f) > 1024:
+                return True
+
         import ctypes.util
         try:
             return ctypes.util.find_library("gomp") is not None

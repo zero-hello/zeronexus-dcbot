@@ -313,9 +313,21 @@ def download_and_extract_llama_binaries(target_dir: str, max_retries: int = 3) -
 
 def ensure_llama_binaries_ready(bin_dir: str | None = None, console_output: bool = True) -> bool:
     """確保跨 CPU 通用之自適應 llama.cpp 二進位執行檔就緒。"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if bin_dir is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         bin_dir = os.path.join(base_dir, LLAMA_BIN_SPEC["bin_dir_rel"])
+
+    os.makedirs(bin_dir, exist_ok=True)
+
+    # 自動同步專案內建之 libgomp.so.1 (解決託管平台缺少系統 libgomp1 且無 root 權限之困境)
+    assets_gomp = os.path.join(base_dir, "zeronexus", "assets", "bin", "libgomp.so.1")
+    target_gomp = os.path.join(bin_dir, "libgomp.so.1")
+    if os.path.exists(assets_gomp) and not os.path.exists(target_gomp):
+        try:
+            shutil.copy2(assets_gomp, target_gomp)
+            os.chmod(target_gomp, 0o755)
+        except Exception as e:
+            log.warning(f"同步 libgomp.so.1 失敗: {e}")
 
     key_bin = os.path.join(bin_dir, LLAMA_BIN_SPEC["key_bin"])
     if os.path.exists(key_bin) and os.path.getsize(key_bin) > 1024:
@@ -325,6 +337,13 @@ def ensure_llama_binaries_ready(bin_dir: str | None = None, console_output: bool
 
     print(f"\n\033[38;5;208m🧠 【ZeroNexus 模型開機守護者】檢測到缺少自適應二進位引擎！\033[0m")
     success = download_and_extract_llama_binaries(bin_dir)
+    # 下載解壓完成後若尚未具備 libgomp.so.1，再次確保同步
+    if os.path.exists(assets_gomp) and not os.path.exists(target_gomp):
+        try:
+            shutil.copy2(assets_gomp, target_gomp)
+            os.chmod(target_gomp, 0o755)
+        except Exception:
+            pass
     return success
 
 
