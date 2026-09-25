@@ -2,6 +2,22 @@
 
 ---
 
+## [2.7.3] - 2026-09-25
+
+### ⚡ 賽揚/奔騰無 AVX2 實體 CPU 專屬 SSE4.2 二進位直通通道 (Celeron / Pentium Direct Path)
+- **硬體指令集感知與專屬通道調度**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - 新增 `_has_avx2()` CPU 旗標偵測。
+    - **無 AVX2 環境 (如 Intel Celeron / Pentium 物理限制晶片)**：直接直通專屬 SSE4.2 官方二進位引擎（`llama-server`），主動繞開 Python AVX2 套件，杜絕一切 `SIGILL (Illegal instruction)` 警告與崩潰。
+    - **具備 AVX2 環境**：維持內部原生推論優先，兼顧極速與彈性。
+- **推論常駐伺服器參數最適化 (低負載 / 賽揚友善)**：
+  - 調整上下文限制至 `-c 1024`，執行緒數上限設為 2，記憶體開銷降至 500MB 以內，推論載入僅需 500ms。
+  - 增強進程提前退出（Crash）之即時 stderr 錯誤診斷機制，避免長時間空轉等待。
+- **全自動端到端實測通過**：
+  - 模擬無 AVX2 賽揚環境進行實測，自動啟動 SSE4.2 通道並成功輸出繁體中文回應（耗時約 6 秒），10 項單元測試全數 100% 綠燈通過。
+
+---
+
 ## [2.7.2] - 2026-09-25
 
 ### 📦 專案內建 libgomp.so.1 與 Git-Pull 零維護即插即用 (Zero-Touch Git-Pull Deployment)

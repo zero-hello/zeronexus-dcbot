@@ -105,13 +105,20 @@ class LocalGGUFAdapter(BaseAIAdapter):
         paths = [p for p in (bin_dir, asset_bin, current_ld) if p]
         env["LD_LIBRARY_PATH"] = ":".join(paths)
 
-        threads = max(1, min(os.cpu_count() or 2, 4))
+        for p in (server_path, target_gomp):
+            if os.path.exists(p):
+                try:
+                    os.chmod(p, 0o755)
+                except Exception:
+                    pass
+
+        threads = max(1, min(os.cpu_count() or 1, 2))
         cmd = [
             server_path,
             "-m", model_path,
             "--port", str(self._server_port),
             "-t", str(threads),
-            "-c", "2048",
+            "-c", "1024",
             "--log-disable",
         ]
 
@@ -119,17 +126,28 @@ class LocalGGUFAdapter(BaseAIAdapter):
         self._server_process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
             env=env,
         )
 
         for _ in range(30):
             await asyncio.sleep(0.5)
+            # 若進程提前退出，立即診斷錯誤原因
+            if self._server_process.poll() is not None:
+                err_output = ""
+                try:
+                    _, err_output = self._server_process.communicate(timeout=1.0)
+                except Exception:
+                    pass
+                log.warning(f"llama-server 啟動後異常退出 (代碼 {self._server_process.returncode}): {err_output.strip()}")
+                break
+
             try:
                 async with httpx.AsyncClient(timeout=1.0) as client:
                     res = await client.get(f"{url}/health")
                     if res.status_code == 200:
-                        log.info(f"本地自適應 llama-server 就緒！端點：{url}")
+                        log.info(f"本地 SSE4.2 自適應 llama-server 就緒！端點：{url}")
                         return url
             except Exception:
                 continue
@@ -483,6 +501,17 @@ class LocalGGUFAdapter(BaseAIAdapter):
         )
 
     @staticmethod
+    def _has_avx2() -> bool:
+        """檢查主機 CPU 是否具備 AVX2 向量加速指令集旗標。"""
+        if os.path.exists("/proc/cpuinfo"):
+            try:
+                with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
+                    return "avx2" in f.read().lower()
+            except Exception:
+                pass
+        return False
+
+    @staticmethod
     def _is_libgomp_available() -> bool:
         """檢查作業系統或專案資產目錄是否具備 libgomp.so.1 (OpenMP 執行時期函式庫)。"""
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -521,94 +550,98 @@ class LocalGGUFAdapter(BaseAIAdapter):
     ) -> AIResult:
         """透過本地 GGUF 模型進行非同步推論並回傳結果。
 
-        調用順序：
-        1. 優先模式 1：Python 內部相容 llama_cpp.Llama 實例推論 (基礎相容、零依賴外部動態函式庫)。
-        2. 備援模式 2：外部原生二進位推論引擎 (llama-server / llama-cli，需系統具備 libgomp1)。
+        動態調度策略：
+        1. 若主機具備 AVX2：優先走 Python 內部相容 llama_cpp.Llama 推論。
+        2. 若主機無 AVX2 (Intel 賽揚/奔騰/虛擬化通用 CPU)：直通專屬 SSE4.2 官方二進位引擎 (llama-server)，跳過 AVX2 限制！
         """
         start_time = time.perf_counter()
         model_path = self._resolve_model_path(model)
+        has_avx2 = self._has_avx2()
 
-        # ---------------------------------------------------------
-        # 優先模式 1：Python 內部原生推論 (配合容器相容配置：n_ctx=1024, n_threads=2)
-        # ---------------------------------------------------------
         internal_err_msg: Optional[str] = None
-        try:
-            async with self._async_lock:
-                llm = await asyncio.to_thread(self._get_or_load_llm, model_path, 1024)
 
-            formatted_messages: List[Dict[str, str]] = []
-            if system_instruction:
-                formatted_messages.append({"role": "system", "content": system_instruction})
+        # ---------------------------------------------------------
+        # 情況 A：主機具備 AVX2 向量加速 ➔ 優先使用 Python 內部原生相容推論
+        # ---------------------------------------------------------
+        if has_avx2:
+            try:
+                async with self._async_lock:
+                    llm = await asyncio.to_thread(self._get_or_load_llm, model_path, 1024)
 
-            for msg in messages:
-                role = msg.get("role", "user")
-                if role in ("bot", "model"):
-                    role = "assistant"
-                elif role not in ("system", "user", "assistant"):
-                    role = "user"
+                formatted_messages: List[Dict[str, str]] = []
+                if system_instruction:
+                    formatted_messages.append({"role": "system", "content": system_instruction})
 
-                raw_content = msg.get("content", "")
-                if isinstance(raw_content, list):
-                    text_parts = [
-                        p.get("text", "")
-                        for p in raw_content
-                        if isinstance(p, dict) and p.get("type") == "text"
-                    ]
-                    content_str = " ".join(text_parts)
-                else:
-                    content_str = str(raw_content)
+                for msg in messages:
+                    role = msg.get("role", "user")
+                    if role in ("bot", "model"):
+                        role = "assistant"
+                    elif role not in ("system", "user", "assistant"):
+                        role = "user"
 
-                formatted_messages.append({"role": role, "content": content_str})
+                    raw_content = msg.get("content", "")
+                    if isinstance(raw_content, list):
+                        text_parts = [
+                            p.get("text", "")
+                            for p in raw_content
+                            if isinstance(p, dict) and p.get("type") == "text"
+                        ]
+                        content_str = " ".join(text_parts)
+                    else:
+                        content_str = str(raw_content)
 
-            top_p = float(kwargs.get("top_p", 0.9))
+                    formatted_messages.append({"role": role, "content": content_str})
 
-            def _run_inference() -> Dict[str, Any]:
-                return llm.create_chat_completion(
-                    messages=formatted_messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
+                top_p = float(kwargs.get("top_p", 0.9))
+
+                def _run_inference() -> Dict[str, Any]:
+                    return llm.create_chat_completion(
+                        messages=formatted_messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
+
+                raw_response = await asyncio.wait_for(
+                    asyncio.to_thread(_run_inference),
+                    timeout=timeout,
                 )
 
-            raw_response = await asyncio.wait_for(
-                asyncio.to_thread(_run_inference),
-                timeout=timeout,
-            )
+                latency_ms = (time.perf_counter() - start_time) * 1000.0
 
-            latency_ms = (time.perf_counter() - start_time) * 1000.0
+                choices = raw_response.get("choices", [])
+                if not choices:
+                    raise ValueError("本地 GGUF 模型未產生任何回應內容")
 
-            choices = raw_response.get("choices", [])
-            if not choices:
-                raise ValueError("本地 GGUF 模型未產生任何回應內容")
+                message_obj = choices[0].get("message", {})
+                response_text = message_obj.get("content", "").strip()
 
-            message_obj = choices[0].get("message", {})
-            response_text = message_obj.get("content", "").strip()
+                usage = raw_response.get("usage", {})
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
 
-            usage = raw_response.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
-
-            return AIResult(
-                text=response_text,
-                model_name=os.path.basename(model_path).replace(".gguf", ""),
-                provider="local",
-                latency_ms=latency_ms,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                raw_response=raw_response,
-                requested_model=model,
-            )
-        except Exception as py_err:
-            internal_err_msg = str(py_err)
-            log.warning(f"Python 內部推論調用受限 ({py_err})，嘗試啟動備援機制...")
+                return AIResult(
+                    text=response_text,
+                    model_name=os.path.basename(model_path).replace(".gguf", ""),
+                    provider="local",
+                    latency_ms=latency_ms,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    raw_response=raw_response,
+                    requested_model=model,
+                )
+            except Exception as py_err:
+                internal_err_msg = str(py_err)
+                log.warning(f"Python 內部推論調用受限 ({py_err})，嘗試啟動自適應二進位備援機制...")
+        else:
+            log.info("檢測到主機 CPU 為賽揚/奔騰/通用架構 (支援 SSE4.2，無 AVX2)，已自動啟用專屬 SSE4.2 自適應二進位推論引擎 (llama-server)！")
 
         # ---------------------------------------------------------
-        # 備援模式 2：外部官方二進位引擎 (llama-server / llama-cli)
+        # 情況 B：無 AVX2 或內部引擎受限 ➔ 官方自適應二進位引擎 (SSE4.2 通道)
         # ---------------------------------------------------------
         if not self._is_libgomp_available():
             log.warning(
-                "偵測到系統缺少 libgomp.so.1 (libgomp1) 動態函式庫，無法啟動外部二進位推論引擎。"
-                "若在 Docker 容器內運行，請確認已執行: apt-get update && apt-get install -y libgomp1"
+                "偵測到系統缺少 libgomp.so.1 動態函式庫且專案內建庫缺失，外部二進位引擎暫無法啟動。"
             )
         else:
             server_path = self._get_llama_server_path()
@@ -657,12 +690,51 @@ class LocalGGUFAdapter(BaseAIAdapter):
                 except Exception as cli_err:
                     log.warning(f"自適應二進位引擎調用失敗: {cli_err}")
 
+        # 若此前因為無 AVX2 直接走二進位但二進位失敗，最後嘗試一次內部相容引擎
+        if not has_avx2:
+            try:
+                async with self._async_lock:
+                    llm = await asyncio.to_thread(self._get_or_load_llm, model_path, 1024)
+
+                formatted_messages = []
+                if system_instruction:
+                    formatted_messages.append({"role": "system", "content": system_instruction})
+                for msg in messages:
+                    role = msg.get("role", "user")
+                    if role in ("bot", "model"):
+                        role = "assistant"
+                    elif role not in ("system", "user", "assistant"):
+                        role = "user"
+                    raw_content = msg.get("content", "")
+                    content_str = " ".join([p.get("text", "") for p in raw_content if isinstance(p, dict) and p.get("type") == "text"]) if isinstance(raw_content, list) else str(raw_content)
+                    formatted_messages.append({"role": role, "content": content_str})
+
+                top_p = float(kwargs.get("top_p", 0.9))
+                raw_response = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: llm.create_chat_completion(messages=formatted_messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p)),
+                    timeout=timeout,
+                )
+                choices = raw_response.get("choices", [])
+                if choices:
+                    return AIResult(
+                        text=choices[0].get("message", {}).get("content", "").strip(),
+                        model_name=os.path.basename(model_path).replace(".gguf", ""),
+                        provider="local",
+                        latency_ms=(time.perf_counter() - start_time) * 1000.0,
+                        prompt_tokens=raw_response.get("usage", {}).get("prompt_tokens", 0),
+                        completion_tokens=raw_response.get("usage", {}).get("completion_tokens", 0),
+                        raw_response=raw_response,
+                        requested_model=model,
+                    )
+            except Exception:
+                pass
+
         # 若內部與外部均無法運行，拋出詳細錯誤以觸發 AI Gateway 平滑退回雲端
         raise RuntimeError(
-            f"本地 GGUF 推論模組全部載入失敗。\n"
-            f"內部引擎錯誤: {internal_err_msg}\n"
-            f"提示：若缺少套件請執行 'CMAKE_ARGS=\"-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF\" pip install --force-reinstall --no-cache-dir llama-cpp-python'，"
-            f"若在容器內請確認已安裝 libgomp1。"
+            f"本地 GGUF 推論模組載入受限。\n"
+            f"內部引擎狀態: {internal_err_msg or '當前 CPU 無 AVX2 指令集 (賽揚/奔騰系列)'}\n"
+            f"外部 SSE4.2 引擎狀態: 二進位服務連線異常。\n"
+            f"提示：若在容器內請確認已 git pull 最新倉庫以取得內建 libgomp.so.1。"
         )
 
     async def close(self) -> None:
