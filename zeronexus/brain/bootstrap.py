@@ -89,11 +89,12 @@ def check_and_repair_dependencies() -> bool:
             "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cpu",
         ] + missing_pip_names
     else:
-        # 主機不支援 AVX2，啟用無 AVX 原始碼構建相容模式
-        env["CMAKE_ARGS"] = "-DGGML_AVX2=OFF -DGGML_AVX=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"
+        # 主機不支援 AVX2，啟用無 AVX/AVX2/FMA 原始碼構建相容模式
+        env["CMAKE_ARGS"] = "-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF"
         cmd = [
             sys.executable, "-m", "pip", "install",
             "--no-cache-dir",
+            "--force-reinstall",
             "--no-binary", "llama-cpp-python",
         ] + missing_pip_names
 
@@ -111,7 +112,7 @@ def check_and_repair_dependencies() -> bool:
     if has_avx2:
         print(f"\033[38;5;220m  pip install --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu {' '.join(missing_pip_names)}\033[0m")
     else:
-        print(f"\033[38;5;220m  CMAKE_ARGS=\"-DGGML_AVX2=OFF -DGGML_AVX=OFF -DGGML_FMA=OFF\" pip install --no-binary llama-cpp-python {' '.join(missing_pip_names)}\033[0m")
+        print(f"\033[38;5;220m  CMAKE_ARGS=\"-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF\" pip install --force-reinstall --no-cache-dir llama-cpp-python\033[0m")
     print("\033[38;5;244m若使用 Docker 部署，請重新建置映像檔：docker compose build --no-cache\033[0m\n")
     return False
 

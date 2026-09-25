@@ -236,9 +236,10 @@ class LocalGGUFAdapter(BaseAIAdapter):
             # 檢查是否遭遇 SIGILL (Illegal instruction, 代碼 -4 或 132) 或崩潰
             if res.returncode in (-4, 132) or "illegal instruction" in (res.stderr or "").lower():
                 err_msg = (
-                    f"主機或託管伺服器 CPU 不支援該套件之向量加速指令集 (Illegal instruction / SIGILL){cpu_features_warning}。"
-                    f"為保護機器人穩定運行，已安全停用本地推論模組，自動切換至雲端備援模型。"
-                    f"（若為第三方託管環境，因虛擬 CPU 通常未提供 AVX2 指令集且無法本地編譯，建議直接於選單選用雲端頂級模型）"
+                    f"主機或託管伺服器 CPU 不支援當前套件之向量加速指令集 (Illegal instruction / SIGILL){cpu_features_warning}。\n"
+                    f"💡 解決方式：請以基礎相容模式重新編譯安裝（禁用 AVX/AVX2/FMA）：\n"
+                    f"  CMAKE_ARGS=\"-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF\" pip install --force-reinstall --no-cache-dir llama-cpp-python\n"
+                    f"若為 Docker 容器，請確認 Dockerfile 已安裝 libgomp1 並重新建置。"
                 )
                 cls._hardware_probe_cache[model_path] = (False, err_msg)
                 return False, err_msg
@@ -305,16 +306,18 @@ class LocalGGUFAdapter(BaseAIAdapter):
                         "若在 Docker 容器內運行，請執行 'docker compose build --no-cache' 重新建置映像檔。"
                     ) from repair_err
 
-            threads = max(1, (os.cpu_count() or 4) - 1)
+            # 基礎相容配置：配合容器 CPU 核心數 (預設 2 執行緒)，上下文限制為 1024
+            threads = max(1, min(2, (os.cpu_count() or 2)))
+            context_size = min(n_ctx, 1024)
             llm = llama_cpp.Llama(
                 model_path=model_path,
-                n_ctx=n_ctx,
+                n_ctx=context_size,
                 n_threads=threads,
                 verbose=False,
             )
 
             load_ms = (time.perf_counter() - t0) * 1000.0
-            log.info(f"本地 GGUF 模型載入完成！耗時：{load_ms:.2f}ms，配置執行緒：{threads}")
+            log.info(f"本地 GGUF 模型載入完成！耗時：{load_ms:.2f}ms，配置執行緒：{threads}，上下文長度：{context_size}")
 
             self._llm = llm
             self._current_loaded_path = model_path
@@ -450,6 +453,15 @@ class LocalGGUFAdapter(BaseAIAdapter):
             requested_model=model,
         )
 
+    @staticmethod
+    def _is_libgomp_available() -> bool:
+        """檢查作業系統是否安裝 libgomp1 (OpenMP 執行時期函式庫，外部二進位引擎必要依賴)。"""
+        import ctypes.util
+        try:
+            return ctypes.util.find_library("gomp") is not None
+        except Exception:
+            return True
+
     async def generate(
         self,
         system_instruction: str,
@@ -468,127 +480,150 @@ class LocalGGUFAdapter(BaseAIAdapter):
         free_only: bool = False,
         **kwargs: Any,
     ) -> AIResult:
-        """透過本地 GGUF 模型進行非同步推論並回傳結果 (支援方案 B 優先調用)。"""
+        """透過本地 GGUF 模型進行非同步推論並回傳結果。
+
+        調用順序：
+        1. 優先模式 1：Python 內部相容 llama_cpp.Llama 實例推論 (基礎相容、零依賴外部動態函式庫)。
+        2. 備援模式 2：外部原生二進位推論引擎 (llama-server / llama-cli，需系統具備 libgomp1)。
+        """
         start_time = time.perf_counter()
         model_path = self._resolve_model_path(model)
 
-        # 優先方案 B：檢測或自癒就緒自適應二進位推論引擎 (server / cli)
-        server_path = self._get_llama_server_path()
-        cli_path = self._get_llama_cli_path()
-
-        if server_path is None and cli_path is None:
-            try:
-                from zeronexus.brain.bootstrap import ensure_llama_binaries_ready
-                ensure_llama_binaries_ready(console_output=False)
-                server_path = self._get_llama_server_path()
-                cli_path = self._get_llama_cli_path()
-            except Exception as dl_err:
-                log.warning(f"自癒準備自適應二進位引擎異常: {dl_err}")
-
-        # 優先模式 1：llama-server (常駐記憶體・秒級極速回應・零卡頓)
-        if server_path is not None and os.path.exists(model_path):
-            try:
-                server_url = await self._ensure_server_running(server_path, model_path)
-                return await self._generate_via_server(
-                    server_url=server_url,
-                    system_instruction=system_instruction,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    timeout=timeout,
-                    model=model,
-                    start_time=start_time,
-                    model_path=model_path,
-                )
-            except Exception as srv_err:
-                log.warning(f"llama-server 模式調用異常，嘗試 cli 模式備援: {srv_err}")
-
-        # 優先模式 2：llama-cli (獨立子行程・單次回合推論)
-        if cli_path is not None and os.path.exists(model_path):
-            try:
-                return await self._generate_via_cli(
-                    cli_path=cli_path,
-                    model_path=model_path,
-                    system_instruction=system_instruction,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    timeout=timeout,
-                    model=model,
-                    start_time=start_time,
-                    **kwargs,
-                )
-            except Exception as cli_err:
-                log.warning(f"自適應二進位引擎調用失敗，嘗試回退內部引擎: {cli_err}")
-
-        # 備援模式 3：Python 內部 llama-cpp-python 引擎 (受沙盒防護)
-        async with self._async_lock:
-            llm = await asyncio.to_thread(self._get_or_load_llm, model_path, 4096)
-
-        formatted_messages: List[Dict[str, str]] = []
-        if system_instruction:
-            formatted_messages.append({"role": "system", "content": system_instruction})
-
-        for msg in messages:
-            role = msg.get("role", "user")
-            if role in ("bot", "model"):
-                role = "assistant"
-            elif role not in ("system", "user", "assistant"):
-                role = "user"
-
-            raw_content = msg.get("content", "")
-            if isinstance(raw_content, list):
-                text_parts = [
-                    p.get("text", "")
-                    for p in raw_content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                ]
-                content_str = " ".join(text_parts)
-            else:
-                content_str = str(raw_content)
-
-            formatted_messages.append({"role": role, "content": content_str})
-
-        top_p = float(kwargs.get("top_p", 0.9))
-
-        def _run_inference() -> Dict[str, Any]:
-            return llm.create_chat_completion(
-                messages=formatted_messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-            )
-
+        # ---------------------------------------------------------
+        # 優先模式 1：Python 內部原生推論 (配合容器相容配置：n_ctx=1024, n_threads=2)
+        # ---------------------------------------------------------
+        internal_err_msg: Optional[str] = None
         try:
+            async with self._async_lock:
+                llm = await asyncio.to_thread(self._get_or_load_llm, model_path, 1024)
+
+            formatted_messages: List[Dict[str, str]] = []
+            if system_instruction:
+                formatted_messages.append({"role": "system", "content": system_instruction})
+
+            for msg in messages:
+                role = msg.get("role", "user")
+                if role in ("bot", "model"):
+                    role = "assistant"
+                elif role not in ("system", "user", "assistant"):
+                    role = "user"
+
+                raw_content = msg.get("content", "")
+                if isinstance(raw_content, list):
+                    text_parts = [
+                        p.get("text", "")
+                        for p in raw_content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    content_str = " ".join(text_parts)
+                else:
+                    content_str = str(raw_content)
+
+                formatted_messages.append({"role": role, "content": content_str})
+
+            top_p = float(kwargs.get("top_p", 0.9))
+
+            def _run_inference() -> Dict[str, Any]:
+                return llm.create_chat_completion(
+                    messages=formatted_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+
             raw_response = await asyncio.wait_for(
                 asyncio.to_thread(_run_inference),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"本地 GGUF 模型推論逾時 ({timeout:.1f} 秒)")
 
-        latency_ms = (time.perf_counter() - start_time) * 1000.0
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
 
-        choices = raw_response.get("choices", [])
-        if not choices:
-            raise ValueError("本地 GGUF 模型未產生任何回應內容")
+            choices = raw_response.get("choices", [])
+            if not choices:
+                raise ValueError("本地 GGUF 模型未產生任何回應內容")
 
-        message_obj = choices[0].get("message", {})
-        response_text = message_obj.get("content", "").strip()
+            message_obj = choices[0].get("message", {})
+            response_text = message_obj.get("content", "").strip()
 
-        usage = raw_response.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
+            usage = raw_response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
 
-        return AIResult(
-            text=response_text,
-            model_name=os.path.basename(model_path).replace(".gguf", ""),
-            provider="local",
-            latency_ms=latency_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            raw_response=raw_response,
-            requested_model=model,
+            return AIResult(
+                text=response_text,
+                model_name=os.path.basename(model_path).replace(".gguf", ""),
+                provider="local",
+                latency_ms=latency_ms,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                raw_response=raw_response,
+                requested_model=model,
+            )
+        except Exception as py_err:
+            internal_err_msg = str(py_err)
+            log.warning(f"Python 內部推論調用受限 ({py_err})，嘗試啟動備援機制...")
+
+        # ---------------------------------------------------------
+        # 備援模式 2：外部官方二進位引擎 (llama-server / llama-cli)
+        # ---------------------------------------------------------
+        if not self._is_libgomp_available():
+            log.warning(
+                "偵測到系統缺少 libgomp.so.1 (libgomp1) 動態函式庫，無法啟動外部二進位推論引擎。"
+                "若在 Docker 容器內運行，請確認已執行: apt-get update && apt-get install -y libgomp1"
+            )
+        else:
+            server_path = self._get_llama_server_path()
+            cli_path = self._get_llama_cli_path()
+
+            if server_path is None and cli_path is None:
+                try:
+                    from zeronexus.brain.bootstrap import ensure_llama_binaries_ready
+                    ensure_llama_binaries_ready(console_output=False)
+                    server_path = self._get_llama_server_path()
+                    cli_path = self._get_llama_cli_path()
+                except Exception as dl_err:
+                    log.warning(f"自癒準備自適應二進位引擎異常: {dl_err}")
+
+            if server_path is not None and os.path.exists(model_path):
+                try:
+                    server_url = await self._ensure_server_running(server_path, model_path)
+                    return await self._generate_via_server(
+                        server_url=server_url,
+                        system_instruction=system_instruction,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        timeout=timeout,
+                        model=model,
+                        start_time=start_time,
+                        model_path=model_path,
+                    )
+                except Exception as srv_err:
+                    log.warning(f"llama-server 模式調用異常，嘗試 cli 模式備援: {srv_err}")
+
+            if cli_path is not None and os.path.exists(model_path):
+                try:
+                    return await self._generate_via_cli(
+                        cli_path=cli_path,
+                        model_path=model_path,
+                        system_instruction=system_instruction,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        timeout=timeout,
+                        model=model,
+                        start_time=start_time,
+                        **kwargs,
+                    )
+                except Exception as cli_err:
+                    log.warning(f"自適應二進位引擎調用失敗: {cli_err}")
+
+        # 若內部與外部均無法運行，拋出詳細錯誤以觸發 AI Gateway 平滑退回雲端
+        raise RuntimeError(
+            f"本地 GGUF 推論模組全部載入失敗。\n"
+            f"內部引擎錯誤: {internal_err_msg}\n"
+            f"提示：若缺少套件請執行 'CMAKE_ARGS=\"-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF\" pip install --force-reinstall --no-cache-dir llama-cpp-python'，"
+            f"若在容器內請確認已安裝 libgomp1。"
         )
 
     async def close(self) -> None:

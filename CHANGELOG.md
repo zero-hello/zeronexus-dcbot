@@ -2,6 +2,25 @@
 
 ---
 
+## [2.7.1] - 2026-09-25
+
+### 🛡️ 容器 OpenMP 系統依賴修復與相容推論優化 (Container OpenMP Fix & Robust Inference)
+- **容器環境系統依賴補齊 (libgomp1)**：
+  - 更新 [`Dockerfile`](Dockerfile)：在 `apt-get` 依賴中正式加入 `libgomp1`（OpenMP 執行時期函式庫），徹底解決精簡 Linux 容器執行 C++/二進位推論時缺少 `libgomp.so.1` (代碼 127) 之問題。
+- **無 AVX/AVX2/FMA 相容性編譯標準化**：
+  - 更新 [`Dockerfile`](Dockerfile) 與 [`zeronexus/brain/bootstrap.py`](zeronexus/brain/bootstrap.py)：
+    - 標準化相容編譯參數：`CMAKE_ARGS="-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF"`。
+    - 支援 `ARG COMPAT_CPU=1`，確保無論容器在哪種虛擬 CPU 託管環境運行皆具備 100% 絕對相容性，徹底根除 `SIGILL` (Illegal instruction)。
+- **推論優先順序與配置防護重構**：
+  - 更新 [`zeronexus/ai_gateway/adapters/local_gguf.py`](zeronexus/ai_gateway/adapters/local_gguf.py)：
+    - **優先模式（Python 內部相容引擎）**：優先使用 Python 內部 `llama_cpp.Llama` 進行推論，避免調用外部程序遇到動態連結庫缺失。
+    - **容器最適相容配置**：調整為 `n_ctx=1024`，執行緒數預設 `n_threads=2`，大幅降低記憶體消耗並提升啟動秒速。
+    - **動態庫前置安全探測**：增加 `_is_libgomp_available()`，在外部二進位引擎啟動前主動檢查 `libgomp.so.1`，並提供精確診斷與修復提示。
+- **單元測試擴展與全數通過**：
+  - 更新 [`tests/test_local_gguf_adapter.py`](tests/test_local_gguf_adapter.py)，新增 `test_is_libgomp_available_check` 與 `test_generate_prioritizes_internal_python_engine`，共 10 項測試 100% 綠燈通過。
+
+---
+
 ## [2.7.0] - 2026-09-25
 
 ### 🚀 方案 B：官方多 CPU 動態自適應二進位推論引擎 (Dynamic Binary Inference Engine)

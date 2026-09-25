@@ -198,3 +198,33 @@ class TestLocalGGUFIntegration:
             assert res.text == "測試早安回應"
             assert res.provider == "local"
             assert res.completion_tokens == 8
+
+    def test_is_libgomp_available_check(self) -> None:
+        """驗證 libgomp1 系統動態庫探測邏輯。"""
+        # 於 Linux 測試環境應能正確返回 bool 值
+        result = LocalGGUFAdapter._is_libgomp_available()
+        assert isinstance(result, bool)
+
+    @pytest.mark.asyncio
+    async def test_generate_prioritizes_internal_python_engine(self) -> None:
+        """驗證 LocalGGUFAdapter.generate 優先調用內部相容 Python 實例，不啟動外部程序。"""
+        adapter = LocalGGUFAdapter()
+        mock_llm = MagicMock()
+        mock_llm.create_chat_completion.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "內部引擎優先回應"}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 5},
+        }
+
+        with (
+            patch.object(adapter, "_get_or_load_llm", return_value=mock_llm),
+            patch.object(adapter, "_ensure_server_running") as mock_server,
+        ):
+            res = await adapter.generate(
+                system_instruction="系統提示",
+                messages=[{"role": "user", "content": "測試"}],
+                model="qwen2.5-0.5b-instruct-q8_0",
+                max_tokens=50,
+            )
+            assert res.text == "內部引擎優先回應"
+            # 確保不會啟動外部伺服器程序
+            mock_server.assert_not_called()
