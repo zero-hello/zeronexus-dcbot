@@ -257,8 +257,14 @@ class Scheduler:
         return True
 
     def remove_job(self, name: str) -> bool:
-        """Removes a registered scheduled job."""
+        """Removes a registered scheduled job and cancels any running execution."""
         if name in self._jobs:
+            tasks_to_cancel = [
+                t for t in self._running_tasks
+                if t.get_name() == f"scheduled_job_{name}"
+            ]
+            for task in tasks_to_cancel:
+                task.cancel()
             del self._jobs[name]
             log.info(f"Removed scheduled job '{name}'")
             return True

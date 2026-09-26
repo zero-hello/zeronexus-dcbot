@@ -200,22 +200,13 @@ class DatabaseManager:
                     pass
             raise
         finally:
-            async def _safe_close() -> None:
-                try:
-                    await session.close()
-                except Exception as cl_err:
-                    log.warning(f"Failed to close database session: {cl_err}")
-
+            # 簡化版：直接 await，依賴外層 context manager 的異常傳播
+            # 避免巢狀 asyncio.shield + create_task 在極端 CancelError 情境下
+            # 導致 session 未被正確關閉而耗盡連線池
             try:
-                cl_task = asyncio.create_task(_safe_close())
-                try:
-                    await asyncio.shield(cl_task)
-                except asyncio.CancelledError:
-                    await asyncio.shield(cl_task)
-            except Exception as cl_outer_err:
-                log.warning(f"Error shielding database session close: {cl_outer_err}")
-            except asyncio.CancelledError:
-                pass
+                await session.close()
+            except Exception as cl_err:
+                log.warning(f"Failed to close database session: {cl_err}")
 
     # Alias for compatibility
     async_session = session

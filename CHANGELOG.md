@@ -2,6 +2,25 @@
 
 ---
 
+## [2.8.2] - 2026-09-27
+
+### 🔴 God Class 拆分完成
+- 更新 [`zeronexus/bot.py`](zeronexus/bot.py)：
+  - 引用 `zeronexus.core.message_editor.safe_edit_status_message`
+  - 引用 `zeronexus.engines.attachment_processor.ingest_attachments`
+  - 完成 God Class 拆分的第一步
+
+### 🔴 Scheduler 修復
+- 更新 [`zeronexus/core/scheduler.py`](zeronexus/core/scheduler.py)：
+  - `remove_job` 現在會取消正在執行的任務實例
+
+### 🔴 Database Session 修復
+- 更新 [`zeronexus/core/database.py`](zeronexus/core/database.py)：
+  - 簡化 `finally` 區塊的 session 關閉邏輯
+  - 避免巢狀 `asyncio.shield` 在極端 CancelError 情境下導致 session 未被正確關閉
+
+---
+
 ## [2.8.1] - 2026-09-27
 
 ### 🔴 事件迴圈保護（Blocking I/O 修復）
