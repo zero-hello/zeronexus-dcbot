@@ -70,14 +70,33 @@ class QuotaService:
 
     DAILY_IMAGE_LIMIT: int = 3
 
+    MAX_TRACKED_LOCKS: int = 4096
+
     def __init__(self) -> None:
         self._user_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._in_flight: Dict[int, int] = defaultdict(int)
         self._active_reservations: Dict[str, QuotaReservation] = {}
         self._image_in_flight: Dict[int, int] = defaultdict(int)
         self._active_image_reservations: Dict[str, QuotaReservation] = {}
+        # 【P1 修復】模型級額度之進行中請求計數：(user_id, model_id) -> 進行中數量
+        self._model_in_flight: Dict[Tuple[int, str], int] = defaultdict(int)
+        # 【P1 修復】模型級預約改獨立字典存放，與文字額度預約分離，
+        # 避免 cleanup_stale_reservations 對 model 預約錯誤扣減 _in_flight 文字計數
+        self._active_model_reservations: Dict[str, QuotaReservation] = {}
         # (user_id, date_str, threshold) -> bool
         self._reminded_thresholds: Dict[Tuple[int, str, int], bool] = {}
+
+    def _get_user_lock(self, user_id: int) -> asyncio.Lock:
+        """取得使用者鎖，並在字典無界膨脹時回收無活躍預約之鎖（防長期運行記憶體洩漏）。"""
+        if len(self._user_locks) > self.MAX_TRACKED_LOCKS:
+            active_user_ids = {r.user_id for r in self._active_reservations.values()}
+            active_user_ids.update(r.user_id for r in self._active_image_reservations.values())
+            active_user_ids.update(r.user_id for r in self._active_model_reservations.values())
+            self._user_locks = defaultdict(
+                asyncio.Lock,
+                {uid: lk for uid, lk in self._user_locks.items() if uid in active_user_ids},
+            )
+        return self._user_locks[user_id]
 
     def get_today_str(self) -> str:
         """Returns the current date string in Asia/Taipei timezone (YYYY-MM-DD)."""
@@ -96,7 +115,7 @@ class QuotaService:
         default_limit = max_daily_override or config.ai.daily_limit_per_user
         is_dev = config.discord.is_dev(user_id)
 
-        async with self._user_locks[user_id]:
+        async with self._get_user_lock(user_id):
             # Auto-cleanup stale uncommitted/unreleased reservations for this user (> 300s)
             now_ts = time.time()
             stale_user_res = [
@@ -146,7 +165,7 @@ class QuotaService:
 
     async def commit_quota(self, reservation: QuotaReservation) -> None:
         """Commits the reserved quota into the database upon successful response completion."""
-        async with self._user_locks[reservation.user_id]:
+        async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
                 return
 
@@ -175,7 +194,7 @@ class QuotaService:
 
     async def release_quota(self, reservation: QuotaReservation) -> None:
         """Releases the reserved quota slot without charging the user (e.g. upon pre-execution error or cancel)."""
-        async with self._user_locks[reservation.user_id]:
+        async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
                 return
 
@@ -230,7 +249,7 @@ class QuotaService:
     async def reset_user_quota(self, user_id: int, date_str: Optional[str] = None) -> bool:
         """Resets the quota usage for a specific user for today (or specified date)."""
         target_date = date_str or self.get_today_str()
-        async with self._user_locks[user_id]:
+        async with self._get_user_lock(user_id):
             self._in_flight[user_id] = 0
             # Clear reminders
             for t in [20, 10, 5, 1]:
@@ -278,7 +297,7 @@ class QuotaService:
         default_limit = max_daily_override or self.DAILY_IMAGE_LIMIT
         is_dev = config.discord.is_dev(user_id)
 
-        async with self._user_locks[user_id]:
+        async with self._get_user_lock(user_id):
             # Auto-cleanup stale uncommitted/unreleased reservations for this user (> 300s or expired date)
             now_ts = time.time()
             stale_user_res = [
@@ -327,7 +346,7 @@ class QuotaService:
 
     async def commit_image_quota(self, reservation: QuotaReservation) -> None:
         """Commits the reserved image quota into the database upon successful image generation."""
-        async with self._user_locks[reservation.user_id]:
+        async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
                 return
 
@@ -356,7 +375,7 @@ class QuotaService:
 
     async def release_image_quota(self, reservation: QuotaReservation) -> None:
         """Releases the reserved image quota slot back if image generation fails or aborts."""
-        async with self._user_locks[reservation.user_id]:
+        async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
                 return
 
@@ -401,7 +420,7 @@ class QuotaService:
     async def reset_user_image_quota(self, user_id: int, date_str: Optional[str] = None) -> bool:
         """Resets the image quota usage for a specific user for today (or specified date)."""
         target_date = date_str or self.get_today_str()
-        async with self._user_locks[user_id]:
+        async with self._get_user_lock(user_id):
             self._image_in_flight[user_id] = 0
             async with db.session() as session:
                 stmt = select(AIImageQuotaRecord).where(
@@ -568,12 +587,31 @@ class QuotaService:
         user_id: int,
         model_id: str,
     ) -> Tuple[bool, Optional[QuotaReservation], int, int]:
-        """Atomically checks and reserves 1 quota slot for a specific model."""
+        """Atomically checks and reserves 1 quota slot for a specific model.
+
+        【P1 修復】補上 in-flight 原子計數（鏡像 reserve_quota 結構）：
+        原實作僅讀取 DB 已用數，並發 N 個請求可在同一時窗全部通過檢查後各自 commit，
+        造成超額 N-1 次之刷量競態；現以 _model_in_flight 納入判定，徹底封死。
+        """
         today_str = self.get_today_str()
         default_limit = self.get_model_default_limit(model_id)
         is_dev = config.discord.is_dev(user_id)
+        flight_key: Tuple[int, str] = (user_id, model_id)
 
-        async with self._user_locks[user_id]:
+        async with self._get_user_lock(user_id):
+            # 自動回收跨日或逾時殘留之模型預約（與 reserve_quota 同等防護）
+            now_ts = time.time()
+            stale_model_res = [
+                r for r in list(self._active_model_reservations.values())
+                if r.user_id == user_id and not r.committed and not r.released and (now_ts - r.created_at > 300.0 or r.date_str != today_str)
+            ]
+            for sr in stale_model_res:
+                stale_key = (user_id, getattr(sr, "model_id", "default"))
+                self._model_in_flight[stale_key] = max(0, self._model_in_flight[stale_key] - 1)
+                sr.released = True
+                self._active_model_reservations.pop(sr.reservation_id, None)
+                log.warning(f"Auto-reclaimed stale AI model quota reservation {sr.reservation_id} for user {user_id}.")
+
             async with db.session() as session:
                 stmt = select(AIModelQuotaRecord).where(
                     AIModelQuotaRecord.user_id == user_id,
@@ -585,10 +623,13 @@ class QuotaService:
                 current_used = record.used_count if record else 0
                 effective_limit = record.limit_override if record and record.limit_override else default_limit
 
-            projected = current_used + 1
-            if not is_dev and (current_used >= effective_limit):
-                return False, None, current_used, effective_limit
+            # 判定納入進行中計數：已用 + 進行中 >= 上限即拒絕
+            in_flight = self._model_in_flight.get(flight_key, 0)
+            projected = current_used + in_flight + 1
+            if not is_dev and (current_used + in_flight >= effective_limit):
+                return False, None, current_used + in_flight, effective_limit
 
+            self._model_in_flight[flight_key] = in_flight + 1
             res_id = f"m_{uuid.uuid4().hex[:10]}"
             reservation = QuotaReservation(
                 user_id=user_id,
@@ -600,13 +641,14 @@ class QuotaService:
             )
             # Store model_id on reservation
             reservation.model_id = model_id
-            self._active_reservations[res_id] = reservation
+            self._active_model_reservations[res_id] = reservation
             return True, reservation, projected, effective_limit
 
     async def commit_model_quota(self, reservation: QuotaReservation) -> None:
         """Commits model-specific quota usage into database upon successful completion."""
         model_id = getattr(reservation, "model_id", "default")
-        async with self._user_locks[reservation.user_id]:
+        flight_key: Tuple[int, str] = (reservation.user_id, model_id)
+        async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
                 return
 
@@ -631,18 +673,22 @@ class QuotaService:
                     record.used_count += 1
                 await session.flush()
 
+            self._model_in_flight[flight_key] = max(0, self._model_in_flight[flight_key] - 1)
             reservation.committed = True
-            self._active_reservations.pop(reservation.reservation_id, None)
+            self._active_model_reservations.pop(reservation.reservation_id, None)
 
     async def release_model_quota(self, reservation: Optional[QuotaReservation]) -> None:
         """Releases a reserved model quota slot upon failure, rejection, or cancellation."""
         if not reservation:
             return
-        async with self._user_locks[reservation.user_id]:
+        model_id = getattr(reservation, "model_id", "default")
+        flight_key: Tuple[int, str] = (reservation.user_id, model_id)
+        async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
                 return
+            self._model_in_flight[flight_key] = max(0, self._model_in_flight[flight_key] - 1)
             reservation.released = True
-            self._active_reservations.pop(reservation.reservation_id, None)
+            self._active_model_reservations.pop(reservation.reservation_id, None)
 
     async def format_model_quota_desc(self, user_id: int, model_id: str, tag: str = "") -> str:
         """Formats a descriptive string for Discord Select Menu options (< 100 characters)."""

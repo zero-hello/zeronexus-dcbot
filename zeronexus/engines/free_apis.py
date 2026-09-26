@@ -187,7 +187,7 @@ class FreeAPIEngine:
                 timeout=timeout,
                 headers=headers,
                 follow_redirects=True,
-                verify=False,
+                verify=True,  # 【安全修復】恢復 TLS 憑證鏈驗證，阻斷 MITM 對股價/匯率/地震資料之投毒（原先停用驗證使外部資料可被中間人篡改後直達 system prompt）
                 limits=httpx.Limits(max_keepalive_connections=20, max_connections=40, keepalive_expiry=60.0),
             )
         return self._http_client
@@ -2776,8 +2776,8 @@ class FreeAPIEngine:
         if not clean_url.startswith(("http://", "https://")):
             clean_url = "https://" + clean_url
 
-        from zeronexus.engines.web_client import validate_safe_url
-        is_safe, error_msg, _ = validate_safe_url(clean_url)
+        from zeronexus.engines.web_client import validate_safe_url_async
+        is_safe, error_msg, _ = await validate_safe_url_async(clean_url)
         if not is_safe:
             return {
                 "status": "ERROR",
@@ -2801,7 +2801,7 @@ class FreeAPIEngine:
                     if not loc:
                         break
                     next_url = urllib.parse.urljoin(curr_url, loc)
-                    is_safe_hop, hop_err, _ = validate_safe_url(next_url)
+                    is_safe_hop, hop_err, _ = await validate_safe_url_async(next_url)
                     if not is_safe_hop:
                         return {
                             "status": "ERROR",
@@ -2811,6 +2811,15 @@ class FreeAPIEngine:
                     curr_url = next_url
                     continue
                 break
+
+            # 【P1 修復】實際讀取內容前對最終落地 URL 再驗證一次，縮小 DNS Rebinding 時間窗
+            final_safe, final_err, _ = await validate_safe_url_async(curr_url)
+            if not final_safe:
+                return {
+                    "status": "ERROR",
+                    "url": curr_url,
+                    "error": f"安全性防禦阻斷：最終連線目標受限 ({final_err})",
+                }
 
             from zeronexus.engines.web_client import detect_anti_scraping_block
             resp_code = getattr(resp, "status_code", 200)

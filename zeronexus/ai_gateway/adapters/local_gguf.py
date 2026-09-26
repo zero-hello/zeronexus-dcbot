@@ -35,13 +35,17 @@ class LocalGGUFAdapter(BaseAIAdapter):
         self._llm: Optional[Any] = None
         self._llm_lock = threading.Lock()
         self._async_lock = asyncio.Lock()
+        # 【P1 修復】llama-server 生命週期專用鎖：防止並發請求同時啟動/重啟 server 造成 Port 競爭與雙行程
+        self._server_lock = asyncio.Lock()
+        # 【P1 修復】自癒下載互斥鎖：防止並發請求觸發重複下載
+        self._heal_download_lock = asyncio.Lock()
         self._current_loaded_path: Optional[str] = None
         self._server_process: Optional[Any] = None
         self._server_port: int = 8089
         self._server_model_path: Optional[str] = None
 
     def _resolve_model_path(self, model: str) -> str:
-        """解析模型檔案之完整絕對路徑。"""
+        """解析模型檔案之完整絕對路徑（純檔案系統檢查，絕不觸發下載；自癒下載改由非同步 _resolve_model_path_async 承載）。"""
         clean_name = model
         for prefix in ("local/", "gguf/", "models/"):
             if clean_name.startswith(prefix):
@@ -54,21 +58,54 @@ class LocalGGUFAdapter(BaseAIAdapter):
         if os.path.exists(target_path):
             return target_path
 
-        # 若使用者指定 Q4 系列但本地尚未就緒，優先嘗試自癒下載
-        if "q4" in clean_name.lower():
-            try:
-                from zeronexus.brain.bootstrap import ensure_gguf_model_ready
-                ensure_gguf_model_ready(models_dir=self.models_dir, model_name=clean_name, console_output=False)
-                if os.path.exists(target_path):
-                    return target_path
-            except Exception as e:
-                log.warning(f"自癒下載 Q4 GGUF 模型異常: {e}")
-
         default_path = os.path.join(self.models_dir, self.DEFAULT_MODEL_FILENAME)
         if os.path.exists(default_path) and "q4" not in clean_name.lower():
             return default_path
 
         return target_path
+
+    async def _resolve_model_path_async(self, model: str) -> str:
+        """非同步模型路徑解析與自癒補齊。
+
+        【P1 效能修復】原實作在事件迴圈上同步呼叫 ensure_gguf_model_ready()
+        （數百 MB 下載 + 同步重試 sleep），會將整個 Bot 凍結長達數分鐘；
+        現改將自癒下載與檔案系統檢查全數移轉至執行緒池承載，並以互斥鎖防止並發重複下載。
+        """
+        # 快速路徑：模型已就緒則直接回傳，零額外開銷
+        fast_path = await asyncio.to_thread(self._resolve_model_path, model)
+        if os.path.exists(fast_path) and fast_path.endswith(".gguf") and "q4" not in model.lower():
+            return fast_path
+
+        clean_name = model
+        for prefix in ("local/", "gguf/", "models/"):
+            if clean_name.startswith(prefix):
+                clean_name = clean_name[len(prefix):]
+        if not clean_name.endswith(".gguf"):
+            clean_name = f"{clean_name}.gguf"
+
+        target_path = os.path.join(self.models_dir, clean_name)
+
+        # 若使用者指定 Q4 系列但本地尚未就緒，於執行緒池觸發自癒下載（事件迴圈零阻塞）
+        if "q4" in clean_name.lower() and not os.path.exists(target_path):
+            async with self._heal_download_lock:
+                if not os.path.exists(target_path):  # 雙重檢查：取得鎖後再確認，避免重複下載
+                    log.info(f"[LocalGGUF] 模型 '{clean_name}' 尚未就緒，於執行緒池啟動自癒下載（不阻塞事件迴圈）...")
+                    try:
+                        from zeronexus.brain.bootstrap import ensure_gguf_model_ready
+                        await asyncio.to_thread(
+                            ensure_gguf_model_ready,
+                            models_dir=self.models_dir,
+                            model_name=clean_name,
+                            console_output=False,
+                        )
+                    except Exception as e:
+                        log.warning(f"自癒下載 Q4 GGUF 模型異常: {e}")
+
+        if os.path.exists(target_path):
+            return target_path
+
+        # 回退：以同步路徑解析取得最佳可用預設
+        return await asyncio.to_thread(self._resolve_model_path, model)
 
     def _get_llama_server_path(self) -> Optional[str]:
         """取得官方自適應 llama-server 二進位檔絕對路徑 (方案 B 推薦)。"""
@@ -83,56 +120,71 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
         return None
 
-    async def _ensure_server_running(self, server_path: str, model_path: str) -> str:
-        """確保 llama-server 於本地背景運行並處於就緒狀態。"""
-        import httpx
-        url = f"http://127.0.0.1:{self._server_port}"
+    def _terminate_server_process(self) -> None:
+        """【P1 修復】僅終止自身管理之 llama-server 子嗣行程。
 
-        # 檢測是否有模型切換需求 (例如由 Q8_0 切換至 Q4_K_M)
-        need_model_switch = bool(
-            self._server_model_path and os.path.abspath(self._server_model_path) != os.path.abspath(model_path)
-        )
-        if need_model_switch:
-            log.info(
-                f"檢測到本地模型切換 ({os.path.basename(self._server_model_path)} -> {os.path.basename(model_path)})，準備重啟 llama-server..."
-            )
-            if self._server_process is not None:
-                try:
-                    self._server_process.kill()
-                except Exception:
-                    pass
-                self._server_process = None
-            import subprocess
-            subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
-            await asyncio.sleep(0.5)
-
-        target_ctx = 2048
-        if not need_model_switch:
+        取代原全域 pkill -f llama-server：該手法會誤殺主機上所有 llama-server 行程
+        （包含其他使用者或容器中之行程），且以同步 subprocess.run 阻塞事件迴圈。
+        """
+        if self._server_process is not None:
             try:
-                async with httpx.AsyncClient(timeout=1.0) as client:
-                    res = await client.get(f"{url}/props")
-                    if res.status_code == 200:
-                        current_ctx = res.json().get("default_generation_settings", {}).get("n_ctx", 0)
-                        if current_ctx == target_ctx:
-                            self._server_model_path = model_path
-                            return url
-                        log.info(f"現有 llama-server context={current_ctx} (目標 {target_ctx})，正在自動熱重啟升級全核加速參數...")
-                        if self._server_process is not None:
-                            try:
-                                self._server_process.kill()
-                            except Exception:
-                                pass
-                            self._server_process = None
-                        import subprocess
-                        subprocess.run(["pkill", "-f", "llama-server"], capture_output=True)
-                        await asyncio.sleep(1.0)
-                    else:
-                        h_res = await client.get(f"{url}/health")
-                        if h_res.status_code == 200:
-                            self._server_model_path = model_path
-                            return url
+                self._server_process.terminate()
+                try:
+                    self._server_process.wait(timeout=2.0)
+                except Exception:
+                    try:
+                        self._server_process.kill()
+                        self._server_process.wait(timeout=1.0)
+                    except Exception:
+                        pass
             except Exception:
                 pass
+            self._server_process = None
+
+    async def _ensure_server_running(self, server_path: str, model_path: str) -> str:
+        """確保 llama-server 於本地背景運行並處於就緒狀態。
+
+        【P1 修復】整個生命週期（檢測/切換/啟動）以 _server_lock 互斥保護：
+        原實作無鎖，兩個並發請求可同時進入造成 Port 競爭與雙行程；
+        並移除破壞性全域 pkill -f（會誤殺主機上所有 llama-server 行程），
+        改為僅終止自身管理之子嗣行程。
+        """
+        import httpx
+        async with self._server_lock:
+            url = f"http://127.0.0.1:{self._server_port}"
+
+            # 檢測是否有模型切換需求 (例如由 Q8_0 切換至 Q4_K_M)
+            need_model_switch = bool(
+                self._server_model_path and os.path.abspath(self._server_model_path) != os.path.abspath(model_path)
+            )
+            if need_model_switch:
+                log.info(
+                    f"檢測到本地模型切換 ({os.path.basename(self._server_model_path)} -> {os.path.basename(model_path)})，準備重啟 llama-server..."
+                )
+                # 【P1 修復】僅終止自身管理之行程，不再全域 pkill 誤殺他人行程
+                self._terminate_server_process()
+                await asyncio.sleep(0.5)
+
+            target_ctx = 2048
+            if not need_model_switch:
+                try:
+                    async with httpx.AsyncClient(timeout=1.0) as client:
+                        res = await client.get(f"{url}/props")
+                        if res.status_code == 200:
+                            current_ctx = res.json().get("default_generation_settings", {}).get("n_ctx", 0)
+                            if current_ctx == target_ctx:
+                                self._server_model_path = model_path
+                                return url
+                            log.info(f"現有 llama-server context={current_ctx} (目標 {target_ctx})，正在自動熱重啟升級全核加速參數...")
+                            self._terminate_server_process()
+                            await asyncio.sleep(1.0)
+                        else:
+                            h_res = await client.get(f"{url}/health")
+                            if h_res.status_code == 200:
+                                self._server_model_path = model_path
+                                return url
+                except Exception:
+                    pass
 
         bin_dir = os.path.dirname(server_path)
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -654,7 +706,8 @@ class LocalGGUFAdapter(BaseAIAdapter):
         2. 若主機無 AVX2 (Intel 賽揚/奔騰/虛擬化通用 CPU)：直通專屬 SSE4.2 官方二進位引擎 (llama-server)，跳過 AVX2 限制！
         """
         start_time = time.perf_counter()
-        model_path = self._resolve_model_path(model)
+        # 【P1 效能修復】改用非同步路徑解析：自癒下載移轉至執行緒池，不再凍結事件迴圈
+        model_path = await self._resolve_model_path_async(model)
         has_avx2 = self._has_avx2()
 
         internal_err_msg: Optional[str] = None
@@ -838,17 +891,10 @@ class LocalGGUFAdapter(BaseAIAdapter):
 
     async def close(self) -> None:
         """釋放記憶體中的 GGUF 模型實例與背景伺服器程序。"""
-        if self._server_process is not None:
-            try:
-                self._server_process.terminate()
-                self._server_process.wait(timeout=2.0)
-            except Exception:
-                try:
-                    self._server_process.kill()
-                except Exception:
-                    pass
-            self._server_process = None
-            log.info("本地自適應 llama-server 程序已終止釋放。")
+        async with self._server_lock:
+            if self._server_process is not None:
+                self._terminate_server_process()
+                log.info("本地自適應 llama-server 程序已終止釋放。")
 
         with self._llm_lock:
             self._llm = None

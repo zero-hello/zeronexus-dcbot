@@ -103,7 +103,7 @@ class MusicCog(commands.Cog):
         self.bot.loop.create_task(self.node_manager.initialize(self.bot))
 
     def cog_unload(self) -> None:
-        """Cog 卸載時清理所有背景進度條刷新任務與無人自動退出計時任務。"""
+        """Cog 卸載時清理所有背景進度條刷新任務、無人自動退出計時任務與控制面板引用（防洩漏）。"""
         for task in self._ticker_tasks.values():
             if task and not task.done():
                 task.cancel()
@@ -113,6 +113,10 @@ class MusicCog(commands.Cog):
             if task and not task.done():
                 task.cancel()
         self._afk_leave_tasks.clear()
+
+        # 【P2 修復】卸載時清空控制面板引用：原實作殘留 NowPlayingView 對 player 之閉包引用，
+        # 導致 wavelink Player 物件無法被垃圾回收（記憶體洩漏）
+        self._dashboards.clear()
 
     def _start_ticker(self, guild_id: int, player: wavelink.Player) -> None:
         """啟動該伺服器控制面板進度條背景刷新任務 (每 5 秒平滑更新並自動巡檢播畢狀態)。"""

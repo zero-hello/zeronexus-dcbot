@@ -32,7 +32,9 @@ class PublicNodeScraper:
         nodes: List[Dict[str, Any]] = []
         try:
             timeout = aiohttp.ClientTimeout(total=5.0)
-            connector = aiohttp.TCPConnector(ssl=False)
+            # 【安全修復】恢復 TLS 憑證驗證：此處抓取之節點清單會使 Bot 主動外連，
+            # 關閉驗證將構成 MITM 供應鏈投毒面（攻擊者可注入惡意節點位址）
+            connector = aiohttp.TCPConnector()
             async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                 async with session.get(url, headers={"User-Agent": "ZeroNexus-Scraper/1.2.0"}) as resp:
                     if resp.status != 200:

@@ -64,3 +64,6 @@ AudioStream/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Freebuff / Agent Cache
+.freebuff/

@@ -361,13 +361,23 @@ class ZeroNexusBot(commands.Bot):
                         continue
 
                     # Validate image format via PIL or magic headers to prevent corrupted payload crashes
+                    # 【P2 效能修復】PIL 解碼驗證為 CPU 密集運算（大圖可達數百 ms），移轉至執行緒池承載，事件迴圈零阻塞
                     is_valid_image = False
                     try:
                         from PIL import Image
-                        with Image.open(io.BytesIO(img_bytes)) as test_img:
-                            test_img.verify()
-                        is_valid_image = True
+
+                        def _verify_image(data: bytes) -> bool:
+                            try:
+                                with Image.open(io.BytesIO(data)) as test_img:
+                                    test_img.verify()
+                                return True
+                            except Exception:
+                                return False
+
+                        is_valid_image = await asyncio.to_thread(_verify_image, img_bytes)
                     except Exception:
+                        is_valid_image = False
+                    if not is_valid_image:
                         # Fallback to magic byte header check (supports synthetic mocks & streaming chunks)
                         if (
                             img_bytes.startswith(b"\x89PNG")
@@ -545,10 +555,10 @@ class ZeroNexusBot(commands.Bot):
             log.info(f"✅ 成功同步 {len(synced)} 個頂層指令結構至 Discord。")
         except asyncio.TimeoutError:
             log.warning("⚠️ 開機同步指令樹逾時 (30s)，為確保連線即時性，已轉為登入後背景自動重試同步。")
-            asyncio.create_task(self._background_retry_sync())
+            self._spawn_background(self._background_retry_sync(), name="command_sync_retry_timeout")
         except Exception as e:
             log.error(f"❌ 同步指令樹至 Discord 失敗：{e}，將於背景重試。", exc_info=True)
-            asyncio.create_task(self._background_retry_sync())
+            self._spawn_background(self._background_retry_sync(), name="command_sync_retry_error")
 
         # 4.1 Global App Command Error Interceptor
         @self.tree.error
@@ -936,7 +946,7 @@ class ZeroNexusBot(commands.Bot):
             log.info(f"🌐 網路拓撲就緒：連線伺服器 {len(self.guilds)} 個 | 服務使用者 {len(self.users)} 位 | 狀態：在線運行中")
             await event_bus.emit("ready", self)
             # 登入就緒後在背景自動執行一次版本檢查
-            asyncio.create_task(self._check_version_and_notify_safe())
+            self._spawn_background(self._check_version_and_notify_safe(), name="startup_version_check")
 
     async def _trigger_typing_safe(self, channel: discord.abc.Messageable) -> None:
         """Triggers channel typing indicator safely without breaking execution on Discord API error."""
@@ -945,6 +955,10 @@ class ZeroNexusBot(commands.Bot):
                 await channel.trigger_typing()
         except Exception as te:
             log.debug(f"typing_indicator_error: {te}")
+
+    # 迎新完成標記（行程內記憶體）：若 record_interaction 寫入失敗，防止每則訊息都重複迎新造成「永遠收不到 AI 回覆」死循環
+    _onboarded_in_memory: set[int] = set()
+    ONBOARDING_GENERATE_TIMEOUT: float = 10.0
 
     async def _handle_first_time_user_onboarding(
         self,
@@ -955,24 +969,32 @@ class ZeroNexusBot(commands.Bot):
     ) -> None:
         """新用戶首次見面專屬歡迎與導覽卡片（固定模板，內容由 AI 動態生動組織，不回應原問題）。
         發送後自動記錄互動次數，使接下來的對話恢復正常的 AI 互動。
+        具備 10 秒硬逾時與寫入失敗自癒，杜絕迎新迴圈導致 AI 永不回應。
         """
         user_name = req_ctx.author_name
         welcome_greeting = f"嗨嗨 {user_name}！太開心能在這裡遇見你啦～✨ 我是你的次世代智慧夥伴 ZeroNexus！"
         try:
             from zeronexus.ai_gateway.gateway import ai_gateway
-            ai_res, _ = await ai_gateway.generate_response(
-                system_instruction=(
-                    "你是 ZeroNexus，一個充滿活力、可愛、開朗且聰明的 Discord 智慧夥伴。\n"
-                    "現在有一位新朋友第一次跟你說話，請用 2~3 句道地臺灣繁體中文向他熱情打招呼，展現滿滿的活力與歡迎，"
-                    "【絕對不要】回答對方剛才可能問的具體問題，純粹做溫暖可愛的見面問候即可！"
+            ai_res, _ = await asyncio.wait_for(
+                ai_gateway.generate_response(
+                    system_instruction=(
+                        "你是 ZeroNexus，一個充滿活力、可愛、開朗且聰明的 Discord 智慧夥伴。\n"
+                        "現在有一位新朋友第一次跟你說話，請用 2~3 句道地臺灣繁體中文向他熱情打招呼，展現滿滿的活力與歡迎，"
+                        "【絕對不要】回答對方剛才可能問的具體問題，純粹做溫暖可愛的見面問候即可！"
+                    ),
+                    messages=[{"role": "user", "content": f"哈囉！我是 {user_name}，很高興認識你！"}],
+                    override_model="gemini-3.1-flash-lite",
+                    allow_fallback=True,
+                    thinking_budget=0,
                 ),
-                messages=[{"role": "user", "content": f"哈囉！我是 {user_name}，很高興認識你！"}],
-                override_model="gemini-3.1-flash-lite",
-                allow_fallback=True,
-                thinking_budget=0,
+                timeout=self.ONBOARDING_GENERATE_TIMEOUT,
             )
             if ai_res and ai_res.text:
                 welcome_greeting = ai_res.text.strip()
+        except asyncio.TimeoutError:
+            log.warning(f"[Onboarding] 迎新語句生成逾時 ({self.ONBOARDING_GENERATE_TIMEOUT}s)，已降級為固定歡迎詞。")
+        except asyncio.CancelledError:
+            raise
         except Exception as ge:
             log.debug(f"Dynamic welcome greeting generation fallback: {ge}")
 
@@ -1007,15 +1029,31 @@ class ZeroNexusBot(commands.Bot):
                 log.warning(f"Failed to send first time onboarding card: {se}")
 
         # 立即記錄互動次數，使接下來的對話恢復正常 AI
+        # 【P0-A 修復】寫入失敗時重試一次，仍失敗則以記憶體標記該使用者已迎新，
+        # 否則 interactions_count 恆為 0 導致 is_new_user 恆真 → 使用者永遠收不到正常 AI 回覆（迎新死循環）。
         try:
             from zeronexus.engines.affinity_engine import affinity_engine
-            await affinity_engine.record_interaction(
-                user_id=message.author.id,
-                user_text="[首次見面完成新手導覽]",
-                is_private_thread=False,
-            )
+            try:
+                await affinity_engine.record_interaction(
+                    user_id=message.author.id,
+                    user_text="[首次見面完成新手導覽]",
+                    is_private_thread=False,
+                )
+            except Exception as re_first:
+                log.warning(f"[Onboarding] 首次寫入互動紀錄失敗，重試中: {re_first}")
+                await asyncio.sleep(0.5)
+                await affinity_engine.record_interaction(
+                    user_id=message.author.id,
+                    user_text="[首次見面完成新手導覽]",
+                    is_private_thread=False,
+                )
         except Exception as re:
-            log.warning(f"Failed to record onboarding interaction: {re}")
+            log.warning(f"[Onboarding] 互動紀錄寫入失敗，已改以記憶體標記防止迎新迴圈: {re}")
+            self._onboarded_in_memory.add(message.author.id)
+        finally:
+            # 記憶體集合上限防護：避免無界成長
+            if len(self._onboarded_in_memory) > 10000:
+                self._onboarded_in_memory.clear()
 
     async def _trace_dispute_context(self, message: discord.Message) -> Optional[str]:
         """賽博法庭爭端脈絡追溯器：
@@ -1117,6 +1155,17 @@ class ZeroNexusBot(commands.Bot):
                     log.error(f"Background task '{task.get_name()}' crashed with unhandled exception: {exc}", exc_info=exc)
             except (asyncio.CancelledError, Exception) as e:
                 log.warning(f"Error checking background task result: {e}")
+
+    def _spawn_background(self, coro: Any, name: str) -> asyncio.Task[Any]:
+        """【P1 修復】統一背景任務發射器：發射後不管的任務必須經由此處建立，
+
+        自動掛載 done callback 與集合引用，杜絕裸 asyncio.create_task 造成
+        「Task exception was never retrieved」之靜默失敗（記憶寫入、好感度累計無聲消失）。
+        """
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+        return task
 
     async def on_message(self, message: discord.Message) -> None:
         # Ignore bots and empty messages without attachments
@@ -1225,12 +1274,15 @@ class ZeroNexusBot(commands.Bot):
                             pass
 
                     # 隱性深化心靈傾訴圓滿羈絆
-                    asyncio.create_task(affinity_engine.record_interaction(
-                        user_id=message.author.id,
-                        user_text=raw_content,
-                        is_private_thread=True,
-                        has_deep_emotion=True,
-                    ))
+                    self._spawn_background(
+                        affinity_engine.record_interaction(
+                            user_id=message.author.id,
+                            user_text=raw_content,
+                            is_private_thread=True,
+                            has_deep_emotion=True,
+                        ),
+                        name=f"affinity_heart_{message.id}",
+                    )
 
                     # 優雅延遲 2.5 秒，確保使用者能清晰閱讀結語卡片後自動鎖定並封存歸檔
                     async def _delayed_archive_thread(target_thread: discord.Thread, user_name: str) -> None:
@@ -1246,7 +1298,10 @@ class ZeroNexusBot(commands.Bot):
                         except Exception as arch_err:
                             log.warning(f"Failed to auto-archive heart thread {target_thread.id}: {arch_err}")
 
-                    asyncio.create_task(_delayed_archive_thread(message.channel, message.author.display_name))
+                    self._spawn_background(
+                        _delayed_archive_thread(message.channel, message.author.display_name),
+                        name=f"heart_archive_{message.id}",
+                    )
                     return
 
             is_ai_channel = bool(settings and settings.ai_channel_id == message.channel.id) or is_heart_thread
@@ -1404,6 +1459,35 @@ class ZeroNexusBot(commands.Bot):
                 is_shared_ai_channel=is_shared_ai_channel,
                 channel_override=channel_override,
             )
+        except asyncio.CancelledError:
+            raise
+        except Exception as pipeline_err:
+            # 【P0-A 修復】AI 管線全域防護網：任何未預期例外（DB 鎖定/網路斷線等）
+            # 不得讓協程無聲崩潰；必須經脫敏後給使用者明確的錯誤卡片回饋。
+            from zeronexus.security.sanitizer import redact_secrets
+            clean_pipeline_err = redact_secrets(str(pipeline_err))
+            log.error(
+                f"[AI Pipeline] stage=unhandled 對話管線遭遇未捕獲例外 (msg={message.id}): {clean_pipeline_err}",
+                exc_info=True,
+            )
+            target_ch = channel_override or message.channel
+            try:
+                fail_card = ZNCard(
+                    title=f"❌ AI 回應異常 ➔ {getattr(message.author, 'display_name', '使用者')}",
+                    description=(
+                        "很抱歉，本次對話在處理過程中遭遇系統層級的暫時性問題，您的訊息並未遺失。\n\n"
+                        f"📌 **狀況簡述**：`{clean_pipeline_err[:150]}`\n\n"
+                        "💡 請稍候片刻後重新發送訊息；若持續發生，請聯繫管理員檢視系統日誌。"
+                    ),
+                    status_pill=ZNStatusPill.ERROR,
+                    color=ZNColor.ERROR,
+                )
+                await message.reply(embed=fail_card.to_embed(), mention_author=False)
+            except Exception:
+                try:
+                    await target_ch.send(embed=fail_card.to_embed())
+                except Exception:
+                    pass
         finally:
             self._in_flight_message_ids.discard(message.id)
             self._in_flight_users.discard(message.author.id)
@@ -1469,11 +1553,14 @@ class ZeroNexusBot(commands.Bot):
                     await effective_channel.send(embed=cooldown_card.to_embed())
                 except Exception:
                     pass
-            return
-
-        # 1. Natural Language Quota Inquiry check (Direct quota read, zero AI cost, zero burn)
+            return        # 1. Natural Language Quota Inquiry check (Direct quota read, zero AI cost, zero burn)
         if quota_service.is_quota_inquiry(user_prompt):
-            q_info = await quota_service.get_user_quota_info(message.author.id)
+            try:
+                q_info = await quota_service.get_user_quota_info(message.author.id)
+            except Exception as q_err:
+                # 【P0-A 修復】額度查詢失敗時降級為零成本模型並放行，絕不中斷 AI 對話
+                log.warning(f"[AI Pipeline] stage=quota_inquiry 額度查詢失敗，降級放行: {q_err}")
+                q_info = {"used": "?", "limit": "?", "is_dev": False, "remaining": "?", "reset_time": "每日凌晨 00:00 (台灣時間 / UTC+8)"}
             desc = (
                 f"您今日已使用：`{q_info['used']}/{q_info['limit']}` 次\n"
                 f"剩餘可用額度：`{'無限 (DEV)' if q_info['is_dev'] else q_info['remaining']}` 次\n"
@@ -1500,8 +1587,8 @@ class ZeroNexusBot(commands.Bot):
         # 1.2. 新用戶初次對話專屬獨立迎新卡片（固定模板，內容由 AI 動態生成，不回應原問題）
         try:
             from zeronexus.engines.affinity_engine import affinity_engine
-            is_first_chat = await affinity_engine.is_new_user(message.author.id)
-            if is_first_chat:
+            # 【P0-A 修復】先檢查記憶體迎新標記：即使 DB 寫入失敗，也不讓使用者再次陷入迎新迴圈
+            if message.author.id not in self._onboarded_in_memory and await affinity_engine.is_new_user(message.author.id):
                 await self._handle_first_time_user_onboarding(
                     message=message,
                     effective_channel=effective_channel,
@@ -1532,12 +1619,15 @@ class ZeroNexusBot(commands.Bot):
                             pass
 
                     # 隱性記錄心靈傾訴好感度
-                    asyncio.create_task(affinity_engine.record_interaction(
-                        user_id=message.author.id,
-                        user_text=user_prompt,
-                        is_private_thread=True,
-                        has_deep_emotion=True,
-                    ))
+                    self._spawn_background(
+                        affinity_engine.record_interaction(
+                            user_id=message.author.id,
+                            user_text=user_prompt,
+                            is_private_thread=True,
+                            has_deep_emotion=True,
+                        ),
+                        name=f"affinity_private_{message.id}",
+                    )
 
                     # 在討論串內發送嚴肅、溫暖、專注傾聽的心靈棲息室歡迎卡片
                     welcome_card = private_dialogue_engine.build_thread_welcome_card(message.author)
@@ -1545,19 +1635,34 @@ class ZeroNexusBot(commands.Bot):
 
                     # 若發起句子中附帶具體心事，保存至該討論串的專屬記憶，供使用者進入後直接延續聊
                     if extracted_topic:
-                        asyncio.create_task(context_builder.save_interaction_memories(
-                            user=message.author,
-                            channel=thread,
-                            guild=message.guild,
-                            user_content=extracted_topic,
-                            assistant_content="我已在心靈棲息室做好傾聽準備，無論你遇到什麼事，我都安靜在這裡陪伴著你。",
-                            is_shared_ai_channel=False,
-                        ))
+                        self._spawn_background(
+                            context_builder.save_interaction_memories(
+                                user=message.author,
+                                channel=thread,
+                                guild=message.guild,
+                                user_content=extracted_topic,
+                                assistant_content="我已在心靈棲息室做好傾聽準備，無論你遇到什麼事，我都安靜在這裡陪伴著你。",
+                                is_shared_ai_channel=False,
+                            ),
+                            name=f"heart_memory_{message.id}",
+                        )
                     return
 
         # 2. Quota Check & Reservation (atomic 3-phase)
         t_q0 = time.perf_counter()
-        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id)
+        try:
+            allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id)
+        except Exception as quota_err:
+            # 【P0-A 修復】額度系統故障（DB 鎖定/連線異常）時降級為零成本模型放行，絕不讓使用者收不到任何回應
+            log.error(f"[AI Pipeline] stage=quota_reserve 額度預約系統異常，降級為零成本模型放行: {quota_err}", exc_info=True)
+            allowed = True
+            reservation = None
+            projected_used = 0
+            effective_limit = 0
+            user_prompt = f"{user_prompt}\n\n[系統提示：目前額度檢核系統暫時故障，本次對話已自動降級為零成本模型，請簡短回覆使用者]"
+            degrade_to_zero_cost = True
+        else:
+            degrade_to_zero_cost = False
         pipeline_metrics.quota_check_ms = (time.perf_counter() - t_q0) * 1000.0
 
         if not allowed:
@@ -1652,6 +1757,11 @@ class ZeroNexusBot(commands.Bot):
             persona = user_persona or (settings.ai_persona if settings else None) or "normal_persona"
             active_model = user_model or (settings.ai_model if settings else None) or config.ai.normal_text_model or model_registry.get_active_default_model()
 
+            # 【P0-A 修復】額度系統降級時強制使用零成本本地模型，確保降級路徑真正零成本
+            if degrade_to_zero_cost:
+                active_model = "qwen2.5-0.5b-instruct-q8_0"
+                log.info("[AI Pipeline] 額度系統降級中：本次對話已切換至本地零成本模型。")
+
             # Process attachments (multimodal: images, docs, code/text, audio, general)
             images, image_thumbnail, attachment_tool_results, attachment_notes = await self._ingest_attachments(message.attachments)
 
@@ -1732,16 +1842,26 @@ class ZeroNexusBot(commands.Bot):
                             f"\n\n【重要系統狀態告知】：使用者嘗試切換已退役模型（{switch_req.rejection_reason}），系統未進行切換，依然維持原模型「{curr_disp}」。請以您當前人設（{persona}）親切說明模型已退役並推薦新模型，同時為使用者解答後續問題：『{switch_req.extra_query}』。"
                         )
                 elif switch_req.outcome == ModelSwitchOutcome.AMBIGUOUS_QUERY:
-                    card = ZNCard(
-                        title=f"🤔 請指明具體模型型號 ➔ {req_ctx.author_name}",
-                        description=f"{switch_req.rejection_reason}\n\n您目前仍使用 **{curr_disp}**，系統未進行切換。",
-                        status_pill=ZNStatusPill.WARNING,
-                        color=ZNColor.WARNING,
-                    )
-                    await self._safe_edit_status_message(status_msg, message.channel, card=card)
-                    if reservation:
-                        await quota_service.release_quota(reservation)
-                    return
+                    # 【P0-A 修復】模型切換語意模糊時，不再直接攔截吞掉使用者的原始提問。
+                    # 僅在「純切換意圖、無附加問題」時才回覆引導卡片；帶有實際問題時改為附註未切換成功並照常回答。
+                    if switch_req.extra_query:
+                        user_prompt = switch_req.extra_query
+                        switch_instruction = (
+                            f"\n\n【重要系統狀態告知】：使用者原本希望切換模型，但切換請求語意模糊（{switch_req.rejection_reason}），系統未進行切換，依然維持原模型「{curr_disp}」。"
+                            f"請勿中斷對話流程，直接以您當前人設（{persona}）簡短附註無法確認目標模型後，全力解答使用者的問題：『{switch_req.extra_query}』。"
+                        )
+                        log.info("[AI Pipeline] 模型切換語意模糊但帶有附加問題，已改為附註模式照常回答。")
+                    else:
+                        card = ZNCard(
+                            title=f"🤔 請指明具體模型型號 ➔ {req_ctx.author_name}",
+                            description=f"{switch_req.rejection_reason}\n\n您目前仍使用 **{curr_disp}**，系統未進行切換。",
+                            status_pill=ZNStatusPill.WARNING,
+                            color=ZNColor.WARNING,
+                        )
+                        await self._safe_edit_status_message(status_msg, message.channel, card=card)
+                        if reservation:
+                            await quota_service.release_quota(reservation)
+                        return
                 elif switch_req.outcome == ModelSwitchOutcome.MODEL_NOT_FOUND or not switch_req.matched_model:
                     sugg_lines = []
                     for s in switch_req.suggestions[:3]:
@@ -1750,16 +1870,25 @@ class ZeroNexusBot(commands.Bot):
                         sugg_lines.append(f"- **{s_name}** (`{s_id}`)")
                     sugg_block = ("\n\n推薦您可以嘗試以下模型：\n" + "\n".join(sugg_lines) + "\n說『切換至 [名稱]』即可直接切換！") if sugg_lines else ""
                     reason = switch_req.rejection_reason or f"查無相符之模型「{switch_req.raw_model_query}」。"
-                    card = ZNCard(
-                        title=f"❌ 查無相符模型 ➔ {req_ctx.author_name}",
-                        description=f"{reason}{sugg_block}\n\n您目前仍使用 **{curr_disp}**，系統未進行切換。",
-                        status_pill=ZNStatusPill.WARNING,
-                        color=ZNColor.WARNING,
-                    )
-                    await self._safe_edit_status_message(status_msg, message.channel, card=card)
-                    if reservation:
-                        await quota_service.release_quota(reservation)
-                    return
+                    # 【P0-A 修復】查無模型但帶有附加問題時，改為附註未切換並照常回答，不再吞掉使用者的提問
+                    if switch_req.extra_query:
+                        user_prompt = switch_req.extra_query
+                        switch_instruction = (
+                            f"\n\n【重要系統狀態告知】：使用者原本希望切換模型，但查無相符模型（{reason}），系統未進行切換，依然維持原模型「{curr_disp}」。"
+                            f"請以您當前人設（{persona}）簡短附註查無該模型並推薦相近選項後，全力解答使用者的問題：『{switch_req.extra_query}』。"
+                        )
+                        log.info("[AI Pipeline] 查無模型但帶有附加問題，已改為附註模式照常回答。")
+                    else:
+                        card = ZNCard(
+                            title=f"❌ 查無相符模型 ➔ {req_ctx.author_name}",
+                            description=f"{reason}{sugg_block}\n\n您目前仍使用 **{curr_disp}**，系統未進行切換。",
+                            status_pill=ZNStatusPill.WARNING,
+                            color=ZNColor.WARNING,
+                        )
+                        await self._safe_edit_status_message(status_msg, message.channel, card=card)
+                        if reservation:
+                            await quota_service.release_quota(reservation)
+                        return
                 else:
                     target_model = switch_req.matched_model
                     target_disp = model_registry.get_display_name(target_model)
@@ -1852,11 +1981,20 @@ class ZeroNexusBot(commands.Bot):
             if attachment_tool_results:
                 tool_results.update(attachment_tool_results)
 
+            # 【P0-A 修復】自主工具仲裁器納入 20 秒硬逾時：
+            # 此呼叫位於主逾時保護之前且內部可能執行網路查詢，慢網路下曾導致狀態卡永遠停在「正在思考中」。
             try:
                 from zeronexus.agent.tool_arbiter import autonomous_tool_arbiter
-                auto_tools = await autonomous_tool_arbiter.arbitrate_and_execute(user_prompt, guild=message.guild)
+                auto_tools = await asyncio.wait_for(
+                    autonomous_tool_arbiter.arbitrate_and_execute(user_prompt, guild=message.guild),
+                    timeout=20.0,
+                )
                 if auto_tools:
                     tool_results.update(auto_tools)
+            except asyncio.TimeoutError:
+                log.warning("[AI Pipeline] stage=tool_arbiter 自主工具仲裁逾時 (20s)，已跳過以保障回應時效。")
+            except asyncio.CancelledError:
+                raise
             except Exception as auto_tool_err:
                 log.warning(f"自主工具意圖仲裁執行異常: {auto_tool_err}")
 
@@ -2615,11 +2753,14 @@ class ZeroNexusBot(commands.Bot):
                 private_dialogue_engine.is_heart_thread(effective_channel.id)
                 or (getattr(effective_channel, "name", "") or "").startswith("🌿・心靈")
             )
-            asyncio.create_task(affinity_engine.record_interaction(
-                user_id=message.author.id,
-                user_text=user_prompt,
-                is_private_thread=is_heart_thread_turn,
-            ))
+            self._spawn_background(
+                affinity_engine.record_interaction(
+                    user_id=message.author.id,
+                    user_text=user_prompt,
+                    is_private_thread=is_heart_thread_turn,
+                ),
+                name=f"affinity_turn_{message.id}",
+            )
 
             # 依據演進計畫書第 16、18 條：由 Smart Data Collector 智慧採集高價值樣本並沉澱至獨立 Dataset Artifact
             try:
@@ -2635,24 +2776,30 @@ class ZeroNexusBot(commands.Bot):
 
             # 多模態視覺創作歷史萃取與記憶保存
             if draw_intent and (generated_image_url or generated_image_bytes):
-                asyncio.create_task(context_builder.record_visual_history(
-                    user=message.author,
-                    action_type="image_generation",
-                    detail=f"曾創作繪製 AI 圖像，提示詞為「{draw_intent.prompt}」（風格：{draw_intent.style or '自然藝術'}）",
-                    guild_id=message.guild.id if message.guild else None,
-                    channel_id=getattr(effective_channel, "id", message.channel.id),
-                ))
+                self._spawn_background(
+                    context_builder.record_visual_history(
+                        user=message.author,
+                        action_type="image_generation",
+                        detail=f"曾創作繪製 AI 圖像，提示詞為「{draw_intent.prompt}」（風格：{draw_intent.style or '自然藝術'}）",
+                        guild_id=message.guild.id if message.guild else None,
+                        channel_id=getattr(effective_channel, "id", message.channel.id),
+                    ),
+                    name=f"visual_history_img_{message.id}",
+                )
 
             # 多模態附件/照片分享歷史萃取與記憶保存
             if attachment_notes:
                 att_summary = "、".join(n[:80] for n in attachment_notes[:2])
-                asyncio.create_task(context_builder.record_visual_history(
-                    user=message.author,
-                    action_type="attachment_share",
-                    detail=f"曾分享過檔案或圖片素材：{att_summary}",
-                    guild_id=message.guild.id if message.guild else None,
-                    channel_id=getattr(effective_channel, "id", message.channel.id),
-                ))
+                self._spawn_background(
+                    context_builder.record_visual_history(
+                        user=message.author,
+                        action_type="attachment_share",
+                        detail=f"曾分享過檔案或圖片素材：{att_summary}",
+                        guild_id=message.guild.id if message.guild else None,
+                        channel_id=getattr(effective_channel, "id", message.channel.id),
+                    ),
+                    name=f"visual_history_att_{message.id}",
+                )
 
             # Check Quota reminder threshold
             today_str = quota_service.get_today_str()
@@ -2782,14 +2929,17 @@ class ZeroNexusBot(commands.Bot):
             except Exception:
                 pass
         except Exception as e:
-            log.error(f"Error answering in AI channel: {e}", exc_info=True)
+            # 【P0-A 修復】錯誤卡全面脫敏：原始例外可能含帶金鑰的 URL，嚴防金鑰噴灑至公開聊天視窗
+            from zeronexus.security.sanitizer import redact_secrets as _redact_pipeline_err
+            clean_err = _redact_pipeline_err(str(e))
+            log.error(f"Error answering in AI channel: {clean_err}", exc_info=True)
             if reservation:
                 await quota_service.release_quota(reservation)
             if model_reservation:
                 await quota_service.release_model_quota(model_reservation)
             err_card = ZNCard(
                 title=f"❌ AI 回應異常 ➔ {req_ctx.author_name}",
-                description=f"執行過程中遭遇錯誤：`{e}`",
+                description=f"執行過程中遭遇錯誤：`{clean_err[:150]}`",
                 status_pill=ZNStatusPill.ERROR,
                 color=ZNColor.ERROR,
             )

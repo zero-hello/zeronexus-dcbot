@@ -118,7 +118,11 @@ async def main() -> None:
                 return
             shutdown_triggered = True
             log.info("🛑 收到終止訊號，正在啟動機器人優雅關機流程...")
-            asyncio.create_task(bot.close())
+            _shutdown_task = asyncio.create_task(bot.close())  # 引用保留 + 錯誤記錄，避免靜默失敗
+            _shutdown_task.add_done_callback(
+                lambda t: log.error(f"Shutdown task crashed: {t.exception()}")
+                if not t.cancelled() and t.exception() else None
+            )
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:

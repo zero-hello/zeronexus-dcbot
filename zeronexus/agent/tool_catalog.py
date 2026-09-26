@@ -2186,7 +2186,8 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
 
     async def h_dns_lookup_a(domain: str, **kwargs: Any) -> Dict[str, Any]:
         clean_domain = domain.strip().lower()
-        is_safe, reason = await validate_safe_host(clean_domain)
+        # 【修復】validate_safe_host 為同步函式（回傳 tuple），直接 await 會拋 TypeError
+        is_safe, reason = validate_safe_host(clean_domain)
         if not is_safe:
             return {"domain": clean_domain, "error": f"安全性攔截: {reason}"}
         try:
@@ -2211,7 +2212,8 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
 
     async def h_dns_lookup_aaaa(domain: str, **kwargs: Any) -> Dict[str, Any]:
         clean_domain = domain.strip().lower()
-        is_safe, reason = await validate_safe_host(clean_domain)
+        # 【修復】同步函式不可 await
+        is_safe, reason = validate_safe_host(clean_domain)
         if not is_safe:
             return {"domain": clean_domain, "error": f"安全性攔截: {reason}"}
         try:
@@ -2236,7 +2238,8 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
 
     async def h_dns_lookup_mx(domain: str, **kwargs: Any) -> Dict[str, Any]:
         clean_domain = domain.strip().lower()
-        is_safe, reason = await validate_safe_host(clean_domain)
+        # 【修復】同步函式不可 await
+        is_safe, reason = validate_safe_host(clean_domain)
         if not is_safe:
             return {"domain": clean_domain, "error": f"安全性攔截: {reason}"}
         return {
@@ -2261,7 +2264,8 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
 
     async def h_dns_lookup_txt(domain: str, **kwargs: Any) -> Dict[str, Any]:
         clean_domain = domain.strip().lower()
-        is_safe, reason = await validate_safe_host(clean_domain)
+        # 【修復】同步函式不可 await
+        is_safe, reason = validate_safe_host(clean_domain)
         if not is_safe:
             return {"domain": clean_domain, "error": f"安全性攔截: {reason}"}
         return {
@@ -2286,7 +2290,8 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
     async def h_http_headers_inspect(url: str, **kwargs: Any) -> Dict[str, Any]:
         from zeronexus.security.ssrf import validate_safe_url
         import httpx
-        is_safe, reason = await validate_safe_url(url)
+        # 【修復】同步函式不可 await
+        is_safe, reason = validate_safe_url(url)
         if not is_safe:
             return {"url": url, "error": f"SSRF 防護阻斷: {reason}"}
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:

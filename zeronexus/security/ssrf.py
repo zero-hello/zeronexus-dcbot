@@ -9,10 +9,10 @@ Validates external destination hosts, URLs, and IP ranges to prevent:
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import re
 import socket
-import time
 from typing import List, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
@@ -165,7 +165,12 @@ def validate_safe_host(host: str) -> Tuple[bool, str, Optional[str]]:
                 break
         except socket.gaierror as e:
             if attempt < 2:
-                time.sleep(0.25)
+                resolved_infos = None
+                try:
+                    asyncio.get_running_loop()
+                    asyncio.sleep(0.25)
+                except RuntimeError:
+                    pass
                 continue
             return False, f"DNS 解析失敗：{e}", None
         except Exception as e:
@@ -189,6 +194,122 @@ def validate_safe_host(host: str) -> Tuple[bool, str, Optional[str]]:
             return False, f"無法識別解析之 IP 位址 ({ip_str})", None
 
     return True, "驗證通過", primary_ip
+
+
+async def validate_safe_host_async(host: str) -> Tuple[bool, str, Optional[str]]:
+    """非同步主機驗證：同步 DNS 解析移轉至執行緒池承載，事件迴圈零阻塞。
+
+    【效能修復】同步 socket.getaddrinfo() 於 DNS 無回應時最壞可阻塞事件迴圈約 15 秒，
+    凍結整個 Bot；非同步呼叫端應優先使用本函式。
+
+    Returns:
+        (is_safe, error_message, primary_resolved_ip)
+    """
+    clean_host = host.strip().lower()
+    if not clean_host:
+        return False, "目標主機不可為空", None
+
+    if clean_host.startswith("[") and clean_host.endswith("]"):
+        clean_host = clean_host[1:-1]
+
+    if (
+        clean_host in BLOCKED_HOSTNAMES
+        or clean_host == "metadata"
+        or clean_host.startswith("metadata.")
+        or clean_host.endswith(".localhost")
+        or clean_host.endswith(".local")
+        or clean_host.endswith(".internal")
+    ):
+        return False, f"禁止存取受限內部主機名稱 ({clean_host})", None
+
+    direct_ip = parse_loose_ip(clean_host)
+    if direct_ip is not None:
+        blocked, reason = is_ip_blocked(direct_ip)
+        if blocked:
+            return False, f"SSRF 防護阻斷：{reason}", None
+        return True, "驗證通過", str(direct_ip)
+
+    resolved_infos = None
+    for attempt in range(3):
+        try:
+            # 同步 DNS 查詢交由執行緒池承載，事件迴圈零阻塞
+            resolved_infos = await asyncio.to_thread(
+                socket.getaddrinfo, clean_host, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+            )
+            if resolved_infos:
+                break
+        except socket.gaierror as e:
+            if attempt < 2:
+                await asyncio.sleep(0.25)  # 非同步讓渡，不阻塞其他協程
+                continue
+            return False, f"DNS 解析失敗：{e}", None
+        except Exception as e:
+            return False, f"主機解析異常：{e}", None
+
+    if not resolved_infos:
+        return False, "無法取得目標主機之 IP 位址", None
+
+    primary_ip: Optional[str] = None
+    for item in resolved_infos:
+        sockaddr = item[4]
+        ip_str = sockaddr[0]
+        if primary_ip is None:
+            primary_ip = ip_str
+        try:
+            parsed_ip = ipaddress.ip_address(ip_str)
+            blocked, reason = is_ip_blocked(parsed_ip)
+            if blocked:
+                return False, f"SSRF 防護阻斷：主機解析至 {reason}", None
+        except ValueError:
+            return False, f"無法識別解析之 IP 位址 ({ip_str})", None
+
+    return True, "驗證通過", primary_ip
+
+
+async def validate_safe_url_async(url: str) -> Tuple[bool, str, Optional[str]]:
+    """非同步 URL 驗證：基於 validate_safe_host_async，供非同步請求鏈路使用。
+
+    Returns:
+        (is_safe, error_message, normalized_url)
+    """
+    clean_url = url.strip()
+    if not clean_url:
+        return False, "目標網址不可為空", None
+
+    unquoted = unquote(clean_url)
+    if (
+        any(c in clean_url for c in ("\r", "\n", "\t"))
+        or any(c in unquoted for c in ("\r", "\n", "\t", "\x00"))
+        or bool(re.search(r"%0[adAD9]|%00", clean_url, re.IGNORECASE))
+    ):
+        return False, "網址包含非法控制字元 (CRLF/換行/Tab)", None
+
+    try:
+        parsed = urlparse(clean_url)
+    except Exception as e:
+        return False, f"網址解析失敗：{e}", None
+
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False, f"不支援的協定「{parsed.scheme}」，僅允許 HTTP/HTTPS", None
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "網址缺少有效主機名稱", None
+
+    try:
+        port = parsed.port
+    except ValueError as e:
+        return False, f"無效連接埠：{e}", None
+
+    if port is not None:
+        if not (1 <= port <= 65535):
+            return False, f"無效連接埠：{port}", None
+
+    safe, reason, _ = await validate_safe_host_async(hostname)
+    if not safe:
+        return False, reason, None
+
+    return True, "驗證通過", clean_url
 
 
 def validate_safe_url(url: str) -> Tuple[bool, str, Optional[str]]:

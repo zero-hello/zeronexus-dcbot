@@ -205,6 +205,14 @@ def redact_secrets(text: str) -> str:
         text,
     )
 
+    # 7.1 【P1 修復】Regex fallback for Groq API Keys (gsk_ 前綴)：原實作遺漏，
+    # 導致 Groq 金鑰隨例外追溯外洩時不被遮蔽
+    text = re.sub(
+        r"\bgsk_[a-zA-Z0-9]{20,}\b",
+        _mask_match,
+        text,
+    )
+
     # 8. Regex fallback for HTTP Authorization Bearer tokens
     text = re.sub(
         r"(?i)\b(bearer\s+)([a-zA-Z0-9_\-\.]{16,})\b",

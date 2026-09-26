@@ -134,6 +134,14 @@ def _sandbox_audit_hook(event, args):
     if event in ("os.system", "subprocess.Popen", "os.spawn", "os.posix_spawn", "os.exec", "os.execve", "pty.spawn", "os.fork", "os.forkpty"):
         raise PermissionError("沙盒安全限制：禁止衍生子行程 (" + str(event) + ")")
 
+    # 【安全修補】將 symlink/hardlink/目錄建立與檔案複製移動納入阻斷清單：
+    # 防範攻擊者於工作目錄內建立 symlink 指向 /etc 後以一般 open() 寫入之跳脫跳板
+    if _in_user_code and event in (
+        "os.symlink", "os.link", "os.mkdir", "os.makedirs",
+        "shutil.copyfile", "shutil.copy", "shutil.copy2", "shutil.move",
+    ):
+        raise PermissionError("沙盒安全限制：禁止建立連結、目錄或複製移動檔案 (" + str(event) + ")")
+
     # 使用者程式碼執行期間的檔案系統與二進位擴充嚴格防護
     if _in_user_code:
         # 阻斷 ctypes 底層調用逃逸（嚴禁載入或調用任意底層 C 二進位函式庫與符號）
@@ -143,13 +151,36 @@ def _sandbox_audit_hook(event, args):
         if event == "open":
             try:
                 target_path = str(args[0]) if args else ""
-                mode = str(args[1]) if len(args) > 1 else "r"
-                norm_p = os.path.abspath(target_path)
+                second_arg = args[1] if len(args) > 1 else "r"
+
+                # 【安全修補】寫入意圖判定：os.open() 的第二參數為整數 flags（如 os.O_WRONLY|os.O_CREAT = 65），
+                # 原實作以 str(65) 檢查 "w" 完全失效，必須以位元運算解碼；一般 open() 則為字串 mode。
+                _WRITE_FLAG_MASK = (
+                    getattr(os, "O_WRONLY", 1)
+                    | getattr(os, "O_RDWR", 2)
+                    | getattr(os, "O_APPEND", 0)
+                    | getattr(os, "O_CREAT", 0)
+                    | getattr(os, "O_TRUNC", 0)
+                )
+                if isinstance(second_arg, int):
+                    is_write_mode = bool(second_arg & _WRITE_FLAG_MASK)
+                else:
+                    mode_str = str(second_arg)
+                    is_write_mode = any(m in mode_str for m in ("w", "a", "+", "x"))
+
+                # 【安全修補】以 os.path.realpath 取代 abspath：解析 symlink 後再行檢查，
+                # 杜絕「工作目錄內 symlink 指向沙盒外」之跳脫手法
+                norm_p = os.path.realpath(target_path)
 
                 # 寫入模式檢查：只允許寫入當前臨時工作目錄
-                if any(m in mode for m in ("w", "a", "+", "x")):
-                    if _allowed_work_dir and not norm_p.startswith(_allowed_work_dir):
-                        raise PermissionError("沙盒安全限制：禁止寫入工作目錄以外之路徑 (" + str(target_path) + ")")
+                if is_write_mode:
+                    if _allowed_work_dir:
+                        # 【安全修補】以 os.sep 邊界比對取代裸 startswith：
+                        # 防範 /tmp/zn_sandbox_1evil 通過 /tmp/zn_sandbox_1 之前綴混淆檢查
+                        work_real = os.path.realpath(_allowed_work_dir)
+                        within_work_dir = norm_p == work_real or norm_p.startswith(work_real + os.sep)
+                        if not within_work_dir:
+                            raise PermissionError("沙盒安全限制：禁止寫入工作目錄以外之路徑 (" + str(target_path) + ")")
 
                 # 敏感檔案讀取檢查：嚴格阻擋設定檔、金鑰、資料庫與系統敏感檔案
                 lower_p = norm_p.lower()
@@ -163,10 +194,12 @@ def _sandbox_audit_hook(event, args):
                     raise PermissionError("沙盒安全限制：禁止存取敏感系統或專案設定檔 (" + str(target_path) + ")")
 
                 # 嚴禁讀取專案程式碼根目錄（字型檔、快取目錄與虛擬環境套件庫除外）
-                if _project_root and norm_p.startswith(_project_root):
-                    allowed_subpaths = ("/data/fonts", "/data/cache", "/znenv", "/.venv", "/venv")
-                    if not any(sub in norm_p for sub in allowed_subpaths):
-                        raise PermissionError("沙盒安全限制：禁止越權讀取專案核心目錄 (" + str(target_path) + ")")
+                if _project_root:
+                    project_real = os.path.realpath(_project_root)
+                    if norm_p.startswith(project_real):
+                        allowed_subpaths = ("/data/fonts", "/data/cache", "/znenv", "/.venv", "/venv")
+                        if not any(sub in norm_p for sub in allowed_subpaths):
+                            raise PermissionError("沙盒安全限制：禁止越權讀取專案核心目錄 (" + str(target_path) + ")")
             except PermissionError:
                 raise
             except Exception:
@@ -175,9 +208,12 @@ def _sandbox_audit_hook(event, args):
         if event in ("os.remove", "os.unlink", "os.rmdir", "shutil.rmtree", "os.rename", "os.replace", "os.chmod", "os.chown"):
             try:
                 target_p = str(args[0]) if args else ""
-                norm_p = os.path.abspath(target_p)
-                if _allowed_work_dir and not norm_p.startswith(_allowed_work_dir):
-                    raise PermissionError("沙盒安全限制：禁止修改或刪除沙盒外之檔案 (" + str(event) + ")")
+                norm_p = os.path.realpath(target_p)
+                if _allowed_work_dir:
+                    work_real = os.path.realpath(_allowed_work_dir)
+                    within_work_dir = norm_p == work_real or norm_p.startswith(work_real + os.sep)
+                    if not within_work_dir:
+                        raise PermissionError("沙盒安全限制：禁止修改或刪除沙盒外之檔案 (" + str(event) + ")")
             except PermissionError:
                 raise
             except Exception:

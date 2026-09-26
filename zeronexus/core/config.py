@@ -356,7 +356,7 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "2.7.8"
+    version: str = "2.7.9"
     owner_id: str = "1514971711739789352"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
@@ -542,8 +542,29 @@ class Config:
             secrets.add(k)
         for k in self.ai.openrouter_keys:
             secrets.add(k)
+        # 【P1 修復】補全遺漏之供應商金鑰：原實作缺 Groq/Mistral/Cohere/Manus/HuggingFace，
+        # 導致這些金鑰若隨例外追溯外洩時完全不被精確遮蔽
+        for k in self.ai.groq_keys:
+            secrets.add(k)
+        for k in self.ai.mistral_keys:
+            secrets.add(k)
+        for k in self.ai.cohere_keys:
+            secrets.add(k)
+        for k in self.ai.manus_keys:
+            secrets.add(k)
+        for k in self.ai.huggingface_keys:
+            secrets.add(k)
+        if self.ai.huggingface_token:
+            secrets.add(self.ai.huggingface_token)
+        if self.ai.openrouter_fallback_key:
+            secrets.add(self.ai.openrouter_fallback_key)
 
-        for var in ("GEMINI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "CWA_API_KEY"):
+        for var in (
+            "GEMINI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "CWA_API_KEY",
+            "GROQ_API_KEY", "MISTRAL_API_KEY", "COHERE_API_KEY", "MANUS_API_KEY",
+            "HUGGINGFACE_TOKEN", "GOOGLE_SAFE_BROWSING_API_KEY", "GOOGLE_API_KEY",
+            "TDX_CLIENT_ID", "TDX_CLIENT_SECRET",
+        ):
             val = os.getenv(var, "").strip()
             if val:
                 secrets.add(val)

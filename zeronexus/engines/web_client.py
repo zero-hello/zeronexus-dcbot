@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 
-from zeronexus.security.ssrf import validate_safe_url
+from zeronexus.security.ssrf import validate_safe_url, validate_safe_url_async
 
 
 def decode_bing_url(raw_url: str) -> str:
@@ -392,8 +392,14 @@ class WebClient:
 
 
     async def fetch_page(self, url: str, max_chars: int = 3500) -> Dict[str, Any]:
-        """Fetches and extracts clean readable text from a URL with strict SSRF defense."""
-        is_safe, error_msg, _ = validate_safe_url(url)
+        """Fetches and extracts clean readable text from a URL with strict SSRF defense.
+
+        【P1 修復】改用非同步 SSRF 驗證（DNS 解析移轉至執行緒池），
+        並在重導向逐跳驗證之外，於實際取得內容前再驗證一次最終落地 URL，
+        縮小 DNS Rebinding (TOCTOU) 可利用時間窗。
+        """
+        # 非同步首跳驗證：事件迴圈零阻塞
+        is_safe, error_msg, _ = await validate_safe_url_async(url)
         if not is_safe:
             return {
                 "success": False,
@@ -415,7 +421,7 @@ class WebClient:
                     if not loc:
                         break
                     next_url = urljoin(curr_url, loc)
-                    is_safe_hop, hop_err, _ = validate_safe_url(next_url)
+                    is_safe_hop, hop_err, _ = await validate_safe_url_async(next_url)
                     if not is_safe_hop:
                         return {
                             "success": False,
@@ -429,6 +435,20 @@ class WebClient:
                     curr_url = next_url
                     continue
                 break
+
+            # 【P1 修復】實際連線前的最終落地驗證：再驗證一次最終 URL，
+            # 縮小「DNS 驗證時間點」與「實際連線時間點」之間的 Rebinding 時間窗
+            final_safe, final_err, _ = await validate_safe_url_async(curr_url)
+            if not final_safe:
+                return {
+                    "success": False,
+                    "url": curr_url,
+                    "status": "CONTENT_BLOCKED",
+                    "error_code": "SSRF_FINAL_RECHECK_BLOCKED",
+                    "error_message": f"最終連線目標遭 SSRF 防禦阻斷: {final_err}",
+                    "data_tag": "UNTRUSTED_EXTERNAL_DATA",
+                    "content": "",
+                }
 
             resp_code = getattr(resp, "status_code", 200)
             resp_text = getattr(resp, "text", "") or ""
