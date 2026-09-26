@@ -2,6 +2,46 @@
 
 ---
 
+## [2.8.0] - 2026-09-27
+
+### 🔴 CWA 子系統全面修復（連線逾時、斷路器、請求去重）
+- **根本原因修復**：
+  - 更新 [`zeronexus/engines/cwa_client.py`](zeronexus/engines/cwa_client.py)：
+    - `keepalive_expiry` 由 15.0s 提升至 300.0s，避免每次輪詢都重新建立 TCP 連線
+    - `connect` timeout 由 15.0s 提升至 30.0s，`read` timeout 由 20.0s 提升至 60.0s
+    - 加入指數退避 + 隨機 jitter（1~60 秒），避免雷群效應
+  - 更新 [`zeronexus/engines/cwa_notifier.py`](zeronexus/engines/cwa_notifier.py)：
+    - 加入斷路器（Circuit Breaker）模式：連續失敗 10 次後暫停 10~600 秒
+    - 加入請求去重機制（`_poll_in_progress`），防止多個輪詢任務同時飛行
+  - 更新 [`zeronexus/bot.py`](zeronexus/bot.py)：
+    - 地震輪詢間隔由 60s 提升至 120s，降低 CWA API 觸發冷却的風險
+
+### 🔴 安全性強化
+- **加密金鑰安全**：
+  - 更新 [`zeronexus/brain/memory_vault.py`](zeronexus/brain/memory_vault.py)：
+    - 移除 `DISCORD_BOT_TOKEN` 作為加密種子，改用獨立 `BRAIN_MASTER_KEY`
+    - 移除非安全的 hardcoded fallback 種子，未設定時拋出異常
+- **開發者指令保護**：
+  - 更新 [`zeronexus/modules/developer/cog.py`](zeronexus/modules/developer/cog.py)：
+    - `cmd_eval` 加入危險操作黑名單過濾（禁止 os.system、subprocess、open 等）
+    - 加入 30 秒執行逾時保護
+- **並發安全**：
+  - 更新 [`zeronexus/security/ratelimit.py`](zeronexus/security/ratelimit.py)：
+    - `SlidingWindowRateLimiter` 加入 `threading.Lock` 保護
+  - 更新 [`zeronexus/security/blacklist.py`](zeronexus/security/blacklist.py)：
+    - `GlobalBlacklistManager` 加入 `threading.RLock` 保護
+
+### 🔴 效能與記憶體修復
+- **Memory Leak 修復**：
+  - 更新 [`zeronexus/ai_gateway/quota_service.py`](zeronexus/ai_gateway/quota_service.py)：
+    - `_reminded_thresholds` 加入每日清理機制（`_daily_cleanup_if_needed`）
+    - `_model_in_flight` 字典計數歸零時刪除鍵，防止無限增長
+- **Database 索引優化**：
+  - 更新 [`zeronexus/models/user.py`](zeronexus/models/user.py)：
+    - `AIModelQuotaRecord` 新增 `(user_id, model_id, date_str)` 複合索引
+
+---
+
 ## [2.7.8] - 2026-09-26
 
 ### 🛡️ 開機指令同步防卡死機制、Presence 狀態除錯與 CWA 網路連線寬限 (Resilience & Stability Hardening)

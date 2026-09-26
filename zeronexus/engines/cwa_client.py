@@ -132,11 +132,11 @@ class CWAClient:
             self._loop = loop
             self._ssl_context = _build_cwa_ssl_context()
             limits = httpx.Limits(
-                max_keepalive_connections=5,
-                max_connections=15,
-                keepalive_expiry=15.0,
+                max_keepalive_connections=10,
+                max_connections=20,
+                keepalive_expiry=300.0,
             )
-            timeout = httpx.Timeout(25.0, connect=15.0, read=20.0)
+            timeout = httpx.Timeout(60.0, connect=30.0, read=60.0)
             self._http_client = httpx.AsyncClient(
                 timeout=timeout,
                 limits=limits,
@@ -193,7 +193,11 @@ class CWAClient:
                     log.warning(
                         f"[CWA_連線逾時] 中央氣象署 API 回應逾時 ({dataset_id}，第 {attempt+1} 次嘗試，耗時 {latency_ms} 毫秒)，將進行重試 [請求識別碼={request_id}]：{te}"
                     )
-                    retry_wait = max(backoff_base, 0.5) * (2 ** attempt)
+                    # 指數退避 + 隨機 jitter，避免雷群效應
+                    import random
+                    exponential_wait = max(backoff_base, 1.0) * (2 ** attempt)
+                    jitter = random.uniform(0, exponential_wait * 0.5)
+                    retry_wait = min(exponential_wait + jitter, 60.0)
                     await asyncio.sleep(retry_wait)
                     continue
                 log.error(

@@ -238,6 +238,14 @@ class CWAEarthquakeNotifier:
         self._consecutive_poll_errors: int = 0
         self._backoff_seconds: float = 0.0
         self._last_seen_report_id: Optional[str] = None
+        # 斷路器狀態
+        self._circuit_open: bool = False
+        self._circuit_opened_at: Optional[float] = None
+        self._circuit_failure_count: int = 0
+        self._circuit_last_failure_time: Optional[float] = None
+        self._consecutive_successes: int = 0
+        # 請求去重：防止多個輪询任務同時飛行
+        self._poll_in_progress: bool = False
 
     async def poll_and_notify(
         self,
@@ -245,14 +253,40 @@ class CWAEarthquakeNotifier:
         trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Polls CWA for the latest earthquake report and dispatches notifications to configured guilds."""
+        if self._poll_in_progress:
+            return {"status": "IN_PROGRESS", "trace_id": trace_id}
+
+        self._poll_in_progress = True
+        try:
+            return await self._poll_and_notify_impl(bot, trace_id)
+        finally:
+            self._poll_in_progress = False
+
+    async def _poll_and_notify_impl(
+        self,
+        bot: discord.Client,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """實際執行 CWA 輪询與推播的內部實作。"""
         if not trace_id:
             trace_id = f"trace_eq_{uuid.uuid4().hex[:8]}"
 
         # Rate limit / backoff pause check
         if self._backoff_seconds > 0:
             log.warning(f"[CWA_EARTHQUAKE_POLL_START] [trace_id={trace_id}] 目前處於退避冷卻期（剩餘 {self._backoff_seconds:.1f} 秒），暫緩本次氣象署地震輪詢。")
-            self._backoff_seconds = max(0.0, self._backoff_seconds - 60.0)
+            self._backoff_seconds = max(0.0, self._backoff_seconds - 120.0)
             return {"status": "BACKOFF", "trace_id": trace_id}
+
+        # 斷路器檢查：連續失敗太多次時直接暫停
+        if self._consecutive_poll_errors >= 10:
+            circuit_wait = min(600.0, 300.0 * (2 ** (self._consecutive_poll_errors - 10)))
+            log.error(
+                f"[CWA_EARTHQUAKE_CIRCUIT_OPEN] [trace_id={trace_id}] 連續失敗 {self._consecutive_poll_errors} 次，"
+                f"斷路器開啟！暫停輪詢 {circuit_wait:.0f} 秒以避免持續觸發 CWA 冷却機制。"
+            )
+            self._backoff_seconds = circuit_wait
+            self._consecutive_poll_errors = 0
+            return {"status": "CIRCUIT_OPEN", "trace_id": trace_id}
 
         t0 = time.perf_counter()
         log.debug(f"[CWA_EARTHQUAKE_POLL_START] [trace_id={trace_id}] 正在向中央氣象署獲取最新官方有感地震報告...")

@@ -60,8 +60,20 @@ class EncryptedMemoryVault:
         self._recall_history: dict[int, dict[str, float]] = {}
 
     def _init_encryption_key(self, secret_key: Optional[str]) -> None:
-        """從環境變數或本地種子衍生出 256-bit AES 金鑰"""
-        raw_seed = secret_key or os.getenv("BRAIN_MASTER_KEY") or os.getenv("DISCORD_BOT_TOKEN") or "ZeroNexusBioBrainSeed2026"
+        """從環境變數或本地種子衍生出 256-bit AES 金鑰
+        
+        安全性強化：
+        - 不再使用 DISCORD_BOT_TOKEN 作為加密種子（避免金鑰洩漏風險）
+        - 移除非安全的 hardcoded fallback 種子
+        - 若未設定 BRAIN_MASTER_KEY，拋出異常而非使用弱種子
+        """
+        import secrets
+        raw_seed = secret_key or os.getenv("BRAIN_MASTER_KEY")
+        if not raw_seed:
+            raise RuntimeError(
+                "未設定 BRAIN_MASTER_KEY 環境變數。為了安全起見，系統不再支援無加密金鑰模式。"
+                "請於 .env 設定 BRAIN_MASTER_KEY（建議使用 32+ 字元的隨機字串）。"
+            )
         # 使用 SHA-256 生成固定 32 位元組 (256-bit) 金鑰
         self.aes_key = hashlib.sha256(raw_seed.encode("utf-8")).digest()
 

@@ -102,6 +102,25 @@ class QuotaService:
         """Returns the current date string in Asia/Taipei timezone (YYYY-MM-DD)."""
         return datetime.now(self.TAIPEI_TZ).strftime("%Y-%m-%d")
 
+    def _cleanup_old_reminders(self, today_str: str) -> int:
+        """清除非今日的提醒紀錄，防止記憶體洩漏。"""
+        keys_to_remove = [
+            key for key in self._reminded_thresholds
+            if key[1] != today_str
+        ]
+        for key in keys_to_remove:
+            del self._reminded_thresholds[key]
+        return len(keys_to_remove)
+
+    async def _daily_cleanup_if_needed(self) -> None:
+        """每日第一次呼叫時清理舊提醒紀錄。"""
+        today_str = self.get_today_str()
+        if getattr(self, "_last_cleanup_date", None) != today_str:
+            removed = self._cleanup_old_reminders(today_str)
+            if removed > 0:
+                log.debug(f"已清理 {removed} 筆過期提醒紀錄")
+            self._last_cleanup_date = today_str
+
     async def reserve_quota(
         self,
         user_id: int,
@@ -114,6 +133,8 @@ class QuotaService:
         today_str = self.get_today_str()
         default_limit = max_daily_override or config.ai.daily_limit_per_user
         is_dev = config.discord.is_dev(user_id)
+
+        await self._daily_cleanup_if_needed()
 
         async with self._get_user_lock(user_id):
             # Auto-cleanup stale uncommitted/unreleased reservations for this user (> 300s)
@@ -687,6 +708,9 @@ class QuotaService:
             if reservation.committed or reservation.released:
                 return
             self._model_in_flight[flight_key] = max(0, self._model_in_flight[flight_key] - 1)
+            # 若計數歸零，刪除鍵以防止字典無限增長
+            if self._model_in_flight[flight_key] == 0:
+                del self._model_in_flight[flight_key]
             reservation.released = True
             self._active_model_reservations.pop(reservation.reservation_id, None)
 

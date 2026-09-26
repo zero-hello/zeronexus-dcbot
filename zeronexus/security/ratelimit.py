@@ -8,6 +8,7 @@ Enforces:
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
@@ -20,6 +21,7 @@ class SlidingWindowRateLimiter:
         # key -> list of timestamps
         self._windows: Dict[str, List[float]] = defaultdict(list)
         self._max_keys = max_keys
+        self._lock = threading.Lock()
 
     def is_rate_limited(self, key: str, max_requests: int, window_seconds: float) -> Tuple[bool, float]:
         """Checks if key exceeded max_requests in window_seconds.
@@ -28,30 +30,31 @@ class SlidingWindowRateLimiter:
         """
         now = time.time()
 
-        # Prevent unbounded dictionary growth under DDoS or high cardinality attacks
-        if len(self._windows) >= self._max_keys and key not in self._windows:
-            self.cleanup()
-            if len(self._windows) >= self._max_keys:
-                sorted_keys = sorted(
-                    self._windows.keys(),
-                    key=lambda k: self._windows[k][-1] if self._windows[k] else 0,
-                )
-                for k in sorted_keys[:100]:
-                    del self._windows[k]
+        with self._lock:
+            # Prevent unbounded dictionary growth under DDoS or high cardinality attacks
+            if len(self._windows) >= self._max_keys and key not in self._windows:
+                self.cleanup()
+                if len(self._windows) >= self._max_keys:
+                    sorted_keys = sorted(
+                        self._windows.keys(),
+                        key=lambda k: self._windows[k][-1] if self._windows[k] else 0,
+                    )
+                    for k in sorted_keys[:100]:
+                        del self._windows[k]
 
-        timestamps = self._windows[key]
+            timestamps = self._windows[key]
 
-        # Purge timestamps older than the window
-        cutoff = now - window_seconds
-        while timestamps and timestamps[0] < cutoff:
-            timestamps.pop(0)
+            # Purge timestamps older than the window
+            cutoff = now - window_seconds
+            while timestamps and timestamps[0] < cutoff:
+                timestamps.pop(0)
 
-        if len(timestamps) >= max_requests:
-            retry_after = round(window_seconds - (now - timestamps[0]), 1)
-            return True, max(0.1, retry_after)
+            if len(timestamps) >= max_requests:
+                retry_after = round(window_seconds - (now - timestamps[0]), 1)
+                return True, max(0.1, retry_after)
 
-        timestamps.append(now)
-        return False, 0.0
+            timestamps.append(now)
+            return False, 0.0
 
     def reset(self, key: str) -> None:
         if key in self._windows:

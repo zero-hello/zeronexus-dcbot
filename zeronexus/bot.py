@@ -642,7 +642,7 @@ class ZeroNexusBot(commands.Bot):
             except Exception as e:
                 log.error(f"Error in CWA earthquake polling task: {e}", exc_info=True)
 
-        scheduler.add_interval_job("cwa_earthquake_poll", poll_earthquake, seconds=60.0)
+        scheduler.add_interval_job("cwa_earthquake_poll", poll_earthquake, seconds=120.0)
 
         # 2. CWA Weather Update Poll (Every 300s)
         async def poll_weather() -> None:

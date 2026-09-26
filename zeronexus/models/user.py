@@ -82,6 +82,11 @@ class AIModelQuotaRecord(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+    __table_args__ = (
+        # 複合索引：優化 (user_id, model_id, date_str) 組合查詢
+        Index("ix_model_quota_user_model_date", "user_id", "model_id", "date_str"),
+    )
+
 
 class EconomyWallet(Base):
     """Virtual economy wallet and daily streak tracker."""

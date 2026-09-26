@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
@@ -32,6 +33,7 @@ class GlobalBlacklistManager:
     def __init__(self, storage_path: str = "data/security/global_blacklist.json") -> None:
         self.storage_path = storage_path
         self._blacklist: Dict[str, BlacklistRecord] = {}
+        self._lock = threading.RLock()
         self._load()
 
     def is_banned(self, user_id: Any) -> bool:
@@ -59,27 +61,29 @@ class GlobalBlacklistManager:
             log.warning("嘗試封鎖造物主 Zero，操作已自動拒絕！")
             raise ValueError("不可封鎖造物主 Zero！")
 
-        record = BlacklistRecord(
-            user_id=uid,
-            user_name=user_name.strip(),
-            reason=reason.strip() or "違反使用條款或濫用機器人資源",
-            banned_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-            banned_by=banned_by.strip() or "Zero",
-        )
-        self._blacklist[uid] = record
-        self._save()
-        log.warning(f"🚫 [全域封鎖] 使用者 {uid} ({user_name}) 已被加入全域黑名單！原因: {reason}")
-        return asdict(record)
+        with self._lock:
+            record = BlacklistRecord(
+                user_id=uid,
+                user_name=user_name.strip(),
+                reason=reason.strip() or "違反使用條款或濫用機器人資源",
+                banned_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                banned_by=banned_by.strip() or "Zero",
+            )
+            self._blacklist[uid] = record
+            self._save()
+            log.warning(f"🚫 [全域封鎖] 使用者 {uid} ({user_name}) 已被加入全域黑名單！原因: {reason}")
+            return asdict(record)
 
     def unban_user(self, user_id: Any) -> bool:
         """將使用者從全域黑名單中移除"""
         uid = str(user_id).strip()
-        if uid in self._blacklist:
-            del self._blacklist[uid]
-            self._save()
-            log.info(f"✔ [解除封鎖] 使用者 {uid} 已成功從全域黑名單中解除。")
-            return True
-        return False
+        with self._lock:
+            if uid in self._blacklist:
+                del self._blacklist[uid]
+                self._save()
+                log.info(f"✔ [解除封鎖] 使用者 {uid} 已成功從全域黑名單中解除。")
+                return True
+            return False
 
     def list_banned_users(self) -> List[Dict[str, Any]]:
         """列出所有遭到全域封鎖的使用者清單"""
