@@ -79,6 +79,7 @@ class WebClient:
 
     def __init__(self) -> None:
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._search_semaphore = asyncio.Semaphore(5)  # 限制並發搜尋數，防止連線池耗盡
 
     async def _get_client(self, timeout: float = 10.0) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -358,13 +359,15 @@ class WebClient:
             return await self.search(clean_query, num_results=limit)
         client = await self._get_client(timeout=10.0)
 
-        # Launch DuckDuckGo and Google (with Bing/Yahoo fallbacks) concurrently
-        tasks = [
-            self._search_duckduckgo(client, clean_query, limit),
-            self._search_google(client, clean_query, limit),
-            self._search_bing(client, clean_query, limit),
-        ]
-        raw_responses = await asyncio.gather(*tasks, return_exceptions=True)
+        # 使用 Semaphore 限制並發搜尋數，防止連線池耗盡
+        async with self._search_semaphore:
+            # Launch DuckDuckGo and Google (with Bing/Yahoo fallbacks) concurrently
+            tasks = [
+                self._search_duckduckgo(client, clean_query, limit),
+                self._search_google(client, clean_query, limit),
+                self._search_bing(client, clean_query, limit),
+            ]
+            raw_responses = await asyncio.gather(*tasks, return_exceptions=True)
 
         combined: List[Dict[str, str]] = []
         seen_urls = set()

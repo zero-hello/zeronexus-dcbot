@@ -418,6 +418,14 @@ def enforce_taiwan_localization(text: str) -> str:
         return s
 
 
+async def async_enforce_taiwan_localization(text: str) -> str:
+    """非同步版本的台灣在地化轉換，避免阻塞事件迴圈。"""
+    if not text:
+        return ""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, enforce_taiwan_localization, text)
+
+
 def sanitize_thinking_process(thinking: str) -> str:
     """全面淨化模型原生思維推演歷程，將英文思維模板與簡體字 100% 轉換為道地臺灣繁體中文。"""
     if not thinking or not thinking.strip():
@@ -669,11 +677,25 @@ class ContextBuilder:
 
             # 3. Automatic Long-Term Memory Extraction
             # Detects tags like [REMEMBER: key = value], [REMEMBER: key: value], or [MEMORIZE: fact] output by AI
-            tag_matches = re.finditer(
+            tag_matches = list(re.finditer(
                 r"\[(?:REMEMBER|MEMORIZE):\s*([^=\]:\r\n]+?)(?:(?:\s*[=:]\s*)([^\]\r\n]+))?\]",
                 assistant_content,
                 re.IGNORECASE,
+            ))
+
+            # 预先載入該使用者的所有長期記憶，避免 N+1 查詢
+            existing_records_stmt = select(ConversationMemory).where(
+                ConversationMemory.scope == "user_long_term",
+                ConversationMemory.user_id == user.id,
             )
+            existing_records = (await session.execute(existing_records_stmt)).scalars().all()
+            records_by_key: Dict[str, ConversationMemory] = {}
+            records_by_content: Dict[str, ConversationMemory] = {}
+            for r in existing_records:
+                if r.fact_key:
+                    records_by_key[r.fact_key] = r
+                else:
+                    records_by_content[r.content] = r
 
             for m in tag_matches:
                 k_part = m.group(1).strip()
@@ -707,50 +729,28 @@ class ContextBuilder:
                     continue
 
                 # Check if fact already exists for this user (Upsert deduplication)
+                # 使用本地字典查找，避免 N+1 查詢
                 if key_clean:
-                    existing_stmt = select(ConversationMemory).where(
-                        ConversationMemory.scope == "user_long_term",
-                        ConversationMemory.user_id == user.id,
-                        ConversationMemory.fact_key == key_clean,
-                    )
-                    existing_res = await session.execute(existing_stmt)
-                    existing = existing_res.scalars().first()
+                    existing = records_by_key.get(key_clean)
                     if existing:
                         existing.content = val_clean
                         existing.created_at = datetime.now(timezone.utc)
                         log.info(f"Updated existing long term memory for user {user.id}: {key_clean} = {val_clean}")
                         continue
                 else:
-                    existing_stmt = select(ConversationMemory).where(
-                        ConversationMemory.scope == "user_long_term",
-                        ConversationMemory.user_id == user.id,
-                        ConversationMemory.content == val_clean,
-                    )
-                    existing_res = await session.execute(existing_stmt)
-                    existing = existing_res.scalars().first()
+                    existing = records_by_content.get(val_clean)
                     if existing:
                         existing.created_at = datetime.now(timezone.utc)
                         continue
 
                 # Cap total long-term facts per user to 50 to protect context window
-                count_stmt = select(func.count()).select_from(ConversationMemory).where(
-                    ConversationMemory.scope == "user_long_term",
-                    ConversationMemory.user_id == user.id,
-                )
-                fact_count = await session.scalar(count_stmt) or 0
+                # 使用本地計數而非每次查詢 DB
+                fact_count = len(existing_records)
                 if fact_count >= 50:
-                    oldest_stmt = (
-                        select(ConversationMemory)
-                        .where(
-                            ConversationMemory.scope == "user_long_term",
-                            ConversationMemory.user_id == user.id,
-                        )
-                        .order_by(ConversationMemory.created_at)
-                        .limit(1)
-                    )
-                    oldest = (await session.execute(oldest_stmt)).scalars().first()
+                    oldest = min(existing_records, key=lambda r: r.created_at)
                     if oldest:
                         await session.delete(oldest)
+                        existing_records.remove(oldest)
 
                 session.add(ConversationMemory(
                     scope="user_long_term",

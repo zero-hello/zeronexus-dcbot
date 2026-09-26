@@ -442,11 +442,16 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
     @commands.command(name="sysinfo", aliases=["sys"])
     async def cmd_sysinfo(self, ctx: commands.Context) -> None:
         """顯示主機詳細硬體環境 (CPU、記憶體、磁碟、作業系統核心與架構)。"""
-        vm = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        cpu_pct = psutil.cpu_percent(interval=0.2)
-        cpu_count = psutil.cpu_count(logical=True)
-        cpu_phys = psutil.cpu_count(logical=False)
+        # 使用 asyncio.to_thread 避免 psutil 阻塞事件迴圈
+        def _get_sysinfo():
+            vm = psutil.virtual_memory()
+            disk = psutil.disk_usage("/")
+            cpu_pct = psutil.cpu_percent(interval=0.2)
+            cpu_count = psutil.cpu_count(logical=True)
+            cpu_phys = psutil.cpu_count(logical=False)
+            return vm, disk, cpu_pct, cpu_count, cpu_phys
+
+        vm, disk, cpu_pct, cpu_count, cpu_phys = await asyncio.to_thread(_get_sysinfo)
 
         card = ZNCard(
             title="🖥️ 系統主機硬體環境診斷",

@@ -158,6 +158,33 @@ class CacheManager:
         self._memory.max_items = max(1, config.cache.max_memory_items)
         self._is_initialized = True
 
+        # 啟動背景清理任務，定期清除過期項目
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop(), name="cache_cleanup")
+
+    async def _cleanup_loop(self) -> None:
+        """背景任務：定期清理過期快取項目，防止記憶體無界增長。"""
+        while True:
+            try:
+                await asyncio.sleep(300)  # 每 5 分鐘清理一次
+                cleaned = await self._memory.clean_expired()
+                if cleaned > 0:
+                    log.debug(f"Cache cleanup: 已清理 {cleaned} 筆過期快取項目")
+            except asyncio.CancelledError:
+                log.info("Cache cleanup task cancelled.")
+                break
+            except Exception as e:
+                log.warning(f"Cache cleanup error: {e}")
+
+    async def close(self) -> None:
+        """關閉快取管理器，清理背景任務。"""
+        if hasattr(self, '_cleanup_task') and self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+        await self._memory.clear()
+
     async def get(self, key: str) -> Optional[Any]:
         if self._use_redis and self._redis:
             try:

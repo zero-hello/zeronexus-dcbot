@@ -12,6 +12,7 @@ Features:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
@@ -373,10 +374,10 @@ class AIGateway:
                     fallback_notice = f"{orig_disp} 暫時不可用，已自動切換"
                     log.warning(f"AI Gateway intra-provider model fallback occurred: {clean_override} -> {result.model_name}")
 
-                # Zero Intelligence 身分人稱與真實性清洗
+                # Zero Intelligence 身分人稱與真實性清洗（非同步執行緒池，避免阻塞事件迴圈）
                 from zeronexus.intelligence.identity_anchor import identity_anchor
                 if result.text:
-                    result.text = identity_anchor.sanitize_perspective(result.text)
+                    result.text = await asyncio.to_thread(identity_anchor.sanitize_perspective, result.text)
 
                 return result, fallback_notice
 

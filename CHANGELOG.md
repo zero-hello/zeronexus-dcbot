@@ -2,6 +2,44 @@
 
 ---
 
+## [2.8.1] - 2026-09-27
+
+### 🔴 事件迴圈保護（Blocking I/O 修復）
+- 更新 [`zeronexus/ai_gateway/gateway.py`](zeronexus/ai_gateway/gateway.py)：
+  - `sanitize_perspective` 改用 `asyncio.to_thread` 非同步執行，避免阻塞事件迴圈
+- 更新 [`zeronexus/ai_gateway/context_builder.py`](zeronexus/ai_gateway/context_builder.py)：
+  - 新增 `async_enforce_taiwan_localization` 非同步版本，避免阻塞事件迴圈
+- 更新 [`zeronexus/modules/developer/cog.py`](zeronexus/modules/developer/cog.py)：
+  - `cmd_sysinfo` 的 psutil 操作改用 `asyncio.to_thread` 非同步執行
+
+### 🔴 資料庫查詢優化（N+1 修復）
+- 更新 [`zeronexus/ai_gateway/context_builder.py`](zeronexus/ai_gateway/context_builder.py)：
+  - 長期記憶寫入改為批量載入 + 本地字典查找，消除 N+1 查詢問題
+  - 記憶計數改用本地 `len()` 而非每次查詢 DB
+
+### 🔴 安全防護強化
+- 更新 [`zeronexus/security/sanitizer.py`](zeronexus/security/sanitizer.py)：
+  - 新增 AWS Access Key (`AKIA...`) 遮蔽支援
+  - 新增 Slack Token (`xox...`) 遮蔽支援
+  - 新增 JWT Token (`eyJ...`) 遮蔽支援
+
+### 🔴 快取管理優化
+- 更新 [`zeronexus/core/cache.py`](zeronexus/core/cache.py)：
+  - 新增背景清理任務（每 5 分鐘自動清理過期項目）
+  - 新增 `close()` 方法正確關閉背景任務
+
+### 🔴 並發控制強化
+- 更新 [`zeronexus/engines/web_client.py`](zeronexus/engines/web_client.py)：
+  - 新增 `asyncio.Semaphore(5)` 限制並發搜尋數，防止連線池耗盡
+
+### 🔴 God Class 拆分準備
+- 新增 [`zeronexus/core/message_editor.py`](zeronexus/core/message_editor.py)：
+  - 提取 `_safe_edit_status_message` 為獨立模組
+- 新增 [`zeronexus/engines/attachment_processor.py`](zeronexus/engines/attachment_processor.py)：
+  - 提取 `_ingest_attachments` 為獨立模組
+
+---
+
 ## [2.8.0] - 2026-09-27
 
 ### 🔴 CWA 子系統全面修復（連線逾時、斷路器、請求去重）
