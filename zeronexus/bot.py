@@ -541,10 +541,14 @@ class ZeroNexusBot(commands.Bot):
         # 4. Sync Application Commands to Discord
         try:
             log.info("📡 正在同步斜線指令樹至 Discord 閘道端...")
-            synced = await self.tree.sync()
+            synced = await asyncio.wait_for(self.tree.sync(), timeout=30.0)
             log.info(f"✅ 成功同步 {len(synced)} 個頂層指令結構至 Discord。")
+        except asyncio.TimeoutError:
+            log.warning("⚠️ 開機同步指令樹逾時 (30s)，為確保連線即時性，已轉為登入後背景自動重試同步。")
+            asyncio.create_task(self._background_retry_sync())
         except Exception as e:
-            log.error(f"❌ 同步指令樹至 Discord 失敗：{e}", exc_info=True)
+            log.error(f"❌ 同步指令樹至 Discord 失敗：{e}，將於背景重試。", exc_info=True)
+            asyncio.create_task(self._background_retry_sync())
 
         # 4.1 Global App Command Error Interceptor
         @self.tree.error
@@ -851,10 +855,27 @@ class ZeroNexusBot(commands.Bot):
             except Exception as e:
                 log.warning(f"Failed to broadcast weather to channel {g_setting.weather_channel_id}: {e}")
 
+    async def _background_retry_sync(self) -> None:
+        """開機若遇到網路抖動導致指令同步失敗，在背景安全重試。"""
+        try:
+            await self.wait_until_ready()
+            await asyncio.sleep(5.0)
+            log.info("📡 [背景自癒] 正在重新嘗試同步斜線指令樹至 Discord 閘道端...")
+            synced = await asyncio.wait_for(self.tree.sync(), timeout=45.0)
+            log.info(f"✅ [背景自癒] 成功同步 {len(synced)} 個頂層指令結構至 Discord。")
+        except Exception as e:
+            log.warning(f"[背景自癒] 重試同步指令樹依然受限: {e}")
+
     @tasks.loop(seconds=60.0)
     async def presence_loop(self) -> None:
         """Rotates Discord custom Playing activity without flooding Gateway with dynamic template rendering."""
         try:
+            if self.is_closed() or not self.is_ready():
+                return
+            ws = getattr(self, "ws", None)
+            if not ws or getattr(ws, "is_closing", lambda: False)():
+                return
+
             activities = config.platform.presence_activities
             if not activities:
                 return
@@ -866,8 +887,12 @@ class ZeroNexusBot(commands.Bot):
 
             # 動態即時統計數據樣板渲染
             if "{" in clean_text and "}" in clean_text:
+                import math
                 from zeronexus.core.stats import stats
-                ping_ms = int(self.latency * 1000) if self.latency and str(self.latency) != "nan" else 24
+                ping_ms = 24
+                lat = self.latency
+                if lat is not None and not math.isinf(lat) and not math.isnan(lat):
+                    ping_ms = max(1, min(9999, int(lat * 1000)))
                 guild_count = len(self.guilds)
                 try:
                     clean_text = clean_text.format(
@@ -887,7 +912,11 @@ class ZeroNexusBot(commands.Bot):
             log.info("Presence loop cancelled gracefully.")
             raise
         except Exception as e:
-            log.warning(f"Error updating presence: {e}")
+            err_msg = str(e)
+            if "Cannot write to closing transport" in err_msg or "ConnectionResetError" in err_msg:
+                log.debug(f"Presence update deferred due to websocket reconnection: {e}")
+            else:
+                log.warning(f"Error updating presence: {e}")
 
     @presence_loop.error
     async def on_presence_loop_error(self, error: Exception) -> None:

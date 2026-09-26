@@ -1,7 +1,7 @@
 {
   "platform_name": "ZeroNexus",
   "codename": "ZN",
-  "version": "2.7.7",
+  "version": "2.7.8",
   "owner_id": "1514971711739789352",
   "default_prefix": "zn!",
   "default_locale": "zh-TW",
@@ -51,6 +51,13 @@
     "reconnect_retries": 5,
     "max_queue_size": 500,
     "nodes": [
+      {
+        "name": "YangGu-Private-Node",
+        "host": "lavalink.yanggu0413.dev",
+        "port": 443,
+        "password": "0fdf8b500085bd5534c7b16042af9e7238bfa2b9b470fb03547559d29808d5dd",
+        "secure": true
+      },
       {
         "name": "Serenetia-V4-SSL",
         "host": "lavalinkv4.serenetia.com",

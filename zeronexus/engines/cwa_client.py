@@ -136,7 +136,7 @@ class CWAClient:
                 max_connections=15,
                 keepalive_expiry=15.0,
             )
-            timeout = httpx.Timeout(25.0, connect=10.0, read=20.0)
+            timeout = httpx.Timeout(25.0, connect=15.0, read=20.0)
             self._http_client = httpx.AsyncClient(
                 timeout=timeout,
                 limits=limits,

@@ -2,6 +2,22 @@
 
 ---
 
+## [2.7.8] - 2026-09-26
+
+### 🛡️ 開機指令同步防卡死機制、Presence 狀態除錯與 CWA 網路連線寬限 (Resilience & Stability Hardening)
+- **開機指令樹同步 30s 逾時防護與背景自癒重試**：
+  - 更新 [`zeronexus/bot.py`](zeronexus/bot.py)：
+    - 在 `setup_hook` 的 `self.tree.sync()` 加上 `asyncio.wait_for(timeout=30.0)` 保護，若遭遇 Discord Gateway 限流或網路抖動，不再卡死開機程序 5 分鐘，自動轉由登入就緒後在背景非同步自癒重試 (`_background_retry_sync`)。
+- **Presence 動態輪播崩潰修復與傳輸抑制**：
+  - 更新 [`zeronexus/bot.py`](zeronexus/bot.py)：
+    - 修復開機與斷線重連時 `self.latency` 呈 `inf` 導致 `OverflowError: cannot convert float infinity to integer` 的崩潰問題。
+    - 增加 WebSocket 連線就緒與閉合狀態感知，徹底抑制重連時 `Cannot write to closing transport` 的日誌刷屏。
+- **中央氣象署 CWA 連線握手寬限**：
+  - 更新 [`zeronexus/engines/cwa_client.py`](zeronexus/engines/cwa_client.py)：
+    - 將 TCP/TLS 連線逾時由 10.0s 適度放寬至 15.0s，減少境外託管伺服器連線台灣氣象署因網路延遲造成的逾時警告。
+
+---
+
 ## [2.7.7] - 2026-09-26
 
 ### 🚀 賽揚雙核記憶體頻寬解套、Stop 停止詞防複讀與秒級推論監測 (Dual-Core Cache & Stop Defense)
