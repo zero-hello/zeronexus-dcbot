@@ -100,17 +100,10 @@ class NodePoolManager:
             if not healthy_initial and config.music.auto_fetch_public_nodes:
                 try:
                     scraped = await PublicNodeScraper.discover_public_nodes()
-                    configured_credentials = {
-                        (node["host"].lower(), node["port"]): node["password"]
-                        for node in seed_nodes if node.get("password")
-                    }
-                    candidate_nodes = []
-                    for node in scraped:
-                        endpoint = (node["host"].lower(), node["port"])
-                        if endpoint in configured_credentials:
-                            candidate = dict(node)
-                            candidate["password"] = configured_credentials[endpoint]
-                            candidate_nodes.append(candidate)
+                    candidate_nodes = [
+                        node for node in scraped
+                        if node.get("host") and node.get("password")
+                    ]
                 except Exception as ex:
                     log.warning(f"[NodePoolManager] 公共節點抓取失敗: {ex}")
 
