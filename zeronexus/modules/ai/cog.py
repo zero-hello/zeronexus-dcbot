@@ -262,7 +262,7 @@ class AICog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @ai_group.command(name="對話摘要", description="把近期與 AI 的對話整理成清楚的重點摘要")
+    @app_commands.command(name="對話摘要", description="把近期與 AI 的對話整理成清楚的重點摘要")
     @app_commands.describe(回合數="要整理的最近對話回合數，最多 30 回合")
     @command_guard("ai")
     async def summarize_chat_command(
