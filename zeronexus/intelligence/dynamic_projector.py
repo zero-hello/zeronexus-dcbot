@@ -127,7 +127,24 @@ class DynamicToolProjector:
                 "inspect_channel_overview",
                 "text_word_count",
                 "statistics_summary",
+                "guild_read_channel_messages",
+                "guild_search_channel_messages",
+                "guild_channel_activity_report",
+                "discord_channel_topic_terms",
+                "discord_find_relevant_channel_messages",
+                "guild_channel_daily_activity",
+                "guild_extract_channel_questions",
             ],
+        },
+        "DISCORD_GUILD": {
+            "name": "目前伺服器可見資料",
+            "keywords": ["伺服器名稱", "伺服器資訊", "有哪些頻道", "列出頻道", "成員清單", "身分組", "表情", "貼圖", "伺服器功能"],
+            "core_tools": ["guild_visible_overview", "guild_visible_channels", "guild_visible_members", "guild_visible_roles", "guild_server_features", "guild_visible_channel_categories"],
+        },
+        "AI_WORKFLOW": {
+            "name": "AI 內容與開發工作流",
+            "keywords": ["摘要", "總結", "翻譯", "校對", "改寫", "簡化", "大綱", "faq", "關鍵詞", "標題", "待辦", "會議紀要", "比較方案", "情緒分析", "程式碼審查", "產生測試", "regex", "json schema", "學習卡片", "測驗題", "提示詞審查", "可讀性"],
+            "core_tools": ["ai_summarize_text", "ai_translate_text", "ai_proofread_text", "ai_rewrite_text", "ai_extract_keywords", "ai_review_code", "ai_generate_tests", "ai_classify_sentiment"],
         },
         "SANDBOX_COMPUTE": {
             "name": "沙盒計算與工程",
@@ -172,6 +189,30 @@ class DynamicToolProjector:
         "current_time_query",
     ]
 
+    LIVE_DATA_CUES = (
+        "現在", "目前", "最新", "即時", "查一下", "查詢", "幫我找", "搜尋",
+        "頻道", "聊天記錄", "伺服器資訊", "伺服器名稱", "成員", "身分組",
+        "股票", "股價", "天氣", "氣象", "匯率", "油價", "發票", "地震",
+        "連結", "網址", "網頁", "搜尋網路", "最近訊息", "討論串", "常見問題",
+        "畫一張", "生圖", "生成圖片", "摘要這段", "整理這段", "翻譯這段",
+        "校對", "改寫", "簡化", "關鍵詞", "產生測試", "程式碼審查", "情緒分類",
+        "會議紀要", "待辦", "出題", "學習卡片", "json schema", "regex",
+        "摘要", "總結", "翻譯", "改寫", "文章", "貼文", "文件", "方案比較", "想法",
+        "校對", "改寫", "簡化", "關鍵詞", "產生測試", "程式碼審查", "情緒分類",
+    )
+
+    @classmethod
+    def requires_tool(cls, user_prompt: str) -> bool:
+        """Return whether the request explicitly needs a tool/live or grounded result."""
+        prompt = (user_prompt or "").strip().lower()
+        if not prompt:
+            return False
+        if any(cue in prompt for cue in cls.LIVE_DATA_CUES):
+            return True
+        if re.search(r"(?:https?://|\b\d{1,2}(?:點|:)\d{2}\b|\d+(?:分鐘|小時|天)前)", prompt, re.I):
+            return True
+        return bool(re.search(r"(?:計算|算一下|求值|執行程式|跑一下程式|分析頻道)", prompt))
+
     @classmethod
     def project(
         cls,
@@ -194,8 +235,10 @@ class DynamicToolProjector:
         # 若未傳入 complexity，自動自適應評估
         actual_complexity = complexity or evaluate_complexity(prompt)
 
-        # 核心規範：SIMPLE 等級 0 工具毫秒直出
-        if actual_complexity == ComplexityLevel.SIMPLE:
+        force_tools = cls.requires_tool(prompt)
+        # Keep greetings/chat at zero-tool latency, but honor explicit live-data requests.
+        explicitly_ai_workflow = any(k in prompt.lower() for k in cls.DOMAIN_INTENT_MAP["AI_WORKFLOW"]["keywords"])
+        if actual_complexity == ComplexityLevel.SIMPLE and not force_tools and not explicitly_ai_workflow:
             return ActiveToolSet(
                 tools=[],
                 primary_domain="CONVERSATION",
@@ -206,6 +249,13 @@ class DynamicToolProjector:
         # 1. 判定領域與得分
         lower_prompt = prompt.lower()
         matched_domain = cls._detect_primary_domain(lower_prompt)
+        if force_tools and matched_domain == "GENERAL_PROBE":
+            if any(k in lower_prompt for k in cls.DOMAIN_INTENT_MAP["CHANNEL_ANALYTICS"]["keywords"]):
+                matched_domain = "CHANNEL_ANALYTICS"
+            elif any(k in lower_prompt for k in cls.DOMAIN_INTENT_MAP["AI_WORKFLOW"]["keywords"]):
+                matched_domain = "AI_WORKFLOW"
+            elif any(k in lower_prompt for k in cls.DOMAIN_INTENT_MAP["DISCORD_GUILD"]["keywords"]):
+                matched_domain = "DISCORD_GUILD"
 
         # 2. 計算所有工具對 Prompt 與領域的相關性分數
         all_tools: List[ReadOnlyTool] = reg.list_tools()
@@ -231,11 +281,41 @@ class DynamicToolProjector:
         selected_tool_objs: List[ReadOnlyTool] = []
         selected_names: Set[str] = set()
 
+        if force_tools:
+            explicit_domain = cls.DOMAIN_INTENT_MAP.get(matched_domain)
+            if explicit_domain:
+                for tool_name in explicit_domain["core_tools"]:
+                    tool_obj = reg.get_tool(tool_name)
+                    if tool_obj and not cls._is_isolated_music_tool(tool_obj.name, tool_obj.description):
+                        selected_tool_objs.append(tool_obj)
+                        selected_names.add(tool_obj.name)
+                        if len(selected_tool_objs) >= max_tools:
+                            break
+
         for score, tool in scored_tools:
+            if len(selected_tool_objs) >= max_tools:
+                break
             if tool.name not in selected_names:
                 selected_tool_objs.append(tool)
                 selected_names.add(tool.name)
                 if len(selected_tool_objs) >= max_tools:
+                    break
+
+        if force_tools and len(selected_tool_objs) < min_tools:
+            prompt_terms = set(re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}", lower_prompt))
+            keyword_scored = []
+            for tool in all_tools:
+                if tool.name in selected_names or cls._is_isolated_music_tool(tool.name, tool.description):
+                    continue
+                trigger_keywords = getattr(tool, "metadata", {}).get("trigger_keywords", [])
+                hits = sum(1 for kw in trigger_keywords if kw and (kw.lower() in lower_prompt or kw.lower() in prompt_terms))
+                if hits:
+                    keyword_scored.append((hits, tool))
+            keyword_scored.sort(key=lambda item: (-item[0], item[1].name))
+            for _, tool in keyword_scored:
+                selected_tool_objs.append(tool)
+                selected_names.add(tool.name)
+                if len(selected_tool_objs) >= min_tools:
                     break
 
         # 4. 若符合條件之工具少於 min_tools，自領域核心工具或備用工具中補充
@@ -264,6 +344,17 @@ class DynamicToolProjector:
                                 break
 
         # 截斷確保不超過上限 max_tools
+        if force_tools and not selected_tool_objs:
+            for tool in all_tools:
+                if tool.name in cls.ISOLATED_MUSIC_DENYLIST:
+                    continue
+                if any(cue in prompt.lower() for cue in cls.LIVE_DATA_CUES):
+                    if any(term in (tool.name + " " + tool.description).lower() for term in ("channel", "guild", "search", "weather", "stock", "invoice", "web", "summary", "image")):
+                        selected_tool_objs.append(tool)
+                        selected_names.add(tool.name)
+                        if len(selected_tool_objs) >= min_tools:
+                            break
+
         final_tools = selected_tool_objs[:max_tools]
 
         # 5. 包裝為 ProjectedTool 物件
@@ -299,6 +390,22 @@ class DynamicToolProjector:
                 if kw in lower_prompt:
                     score += 10
             domain_scores[domain_key] = score
+
+        # Prefer specific capability domains over weak generic keyword matches.
+        explicit_domain_cues = {
+            "CHANNEL_ANALYTICS": ("頻道", "聊天記錄", "歷史訊息", "頻道內容", "討論串", "發言統計"),
+            "AI_WORKFLOW": ("摘要", "總結", "翻譯", "校對", "改寫", "關鍵詞", "faq", "待辦", "程式碼審查"),
+            "DISCORD_GUILD": ("伺服器名稱", "有哪些頻道", "列出頻道", "身分組清單", "伺服器公開資訊"),
+        }
+        for domain_key in ("CHANNEL_ANALYTICS", "AI_WORKFLOW", "DISCORD_GUILD"):
+            cues = explicit_domain_cues[domain_key]
+            guild_query = any(cue in lower_prompt for cue in ("伺服器名稱", "有哪些頻道", "列出頻道", "身分組清單", "伺服器公開資訊"))
+            if domain_key == "CHANNEL_ANALYTICS" and guild_query:
+                continue
+            if domain_key == "DISCORD_GUILD" and not guild_query:
+                continue
+            if any(cue in lower_prompt for cue in cues):
+                return domain_key
 
         best_domain = max(domain_scores, key=lambda k: domain_scores[k])
         if domain_scores[best_domain] > 0:
@@ -379,4 +486,3 @@ __all__ = [
     "project_active_tools",
     "dynamic_projector",
 ]
-

@@ -84,3 +84,20 @@ async def test_gemini_thinking_budget_control():
         "includeThoughts": True,
         "thinkingBudget": 4096,
     }
+
+
+def test_ai_slash_group_and_new_summary_command_register() -> None:
+    from zeronexus.modules.ai.cog import AICog
+
+    assert len(AICog.ai_group.commands) <= 25
+    top_level = {command.name for command in AICog.__cog_app_commands__}
+    assert "對話摘要" in top_level
+
+
+def test_tool_inventory_has_200_unique_executable_tools() -> None:
+    from zeronexus.agent.tools import agent_tools
+
+    registered = agent_tools.list_tools()
+    assert len(registered) >= 200
+    assert len({tool.name for tool in registered}) == len(registered)
+    assert all(callable(tool.handler) and tool.parameters_schema.get("type") == "object" for tool in registered)

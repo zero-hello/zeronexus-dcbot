@@ -123,12 +123,51 @@ class ChannelInspectorEngine:
     MAX_FETCH_LIMIT: int = 300
     DEFAULT_FETCH_LIMIT: int = 100
 
+    @staticmethod
+    def authorize_channel_access(
+        channel: Any,
+        requester: Optional[Any],
+        expected_guild: Optional[Any] = None,
+    ) -> Optional[str]:
+        """Fail-closed authorization for current-guild, requester-visible channels."""
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return "只允許讀取機器人所在伺服器的文字頻道。"
+        if expected_guild is not None and getattr(guild, "id", None) != getattr(expected_guild, "id", None):
+            return "為遵守隱私規則，只能讀取目前互動所屬伺服器的頻道。"
+        if requester is None:
+            return "需要目前伺服器與提問者身分；跨伺服器查詢一律不允許。"
+        if not hasattr(channel, "permissions_for"):
+            return "無法安全驗證目標頻道權限，已拒絕讀取。"
+
+        bot_member = getattr(guild, "me", None)
+        if bot_member is None:
+            return "無法確認機器人在此伺服器的權限，已拒絕讀取。"
+        bot_perms = channel.permissions_for(bot_member)
+        if not getattr(bot_perms, "view_channel", False) or not getattr(bot_perms, "read_message_history", False):
+            return f"機器人缺少在頻道 #{getattr(channel, 'name', '未知')} 檢視頻道或讀取歷史訊息的權限。"
+
+        requester_member = requester
+        if getattr(requester_member, "guild", None) is None:
+            requester_id = getattr(requester, "id", None)
+            if requester_id is None or not hasattr(guild, "get_member"):
+                return "無法確認提出請求者在此伺服器的身分，已拒絕讀取。"
+            requester_member = guild.get_member(requester_id)
+        if requester_member is None or getattr(getattr(requester_member, "guild", None), "id", None) != getattr(guild, "id", None):
+            return "只能分析目前互動伺服器中提問者有權查看的頻道。"
+        requester_perms = channel.permissions_for(requester_member)
+        if not getattr(requester_perms, "view_channel", False):
+            return "您沒有查看此頻道的權限，無法讀取或分析其中內容。"
+        return None
+
     async def fetch_channel_messages(
         self,
         channel: Any,
         after: Optional[datetime] = None,
         limit: int = DEFAULT_FETCH_LIMIT,
         bot_user_id: Optional[int] = None,
+        requester: Optional[Any] = None,
+        expected_guild: Optional[Any] = None,
     ) -> Tuple[List[Any], Optional[str]]:
         """非同步讀取頻道的歷史訊息，並進行權限檢查與邊界保護。
 
@@ -138,14 +177,9 @@ class ChannelInspectorEngine:
         if not hasattr(channel, "history"):
             return [], "目標對象不支援歷史訊息讀取（非文字頻道或討論串）。"
 
-        # 檢查權限
-        guild = getattr(channel, "guild", None)
-        if guild and hasattr(channel, "permissions_for"):
-            me = getattr(guild, "me", None)
-            if me:
-                perms = channel.permissions_for(me)
-                if not getattr(perms, "read_messages", True) or not getattr(perms, "read_message_history", True):
-                    return [], f"機器人缺少在頻道 #{getattr(channel, 'name', '未知')} 讀取歷史訊息的權限 (Read Messages / Read Message History)。"
+        access_error = self.authorize_channel_access(channel, requester, expected_guild)
+        if access_error:
+            return [], access_error
 
         fetch_limit = min(max(int(limit), 1), self.MAX_FETCH_LIMIT)
 

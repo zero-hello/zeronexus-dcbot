@@ -133,6 +133,10 @@ class AgentEngine:
                 params = dict(step.parameters)
                 if "guild" not in params and guild:
                     params["guild"] = guild
+                if "channel" not in params and channel:
+                    params["channel"] = channel
+                if "user" not in params and user:
+                    params["user"] = user
                 res = await tool.execute(**params)
                 step.result = res
 

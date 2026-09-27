@@ -7,11 +7,11 @@
 [![Discord.py 2.5+](https://img.shields.io/badge/Discord.py-2.5%2B-5865F2?logo=discord&logoColor=white)](https://discordpy.readthedocs.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Async%20Event--Driven-blueviolet)](#-系統架構)
 [![AI Gateway](https://img.shields.io/badge/AI%20Gateway-Gemini%20%7C%20DeepSeek%20%7C%20Qwen-FF6F00)](#-三階模型智慧閘道)
-[![Version](https://img.shields.io/badge/version-2.8.15-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.9.0-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Terms of Service](https://img.shields.io/badge/Terms%20of%20Service-TOS-blue)](TERMS_OF_SERVICE.md)
 [![Privacy Policy](https://img.shields.io/badge/Privacy%20Policy-Policy-green)](PRIVACY_POLICY.md)
-[![Changelog](https://img.shields.io/badge/Changelog-v2.8.15-orange)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v2.9.0-orange)](CHANGELOG.md)
 
 ---
 
@@ -107,12 +107,14 @@ ZeroNexus/
 │   └── bot.py              # Discord 主客戶端、事件管線與即時動態進度回報卡片
 ├── docs/                   # 完整架構白皮書、配置與指令全字典
 ├── scripts/
-│   ├── setup_brain_models.py # 本地離線神經感官矩陣自動部署工具
-│   ├── optimize_project.py   # 專案空間深度瘦身最佳化工具
-│   └── generate_personas.py  # 深度人格 Prompt 編譯生成器
+│   ├── ai/                 # AI 互動測試工具
+│   ├── brain/              # 大腦測試與模型工具
+│   ├── intelligence/       # Zero Intelligence 驗證工具
+│   ├── maintenance/        # 專案維護工具
+│   └── prompts/            # Prompt 生成工具
 ├── tests/                  # 大腦生理神經與核心系統單元測試集
 ├── update.py               # 安全單向自動更新器（Pull-Only）
-├── version.txt             # 當前發布版本標記 (v2.8.15)
+├── version.txt             # 當前發布版本標記 (v2.9.0)
 ├── main.py                 # 核心主程式入口點
 └── run.py                  # 統一快捷啟動入口點
 ```

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+import asyncio
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from zeronexus.agent.tool_catalog import get_all_tool_specs
@@ -27,6 +28,7 @@ class ReadOnlyTool:
         handler: Callable[..., Coroutine[Any, Any, Dict[str, Any]]],
         parameters_schema: Optional[Dict[str, Any]] = None,
         category: str = "一般工具",
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.name = name
         self.description = description
@@ -34,19 +36,45 @@ class ReadOnlyTool:
         self.handler = handler
         self.parameters_schema = parameters_schema or {"type": "object", "properties": {}}
         self.category = category
+        self.metadata = metadata or {}
+        self._guild_lock = asyncio.Lock() if self.metadata.get("scope") == "current_guild_visible_channels_only" else None
 
     async def execute(self, **kwargs: Any) -> Dict[str, Any]:
         t0 = time.perf_counter()
         clean_args = {
             k: str(v) if not isinstance(v, (int, float, bool, list, dict, type(None))) else v
             for k, v in kwargs.items()
-            if k != "guild"
+            if k not in {"guild", "channel", "user", "bot"}
         }
         args_repr = json.dumps(clean_args, ensure_ascii=False, default=str)
         if len(args_repr) > 100:
             args_repr = args_repr[:97] + "..."
         try:
-            res = await self.handler(**kwargs)
+            if self.category.startswith("Discord"):
+                guild = kwargs.get("guild")
+                user = kwargs.get("user")
+                bot = kwargs.get("bot")
+                if guild is None or user is None or bot is None:
+                    return {"error": "Discord 工具需要目前互動的伺服器、提問者與 Bot 上下文。"}
+                bot_guild = bot.get_guild(getattr(guild, "id", 0)) if hasattr(bot, "get_guild") else None
+                if bot_guild is None or getattr(bot_guild, "id", None) != getattr(guild, "id", None):
+                    return {"error": "只允許讀取目前 Bot 所在的互動伺服器；跨伺服器查詢已拒絕。"}
+                user_guild = getattr(user, "guild", None)
+                if user_guild is None and hasattr(guild, "get_member"):
+                    user_guild = guild.get_member(getattr(user, "id", 0))
+                if user_guild is None or getattr(user_guild, "guild", guild).id != guild.id:
+                    return {"error": "無法確認提問者屬於目前伺服器，已拒絕讀取。"}
+                channel = kwargs.get("channel")
+                guild_id = getattr(guild, "id", None)
+                if channel is not None and getattr(getattr(channel, "guild", None), "id", None) != guild_id:
+                    return {"error": "只允許使用目前互動伺服器的頻道上下文。"}
+                if self._guild_lock:
+                    async with self._guild_lock:
+                        res = await self.handler(**kwargs)
+                else:
+                    res = await self.handler(**kwargs)
+            else:
+                res = await self.handler(**kwargs)
             latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
             log.info(
                 f"[🛠️ 工具調用 / TOOL CALL] 執行: {self.name} | 參數: {args_repr} | 耗時: {latency_ms}ms | 狀態: [成功]"
@@ -120,6 +148,24 @@ class AgentToolRegistry:
                 lines.append(f"- **{t.name}**: {t.description} (參數: {t.parameters_desc})")
         return "\n".join(lines)
 
+    def get_capability_memory(self) -> Dict[str, Any]:
+        """Machine-readable, runtime-truth capability memory used by Zero/projector."""
+        return {
+            "tool_count": self.count(),
+            "categories": {
+                category: [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "trigger_keywords": list(tool.metadata.get("trigger_keywords", [])),
+                        "scope": tool.metadata.get("scope", "read_only_or_local_task"),
+                    }
+                    for tool in self.list_by_category(category)
+                ]
+                for category in self.get_categories()
+            },
+        }
+
     def to_openai_tools(self) -> List[Dict[str, Any]]:
         return [t.to_openai_tool_schema() for t in self._tools.values()]
 
@@ -144,6 +190,7 @@ class AgentToolRegistry:
                 parameters_desc=s["parameters_desc"],
                 parameters_schema=s.get("parameters_schema"),
                 handler=s["handler"],
+                metadata={k: v for k, v in s.items() if k not in {"name", "description", "parameters_desc", "parameters_schema", "handler", "category"}},
             )
             self.register(tool)
 

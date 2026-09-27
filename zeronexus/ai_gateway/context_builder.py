@@ -933,7 +933,7 @@ class ContextBuilder:
         else:
             try:
                 from zeronexus.intelligence.capability_registry import capability_registry
-                capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
+                capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt(user_prompt=user_prompt)
                 messages.append({
                     "role": "system",
                     "content": capabilities_prompt,

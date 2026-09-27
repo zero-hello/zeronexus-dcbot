@@ -179,6 +179,28 @@ class GeminiAdapter(BaseAIAdapter):
                 elif "name" in t:
                     formatted_declarations.append(t)
             if formatted_declarations:
+                # Gemini accepts a restricted JSON Schema dialect. Clean unsupported
+                # keywords recursively to prevent an entire tool set being rejected.
+                supported = {"type", "description", "properties", "required", "items", "enum", "format", "nullable", "minimum", "maximum", "minItems", "maxItems", "minLength", "maxLength", "pattern"}
+
+                def _clean_schema(node: Any) -> Any:
+                    if isinstance(node, list):
+                        return [_clean_schema(item) for item in node]
+                    if not isinstance(node, dict):
+                        return node
+                    cleaned: Dict[str, Any] = {}
+                    for key, value in node.items():
+                        if key not in supported:
+                            continue
+                        if key == "properties" and isinstance(value, dict):
+                            cleaned[key] = {prop: _clean_schema(schema) for prop, schema in value.items()}
+                        else:
+                            cleaned[key] = _clean_schema(value)
+                    return cleaned
+
+                for declaration in formatted_declarations:
+                    if isinstance(declaration, dict) and isinstance(declaration.get("parameters"), dict):
+                        declaration["parameters"] = _clean_schema(declaration["parameters"])
                 payload["tools"] = [{"function_declarations": formatted_declarations}]
 
         primary_model = model or "gemini-3.1-flash-lite"

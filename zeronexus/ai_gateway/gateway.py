@@ -118,6 +118,41 @@ class AIGateway:
         ):
             dispatch_kwargs.pop(explicit_key, None)
 
+        # Resolve the active tool set once per request, then share its schemas across
+        # tool-capable providers. Short explicit live-data requests must still project tools.
+        projected_tools: List[Any] = []
+        tool_prompt = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                tool_prompt = str(msg.get("content", ""))
+                break
+        if allow_tools:
+            from zeronexus.intelligence.dynamic_projector import DynamicToolProjector
+            from zeronexus.agent.tools import agent_tools
+
+            force_tool_intent = DynamicToolProjector.requires_tool(tool_prompt)
+            if tools is not None:
+                provided_names = [
+                    item.get("function", {}).get("name", "")
+                    if isinstance(item, dict) and isinstance(item.get("function"), dict)
+                    else item.get("name", "") if isinstance(item, dict) else ""
+                    for item in tools
+                ]
+                projected_tools = [agent_tools.get_tool(name) for name in provided_names if agent_tools.get_tool(name)]
+            else:
+                projected = DynamicToolProjector.project(
+                    user_prompt=tool_prompt,
+                    min_tools=3 if force_tool_intent else 0,
+                    max_tools=8,
+                )
+                projected_tools = [
+                    agent_tools.get_tool(item.name)
+                    for item in projected.tools
+                    if agent_tools.get_tool(item.name) is not None
+                ]
+            if force_tool_intent and not projected_tools:
+                raise RuntimeError("已辨識為需要即時工具的問題，但沒有可用且符合權限的工具。")
+
         # Determine primary provider based on override_model or images
         primary: Optional[str] = None
         if clean_override:
@@ -202,6 +237,36 @@ class AIGateway:
             if not fallback_chain:
                 fallback_chain = [p for p in configured_fallbacks if p in self.key_pools]
 
+        tool_capable_providers = {"gemini", "openrouter"}
+        if allow_tools and projected_tools:
+            # Function calling is currently implemented for Gemini and OpenRouter.
+            # Route tool-requiring prompts to a capable provider rather than silently
+            # asking a text-only adapter to hallucinate live results.
+            if primary and primary not in tool_capable_providers:
+                capable = [p for p in ("gemini", "openrouter") if self.key_pools[p].has_active_keys]
+                if capable:
+                    log.info("AI tool intent routed from %s to tool-capable provider %s", primary, capable[0])
+                    primary = capable[0]
+                    clean_override = None
+                elif force_tool_intent:
+                    raise RuntimeError("此問題需要即時工具，但目前沒有可用的 Gemini/OpenRouter Function Calling 金鑰。")
+                else:
+                    projected_tools = []
+            if not primary and fallback_chain:
+                capable = [p for p in fallback_chain if p in tool_capable_providers]
+                if capable:
+                    fallback_chain = capable + [p for p in fallback_chain if p not in capable]
+            if force_tool_intent:
+                fallback_chain = [p for p in fallback_chain if p in tool_capable_providers]
+                if not fallback_chain:
+                    raise RuntimeError("此問題需要即時工具，但沒有支援 Function Calling 且可用的 AI 提供者。")
+            elif projected_tools:
+                # Do not silently fall back to text-only providers after a tool-capable
+                # call fails; otherwise tool schemas disappear mid-request.
+                fallback_chain = [p for p in fallback_chain if p in tool_capable_providers]
+        elif tools is not None and allow_tools:
+            projected_tools = []
+
         fallback_notice: Optional[str] = None
         attempted_providers: List[str] = []
 
@@ -282,30 +347,14 @@ class AIGateway:
 
             # Prepare provider-specific tool schemas
             provider_tools = None
-            if allow_tools:
+            if allow_tools and provider_name in tool_capable_providers:
                 if tools is not None:
                     provider_tools = tools
                 else:
-                    user_prompt = ""
-                    for m in reversed(messages):
-                        if m.get("role") == "user":
-                            user_prompt = str(m.get("content", ""))
-                            break
-
-                    from zeronexus.intelligence.dynamic_projector import dynamic_projector
-                    from zeronexus.agent.tools import agent_tools
-
-                    projected_set = dynamic_projector.project(user_prompt=user_prompt)
-                    tools_list = []
-                    for pt in projected_set.tools:
-                        t = agent_tools.get_tool(pt.name)
-                        if t:
-                            if provider_name == "gemini":
-                                tools_list.append(t.to_gemini_tool_schema())
-                            elif provider_name == "openrouter":
-                                tools_list.append(t.to_openai_tool_schema())
-                    if tools_list:
-                        provider_tools = tools_list
+                    provider_tools = [
+                        t.to_gemini_tool_schema() if provider_name == "gemini" else t.to_openai_tool_schema()
+                        for t in projected_tools
+                    ] or None
 
             adapter = self.adapters[provider_name]
 

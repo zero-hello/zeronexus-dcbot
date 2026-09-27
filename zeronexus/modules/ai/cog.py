@@ -630,6 +630,16 @@ class AICog(commands.Cog):
             active_persona_key=persona_key,
         )
 
+        if tool_results:
+            tool_context = "\n".join(f"[{name}]: {value}" for name, value in tool_results.items())
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【工具與確定性結果】工具回傳是本輪實際執行結果。只可依照結果回答；"
+                    "若包含錯誤或權限不足，要如實說明，不可聲稱已成功。\n" + tool_context[:10000]
+                ),
+            })
+
         model_reservation = None
         effective_model = user_model or (getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if images else getattr(config.ai, "normal_text_model", "gemini-3.1-flash-lite"))
         m_allowed, model_reservation, m_used, m_limit = await quota_service.reserve_model_quota(
@@ -656,6 +666,18 @@ class AICog(commands.Cog):
             )
             return
 
+        async def slash_tool_executor(tool_name: str, tool_args: Dict[str, Any]) -> Any:
+            from zeronexus.agent.tools import execute_tool
+
+            return await execute_tool(
+                tool_name,
+                tool_args,
+                channel=interaction.channel,
+                guild=interaction.guild,
+                user=interaction.user,
+                bot=self.bot,
+            )
+
         try:
             ai_res, fallback_notice = await ai_gateway.generate_response(
                 system_instruction=system_instruction,
@@ -663,6 +685,9 @@ class AICog(commands.Cog):
                 override_model=user_model,
                 images=images,
                 disable_safety=False,
+                allow_tools=True,
+                tool_executor=slash_tool_executor,
+                max_tool_rounds=2,
             )
 
             # Auto persist memories

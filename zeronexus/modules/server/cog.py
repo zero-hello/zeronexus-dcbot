@@ -876,7 +876,7 @@ class ServerCog(commands.Cog):
         數量: Optional[int] = 80,
         目標頻道: Optional[discord.TextChannel] = None,
     ) -> None:
-        await InteractionResponder.safe_defer(interaction, ephemeral=False)
+        await InteractionResponder.safe_defer(interaction, ephemeral=True)
         target_ch = 目標頻道 or interaction.channel
         ch_name = getattr(target_ch, "name", "未知頻道")
 
@@ -894,6 +894,8 @@ class ServerCog(commands.Cog):
             after=after_dt,
             limit=fetch_limit,
             bot_user_id=bot_user_id,
+            requester=interaction.user,
+            expected_guild=interaction.guild,
         )
         if err:
             card = ZNCard(
@@ -945,7 +947,7 @@ class ServerCog(commands.Cog):
         )
         card.add_section("⏱️ 檢索範圍", f"`{filter_label}`（共讀取 {len(msgs)} 則訊息）", inline=True)
         card.add_section("💬 目標頻道", f"<#{getattr(target_ch, 'id', 0)}>", inline=True)
-        await InteractionResponder.safe_send(interaction, card=card)
+        await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
     @channel_group.command(name="統計", description="統計頻道成員發言之王排行榜、字數比例與活躍概況")
     @app_commands.describe(
@@ -959,7 +961,7 @@ class ServerCog(commands.Cog):
         時間區間: Optional[str] = None,
         目標頻道: Optional[discord.TextChannel] = None,
     ) -> None:
-        await InteractionResponder.safe_defer(interaction, ephemeral=False)
+        await InteractionResponder.safe_defer(interaction, ephemeral=True)
         target_ch = 目標頻道 or interaction.channel
         ch_name = getattr(target_ch, "name", "未知頻道")
 
@@ -974,6 +976,8 @@ class ServerCog(commands.Cog):
             after=after_dt,
             limit=150,
             bot_user_id=bot_user_id,
+            requester=interaction.user,
+            expected_guild=interaction.guild,
         )
         if err:
             card = ZNCard(
@@ -1012,7 +1016,7 @@ class ServerCog(commands.Cog):
         if stats.get("attachment_count", 0) > 0:
             card.add_section("📷 圖片與附件分享", f"共上傳 `{stats['attachment_count']}` 個多媒體檔案", inline=True)
 
-        await InteractionResponder.safe_send(interaction, card=card)
+        await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
     @channel_group.command(name="總覽", description="檢視頻道全方位情資、主題說明與活躍討論串")
     @app_commands.describe(目標頻道="目標頻道 (預設當前頻道)")

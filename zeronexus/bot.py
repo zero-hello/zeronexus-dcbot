@@ -2669,6 +2669,7 @@ class ZeroNexusBot(commands.Bot):
                     t_args,
                     channel=message.channel,
                     guild=message.guild,
+                    user=message.author,
                     bot=self,
                 )
 

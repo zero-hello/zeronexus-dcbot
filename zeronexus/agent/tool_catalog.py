@@ -105,13 +105,21 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
             return {"error": "未提供伺服器上下文"}
         me = getattr(guild, "me", None)
         perms = getattr(me, "guild_permissions", None) if me else None
+        requester = kwargs.get("user")
+        if requester is None or not getattr(guild, "me", None):
+            return {"error": "伺服器診斷需要目前互動的提問者與 Bot 伺服器上下文。"}
+        visible_channels = [
+            channel for channel in getattr(guild, "text_channels", [])
+            if channel.permissions_for(requester).view_channel and channel.permissions_for(me).view_channel
+        ]
+        visible_member_ids = {requester.id}
+        for channel in visible_channels:
+            visible_member_ids.update(member.id for member in getattr(channel, "members", []))
         return {
             "guild_id": getattr(guild, "id", 0),
             "guild_name": getattr(guild, "name", "未知伺服器"),
-            "member_count": getattr(guild, "member_count", 0),
-            "text_channels_count": len(getattr(guild, "text_channels", [])),
-            "voice_channels_count": len(getattr(guild, "voice_channels", [])),
-            "roles_count": len(getattr(guild, "roles", [])),
+            "cached_visible_member_count": len(visible_member_ids),
+            "visible_text_channels_count": len(visible_channels),
             "bot_permissions": {
                 "administrator": getattr(perms, "administrator", False) if perms else False,
                 "manage_guild": getattr(perms, "manage_guild", False) if perms else False,
@@ -3005,16 +3013,33 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         style: Optional[str] = None,
         aspect_ratio: str = "1:1",
         model: str = "flux",
+        user: Optional[Any] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        if user is None:
+            return {"success": False, "error": "生圖工具需要已驗證的 Discord 使用者上下文。"}
+        from zeronexus.security.ratelimit import quota_service
+        allowed, reservation, used, limit = await quota_service.reserve_image_quota(user.id)
+        if not allowed:
+            return {"success": False, "error": f"每日生圖額度已用完 ({used}/{limit})。"}
         from zeronexus.engines.image_gen import image_gen_engine
-        res = await image_gen_engine.generate_image(
-            prompt=prompt,
-            style=style,
-            aspect_ratio=aspect_ratio,
-            model=model,
-            verify_download=False,
-        )
+        try:
+            res = await image_gen_engine.generate_image(
+                prompt=prompt,
+                style=style,
+                aspect_ratio=aspect_ratio,
+                model=model,
+                verify_download=True,
+            )
+            if res.success:
+                if reservation:
+                    await quota_service.commit_image_quota(reservation)
+            elif reservation:
+                await quota_service.release_image_quota(reservation)
+        except Exception:
+            if reservation:
+                await quota_service.release_image_quota(reservation)
+            raise
         return {
             "success": res.success,
             "image_url": res.image_url,
@@ -3978,18 +4003,26 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         limit: int = 100,
         channel: Optional[Any] = None,
         guild: Optional[Any] = None,
+        user: Optional[Any] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         from zeronexus.engines.channel_inspector import channel_inspector, parse_channel_time_filter
         if not channel:
             return {"error": "無法取得當前頻道上下文，請在 Discord 文字頻道內調用。"}
+        if user is None:
+            return {"error": "無法確認提問者身分，拒絕讀取頻道內容。"}
+        access_error = channel_inspector.authorize_channel_access(channel, user, guild)
+        if access_error:
+            return {"error": access_error}
 
         after_dt = None
         filter_desc = "最近訊息"
         if start_time and str(start_time).strip():
             after_dt, filter_desc = parse_channel_time_filter(str(start_time))
 
-        msgs, err = await channel_inspector.fetch_channel_messages(channel=channel, after=after_dt, limit=limit)
+        msgs, err = await channel_inspector.fetch_channel_messages(
+            channel=channel, after=after_dt, limit=limit, requester=user, expected_guild=guild
+        )
         if err:
             return {"error": err, "channel_name": getattr(channel, "name", "未知")}
 
@@ -4028,17 +4061,25 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         limit: int = 150,
         channel: Optional[Any] = None,
         guild: Optional[Any] = None,
+        user: Optional[Any] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         from zeronexus.engines.channel_inspector import channel_inspector, parse_channel_time_filter
         if not channel:
             return {"error": "無法取得當前頻道上下文，請在 Discord 文字頻道內調用。"}
+        if user is None:
+            return {"error": "無法確認提問者身分，拒絕分析頻道內容。"}
+        access_error = channel_inspector.authorize_channel_access(channel, user, guild)
+        if access_error:
+            return {"error": access_error}
 
         after_dt = None
         if time_window and str(time_window).strip():
             after_dt, _ = parse_channel_time_filter(str(time_window))
 
-        msgs, err = await channel_inspector.fetch_channel_messages(channel=channel, after=after_dt, limit=limit)
+        msgs, err = await channel_inspector.fetch_channel_messages(
+            channel=channel, after=after_dt, limit=limit, requester=user, expected_guild=guild
+        )
         if err:
             return {"error": err, "channel_name": getattr(channel, "name", "未知")}
 
@@ -4069,11 +4110,17 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
     async def h_inspect_channel_overview(
         channel: Optional[Any] = None,
         guild: Optional[Any] = None,
+        user: Optional[Any] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         from zeronexus.engines.channel_inspector import channel_inspector
         if not channel:
             return {"error": "無法取得當前頻道上下文，請在 Discord 文字頻道內調用。"}
+        if user is None:
+            return {"error": "無法確認提問者身分，拒絕讀取頻道資料。"}
+        access_error = channel_inspector.authorize_channel_access(channel, user, guild)
+        if access_error:
+            return {"error": access_error}
 
         return channel_inspector.get_channel_overview_details(channel)
 
@@ -4181,5 +4228,17 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         "handler": h_search_master_features,
     })
 
-    return specs
+    # Additional concrete AI tools are maintained separately to keep this catalog
+    # navigable while sharing the exact same execution/schema/permission pipeline.
+    from zeronexus.agent.discord_read_tools import get_discord_read_tool_specs
+    specs.extend(get_discord_read_tool_specs())
+    from zeronexus.agent.ai_workflow_tools import get_ai_workflow_tool_specs
+    specs.extend(get_ai_workflow_tool_specs())
 
+    for spec in specs:
+        spec.setdefault("trigger_keywords", [])
+        if not spec["trigger_keywords"]:
+            tokens = re.findall(r"[a-zA-Z]{3,}|[\u4e00-\u9fff]{2,}", spec["name"] + " " + spec["description"])
+            spec["trigger_keywords"] = list(dict.fromkeys(tokens[:12]))
+
+    return specs
