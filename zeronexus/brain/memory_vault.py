@@ -15,6 +15,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
@@ -60,33 +61,35 @@ class EncryptedMemoryVault:
         self._recall_history: dict[int, dict[str, float]] = {}
 
     def _init_encryption_key(self, secret_key: Optional[str]) -> None:
-        """從環境變數或本地種子衍生出 256-bit AES 金鑰
+        """從明確提供的種子或本地隨機種子衍生 256-bit AES 金鑰。
         
         安全性強化：
-        - 不再使用 DISCORD_BOT_TOKEN 作為加密種子（避免金鑰洩漏風險）
-        - 移除非安全的 hardcoded fallback 種子
-        - 若未設定 BRAIN_MASTER_KEY，自動生成安全隨機金鑰並顯示警告
+        - 不從環境變數或 Discord Token 讀取加密金鑰
+        - 隨機金鑰只保存在資料庫旁的私有檔案中
         """
         import secrets
-        raw_seed = secret_key or os.getenv("BRAIN_MASTER_KEY")
+        raw_seed = secret_key
         if not raw_seed:
-            # 自動生成安全隨機金鑰，避免啟動阻塞
-            raw_seed = secrets.token_hex(32)
-            # 持久化保存生成的金鑰，確保下次啟動時使用相同金鑰
             key_file = self.db_path.parent / ".brain_key"
             try:
+                self.db_path.parent.mkdir(parents=True, exist_ok=True)
                 if key_file.exists():
                     raw_seed = key_file.read_text(encoding="utf-8").strip()
+                    if not raw_seed:
+                        raise ValueError("本地記憶加密金鑰檔是空的")
                 else:
-                    key_file.write_text(raw_seed, encoding="utf-8")
-                    os.chmod(key_file, 0o600)  # 僅限擁有者讀寫
-            except Exception:
-                pass  # 若無法寫入檔案，使用臨時金鑰（僅本次啟動有效）
-            import logging
-            logging.getLogger("ZeroNexus.Brain.MemoryVault").warning(
-                "未設定 BRAIN_MASTER_KEY 環境變數，已自動生成安全隨機金鑰。"
-                "為確保心智日記加密金鑰持久化，建議於 .env 設定 BRAIN_MASTER_KEY。"
-            )
+                    raw_seed = secrets.token_hex(32)
+                    fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as key_stream:
+                        key_stream.write(raw_seed)
+            except FileExistsError:
+                raw_seed = key_file.read_text(encoding="utf-8").strip()
+                if not raw_seed:
+                    raise ValueError("本地記憶加密金鑰檔是空的")
+            except OSError as exc:
+                raise RuntimeError("無法安全建立或讀取本地記憶加密金鑰檔") from exc
+            if os.name == "posix":
+                os.chmod(key_file, 0o600)
         # 使用 SHA-256 生成固定 32 位元組 (256-bit) 金鑰
         self.aes_key = hashlib.sha256(raw_seed.encode("utf-8")).digest()
 
@@ -223,22 +226,18 @@ class EncryptedMemoryVault:
     def save_conscious_diary(self, date_str: str, diary_content: str) -> bool:
         """加密儲存當天的心智反思日記 (AES-256-GCM)"""
         try:
+            date.fromisoformat(date_str)
             self.diary_dir.mkdir(parents=True, exist_ok=True)
             out_file = self.diary_dir / f"{date_str}.enc"
 
             data_bytes = diary_content.encode("utf-8")
 
-            if HAS_CRYPTOGRAPHY:
-                aesgcm = AESGCM(self.aes_key)
-                nonce = os.urandom(12)
-                ciphertext = aesgcm.encrypt(nonce, data_bytes, None)
-                payload = nonce + ciphertext
-            else:
-                # 降級備用：XOR 混淆與雜湊簽名防護
-                payload = bytearray(b"XOR_FALLBACK:")
-                key_len = len(self.aes_key)
-                for i, b in enumerate(data_bytes):
-                    payload.append(b ^ self.aes_key[i % key_len])
+            if not HAS_CRYPTOGRAPHY:
+                raise RuntimeError("cryptography 未安裝，拒絕以不安全方式寫入日記")
+            aesgcm = AESGCM(self.aes_key)
+            nonce = os.urandom(12)
+            ciphertext = aesgcm.encrypt(nonce, data_bytes, None)
+            payload = nonce + ciphertext
 
             out_file.write_bytes(payload)
             log.info(f"成功將心智日記以 AES 加密儲存至 {out_file.name}")
@@ -250,24 +249,21 @@ class EncryptedMemoryVault:
     def read_conscious_diary(self, date_str: str) -> Optional[str]:
         """解密讀取特定日期的心智反思日記"""
         try:
+            date.fromisoformat(date_str)
             target = self.diary_dir / f"{date_str}.enc"
             if not target.exists():
                 return None
 
             raw_bytes = target.read_bytes()
-            if HAS_CRYPTOGRAPHY and not raw_bytes.startswith(b"XOR_FALLBACK:"):
-                nonce = raw_bytes[:12]
-                ciphertext = raw_bytes[12:]
-                aesgcm = AESGCM(self.aes_key)
-                plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-                return plaintext.decode("utf-8")
-            elif raw_bytes.startswith(b"XOR_FALLBACK:"):
-                body = raw_bytes[len(b"XOR_FALLBACK:") :]
-                out = bytearray()
-                key_len = len(self.aes_key)
-                for i, b in enumerate(body):
-                    out.append(b ^ self.aes_key[i % key_len])
-                return out.decode("utf-8")
+            if not HAS_CRYPTOGRAPHY:
+                raise RuntimeError("cryptography 未安裝，無法安全解密日記")
+            if len(raw_bytes) < 28:
+                raise ValueError("日記資料長度無效")
+            nonce = raw_bytes[:12]
+            ciphertext = raw_bytes[12:]
+            aesgcm = AESGCM(self.aes_key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            return plaintext.decode("utf-8")
         except Exception as e:
             log.error(f"解密讀取心智日記失敗: {e}")
         return None

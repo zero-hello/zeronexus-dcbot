@@ -327,48 +327,13 @@ class DeveloperCog(commands.Cog, name="開發者專用指令集"):
 
     @commands.command(name="eval", aliases=["ev", "py"])
     async def cmd_eval(self, ctx: commands.Context, *, code: str) -> None:
-        """非同步即時執行任意 Python 表達式或腳本塊，內建環境變數注入。
-        
-        ⚠️ 安全警告：此指令僅限開發者使用，且已加入以下保護機制：
-        - 禁止存取敏感環境變數
-        - 禁止執行系統指令（subprocess, os.system）
-        - 禁止檔案 I/O 操作
-        - 執行逾時限制 30 秒
-        """
+        """開發者 Python 主控台。僅依賴上層開發者權限檢查，視為完整主機權限。"""
         # 清理 code markdown
         clean_code = code.strip()
         if clean_code.startswith("```"):
             clean_code = re.sub(r"^```(?:py|python)?\n", "", clean_code)
             clean_code = re.sub(r"\n```$", "", clean_code)
         clean_code = clean_code.strip()
-
-        # 安全檢查：禁止危險操作
-        dangerous_patterns = [
-            r"\bos\s*\.\s*system\b",
-            r"\bsubprocess\b",
-            r"\beval\b(?!\s*\()",  # 禁止嵌套 eval
-            r"\bexec\b(?!\s*\()",   # 禁止嵌套 exec
-            r"\b__import__\b",
-            r"\bopen\s*\(",
-            r"\bfile\s*\(",
-            r"\binput\s*\(",
-            r"\braw_input\s*\(",
-            r"\bcompile\b",
-            r"\breload\b",
-            r"\bexit\s*\(",
-            r"\bquit\s*\(",
-            r"\bsys\s*\.\s*exit\b",
-        ]
-        for pattern in dangerous_patterns:
-            if re.search(pattern, clean_code, re.IGNORECASE):
-                card = ZNCard(
-                    title="🚫 安全檢查未通過",
-                    description=f"檢測到危險操作模式：`{pattern}`\n為了系統安全性，此操作已被阻擋。",
-                    status_pill=ZNStatusPill.ERROR,
-                    color=ZNColor.ERROR,
-                )
-                await ctx.send(embed=card.to_embed())
-                return
 
         env_globals: Dict[str, Any] = {
             "bot": self.bot,
