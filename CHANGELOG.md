@@ -2,6 +2,18 @@
 
 ---
 
+## [2.8.6] - 2026-09-27
+
+### 🔴 修復版本號不同步與 BRAIN_MASTER_KEY 阻塞啟動
+- 更新 [`zeronexus/settings.json`](zeronexus/settings.json)：版本號 2.7.9 → 2.8.6
+- 更新 [`zeronexus/core/config.py`](zeronexus/core/config.py)：版本號 2.7.9 → 2.8.6
+- 更新 [`zeronexus/__init__.py`](zeronexus/__init__.py)：版本號 2.7.9 → 2.8.6
+- 更新 [`README.md`](README.md)：版本徽章 2.7.8 → 2.8.6
+- 更新 [`zeronexus/brain/memory_vault.py`](zeronexus/brain/memory_vault.py)：
+  - 缺少 BRAIN_MASTER_KEY 時自動生成安全隨機金鑰並持久化，不再阻塞啟動
+
+---
+
 ## [2.8.5] - 2026-09-27
 
 ### 🔴 緊急修復：NameError 導致系統無法啟動

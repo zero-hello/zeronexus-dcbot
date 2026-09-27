@@ -65,14 +65,27 @@ class EncryptedMemoryVault:
         安全性強化：
         - 不再使用 DISCORD_BOT_TOKEN 作為加密種子（避免金鑰洩漏風險）
         - 移除非安全的 hardcoded fallback 種子
-        - 若未設定 BRAIN_MASTER_KEY，拋出異常而非使用弱種子
+        - 若未設定 BRAIN_MASTER_KEY，自動生成安全隨機金鑰並顯示警告
         """
         import secrets
         raw_seed = secret_key or os.getenv("BRAIN_MASTER_KEY")
         if not raw_seed:
-            raise RuntimeError(
-                "未設定 BRAIN_MASTER_KEY 環境變數。為了安全起見，系統不再支援無加密金鑰模式。"
-                "請於 .env 設定 BRAIN_MASTER_KEY（建議使用 32+ 字元的隨機字串）。"
+            # 自動生成安全隨機金鑰，避免啟動阻塞
+            raw_seed = secrets.token_hex(32)
+            # 持久化保存生成的金鑰，確保下次啟動時使用相同金鑰
+            key_file = self.db_path.parent / ".brain_key"
+            try:
+                if key_file.exists():
+                    raw_seed = key_file.read_text(encoding="utf-8").strip()
+                else:
+                    key_file.write_text(raw_seed, encoding="utf-8")
+                    os.chmod(key_file, 0o600)  # 僅限擁有者讀寫
+            except Exception:
+                pass  # 若無法寫入檔案，使用臨時金鑰（僅本次啟動有效）
+            import logging
+            logging.getLogger("ZeroNexus.Brain.MemoryVault").warning(
+                "未設定 BRAIN_MASTER_KEY 環境變數，已自動生成安全隨機金鑰。"
+                "為確保心智日記加密金鑰持久化，建議於 .env 設定 BRAIN_MASTER_KEY。"
             )
         # 使用 SHA-256 生成固定 32 位元組 (256-bit) 金鑰
         self.aes_key = hashlib.sha256(raw_seed.encode("utf-8")).digest()
