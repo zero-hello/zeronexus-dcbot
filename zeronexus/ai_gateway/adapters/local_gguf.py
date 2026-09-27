@@ -35,6 +35,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
         self._llm: Optional[Any] = None
         self._llm_lock = threading.Lock()
         self._async_lock = asyncio.Lock()
+        self._inference_semaphore = asyncio.Semaphore(1)
         # 【P1 修復】llama-server 生命週期專用鎖：防止並發請求同時啟動/重啟 server 造成 Port 競爭與雙行程
         self._server_lock = asyncio.Lock()
         # 【P1 修復】自癒下載互斥鎖：防止並發請求觸發重複下載
@@ -51,6 +52,10 @@ class LocalGGUFAdapter(BaseAIAdapter):
             if clean_name.startswith(prefix):
                 clean_name = clean_name[len(prefix):]
 
+        clean_name = os.path.basename(clean_name)
+        if not clean_name or clean_name in (".", ".."):
+            raise ValueError("無效的本地 GGUF 模型名稱")
+
         if not clean_name.endswith(".gguf"):
             clean_name = f"{clean_name}.gguf"
 
@@ -63,6 +68,22 @@ class LocalGGUFAdapter(BaseAIAdapter):
             return default_path
 
         return target_path
+
+    async def _run_inference_with_timeout(self, inference: Any, timeout: float) -> Any:
+        """Run one native inference at a time without leaking worker slots after timeout."""
+        await self._inference_semaphore.acquire()
+        worker = asyncio.create_task(asyncio.to_thread(inference))
+
+        def release_slot(task: asyncio.Task[Any]) -> None:
+            self._inference_semaphore.release()
+            if not task.cancelled():
+                try:
+                    task.exception()  # Retrieve exceptions if the caller timed out/cancelled.
+                except Exception:
+                    pass
+
+        worker.add_done_callback(release_slot)
+        return await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
 
     async def _resolve_model_path_async(self, model: str) -> str:
         """非同步模型路徑解析與自癒補齊。
@@ -754,10 +775,7 @@ class LocalGGUFAdapter(BaseAIAdapter):
                         top_p=top_p,
                     )
 
-                raw_response = await asyncio.wait_for(
-                    asyncio.to_thread(_run_inference),
-                    timeout=timeout,
-                )
+                raw_response = await self._run_inference_with_timeout(_run_inference, timeout)
 
                 latency_ms = (time.perf_counter() - start_time) * 1000.0
 
@@ -862,9 +880,14 @@ class LocalGGUFAdapter(BaseAIAdapter):
                     formatted_messages.append({"role": role, "content": content_str})
 
                 top_p = float(kwargs.get("top_p", 0.9))
-                raw_response = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: llm.create_chat_completion(messages=formatted_messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p)),
-                    timeout=timeout,
+                raw_response = await self._run_inference_with_timeout(
+                    lambda: llm.create_chat_completion(
+                        messages=formatted_messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                    ),
+                    timeout,
                 )
                 choices = raw_response.get("choices", [])
                 if choices:

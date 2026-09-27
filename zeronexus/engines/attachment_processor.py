@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import io
 import os
 import re
@@ -19,6 +20,9 @@ from zeronexus.core.logger import log
 # 附件安全約束
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB max per file
 MAX_IMAGE_BYTES = 15 * 1024 * 1024       # 15 MB max per image
+MAX_ATTACHMENTS_PER_MESSAGE = 10
+MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024
+MAX_IMAGE_PIXELS = 40_000_000
 ATTACHMENT_TIMEOUT_SECONDS = 12.0        # 12s read timeout
 
 TEXT_CODE_EXTS = {
@@ -64,6 +68,14 @@ async def ingest_attachments(
     attachment_tool_results: Dict[str, str] = {}
     context_notes: List[str] = []
 
+    if len(attachments) > MAX_ATTACHMENTS_PER_MESSAGE:
+        context_notes.append(
+            f"【附件限制】本訊息有 {len(attachments)} 個附件，僅處理前 {MAX_ATTACHMENTS_PER_MESSAGE} 個。"
+        )
+        attachments = attachments[:MAX_ATTACHMENTS_PER_MESSAGE]
+
+    total_declared_bytes = 0
+
     for att in attachments:
         fname = clean_attachment_filename(att.filename)
         fname_lower = fname.lower()
@@ -71,6 +83,16 @@ async def ingest_attachments(
         ctype = (att.content_type or "").lower()
         att_size = getattr(att, "size", 0) or 0
         size_str = format_size(att_size)
+        total_declared_bytes += att_size
+
+        if total_declared_bytes > MAX_TOTAL_ATTACHMENT_BYTES:
+            note = (
+                f"【使用者附加檔案：{fname}】(本訊息附件總量超過"
+                f" {format_size(MAX_TOTAL_ATTACHMENT_BYTES)} 上限，已略過下載)"
+            )
+            attachment_tool_results[f"附加檔案_{fname}"] = note
+            context_notes.append(note)
+            continue
 
         # 0-byte 邊界檢查
         if att_size == 0:
@@ -109,6 +131,9 @@ async def ingest_attachments(
                 if not img_bytes:
                     log.warning(f"Attachment '{fname}' yielded empty bytes after read.")
                     continue
+                if len(img_bytes) > MAX_IMAGE_BYTES:
+                    log.warning(f"Image '{fname}' exceeded the actual byte limit after download.")
+                    continue
 
                 # 驗證圖片格式
                 is_valid_image = False
@@ -118,6 +143,8 @@ async def ingest_attachments(
                     def _verify_image(data: bytes) -> bool:
                         try:
                             with Image.open(io.BytesIO(data)) as test_img:
+                                if test_img.width * test_img.height > MAX_IMAGE_PIXELS:
+                                    return False
                                 test_img.verify()
                             return True
                         except Exception:
@@ -126,16 +153,6 @@ async def ingest_attachments(
                     is_valid_image = await asyncio.to_thread(_verify_image, img_bytes)
                 except Exception:
                     is_valid_image = False
-
-                if not is_valid_image:
-                    if (
-                        img_bytes.startswith(b"\x89PNG")
-                        or img_bytes.startswith(b"\xff\xd8\xff")
-                        or img_bytes.startswith((b"GIF87a", b"GIF89a"))
-                        or (img_bytes.startswith(b"RIFF") and b"WEBP" in img_bytes[:16])
-                        or final_mime.startswith("image/")
-                    ):
-                        is_valid_image = True
 
                 if not is_valid_image:
                     log.warning(f"Image verification failed for '{fname}', format is corrupted or invalid.")
@@ -237,6 +254,11 @@ async def ingest_attachments(
 
         # d. 音訊檔案
         elif ext in AUDIO_EXTS or ctype.startswith("audio/"):
+            if att_size > MAX_ATTACHMENT_BYTES:
+                note = f"【使用者附加音訊：{fname}】(超過安全上限，已略過)"
+                attachment_tool_results[f"附加音訊_{fname}"] = note
+                context_notes.append(note)
+                continue
             audio_note = (
                 f"【使用者附加音訊檔案：{fname}】(大小: {size_str}, 類型: {ctype or 'audio'}) "
                 f"[系統註記：已偵測到使用者上傳之語音/音訊檔案，請在回覆中向使用者確認收到該音訊檔案]"

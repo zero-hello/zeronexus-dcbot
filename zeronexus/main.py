@@ -61,7 +61,7 @@ async def startup_self_check() -> bool:
     # 4. 本地生物大腦神經模型矩陣守護與開機自癒
     try:
         from zeronexus.brain.bootstrap import ensure_brain_models_ready
-        brain_ok = ensure_brain_models_ready(console_output=True)
+        brain_ok = await asyncio.to_thread(ensure_brain_models_ready, console_output=True)
         if not brain_ok:
             log.critical("✘ 生物大腦神經模型自癒失敗，無法安全開機！已中止啟動。")
             return False
@@ -110,16 +110,17 @@ async def main() -> None:
         # 3. Setup signal handling for clean exit
         loop = asyncio.get_running_loop()
         shutdown_triggered = False
+        shutdown_task: asyncio.Task[None] | None = None
 
         def handle_signal() -> None:
-            nonlocal shutdown_triggered
+            nonlocal shutdown_triggered, shutdown_task
             if shutdown_triggered:
                 log.warning("⚠️ 終止訊號已在處理中，請稍候...")
                 return
             shutdown_triggered = True
             log.info("🛑 收到終止訊號，正在啟動機器人優雅關機流程...")
-            _shutdown_task = asyncio.create_task(bot.close())  # 引用保留 + 錯誤記錄，避免靜默失敗
-            _shutdown_task.add_done_callback(
+            shutdown_task = asyncio.create_task(bot.close())
+            shutdown_task.add_done_callback(
                 lambda t: log.error(f"Shutdown task crashed: {t.exception()}")
                 if not t.cancelled() and t.exception() else None
             )
@@ -140,7 +141,9 @@ async def main() -> None:
         except Exception as e:
             log.critical(f"❌ ZeroNexus 主事件循環發生嚴重錯誤：{e}", exc_info=True)
         finally:
-            if not bot.is_closed():
+            if shutdown_task is not None:
+                await asyncio.gather(shutdown_task, return_exceptions=True)
+            elif not bot.is_closed():
                 await bot.close()
     finally:
         process_lock.release()

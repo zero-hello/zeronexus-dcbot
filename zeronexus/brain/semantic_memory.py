@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections import OrderedDict
 import logging
 import math
+import hashlib
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -95,10 +96,14 @@ class SemanticMemoryRetriever:
         """輕量備援向量產生器：以字元 n-gram 進行雜湊映射"""
         vec = np.zeros(dim, dtype=np.float32)
         words = text.lower().strip()
-        for i in range(len(words) - 1):
-            gram = words[i : i + 2]
-            idx = abs(hash(gram)) % dim
-            vec[idx] += 1.0
+        for n in (1, 2, 3):
+            for i in range(max(0, len(words) - n + 1)):
+                gram = words[i : i + n]
+                digest = hashlib.blake2b(gram.encode("utf-8"), digest_size=8).digest()
+                value = int.from_bytes(digest, "little")
+                idx = value % dim
+                sign = -1.0 if (value >> 8) & 1 else 1.0
+                vec[idx] += sign
         norm = np.linalg.norm(vec)
         return vec / norm if norm > 1e-6 else vec
 
@@ -107,7 +112,7 @@ class SemanticMemoryRetriever:
         if vec_a is None or vec_b is None:
             return 0.0
         dot = float(np.dot(vec_a, vec_b))
-        return max(0.0, min(1.0, (dot + 1.0) / 2.0))
+        return max(0.0, min(1.0, dot))
 
     def compute_ebbinghaus_recency(self, created_at_ts: float, half_life_days: float = 7.0) -> float:
         """艾賓浩斯遺忘曲線時間加權：越近期回憶權重越高"""

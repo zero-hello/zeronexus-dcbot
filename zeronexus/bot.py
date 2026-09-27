@@ -11,6 +11,7 @@ Coordinates:
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import base64
 import datetime
 import io
@@ -112,10 +113,10 @@ class ZeroNexusBot(commands.Bot):
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
         # Idempotent message deduplication & concurrency controls
-        self._processed_message_ids: dict[int, float] = {}
+        self._processed_message_ids: OrderedDict[int, float] = OrderedDict()
         self._in_flight_message_ids: set[int] = set()
         self._in_flight_users: set[int] = set()
-        self._last_user_prompts: dict[int, tuple[str, float]] = {}
+        self._last_user_prompts: OrderedDict[int, tuple[str, float]] = OrderedDict()
         self._last_notified_update_version: Optional[str] = None
 
     @staticmethod
@@ -1180,11 +1181,19 @@ class ZeroNexusBot(commands.Bot):
 
         now = time.time()
         # Clean expired message IDs (TTL 120s)
-        if len(self._processed_message_ids) > 200:
-            self._processed_message_ids = {
-                mid: ts for mid, ts in self._processed_message_ids.items()
-                if now - ts < 120.0
-            }
+        while self._processed_message_ids:
+            _, oldest_ts = next(iter(self._processed_message_ids.items()))
+            if now - oldest_ts < 120.0:
+                break
+            self._processed_message_ids.popitem(last=False)
+        while len(self._processed_message_ids) >= 10_000:
+            self._processed_message_ids.popitem(last=False)
+
+        for user_id, (_, prompt_ts) in list(self._last_user_prompts.items()):
+            if now - prompt_ts >= 120.0:
+                self._last_user_prompts.pop(user_id, None)
+        while len(self._last_user_prompts) >= 10_000:
+            self._last_user_prompts.popitem(last=False)
 
         # Idempotent Message Deduplication Guard
         if message.id in self._processed_message_ids or message.id in self._in_flight_message_ids:
@@ -1199,6 +1208,7 @@ class ZeroNexusBot(commands.Bot):
             return
         if clean_text:
             self._last_user_prompts[message.author.id] = (clean_text, now)
+            self._last_user_prompts.move_to_end(message.author.id)
 
         self._processed_message_ids[message.id] = now
 

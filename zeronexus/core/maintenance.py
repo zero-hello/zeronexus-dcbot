@@ -65,6 +65,7 @@ class MaintenanceScheduler:
         self.tasks: Dict[str, MaintenanceTask] = {}
         self._running: bool = False
         self._task: Optional[asyncio.Task] = None
+        self.task_timeout_seconds: float = 300.0
 
     def register_task(self, task: MaintenanceTask) -> None:
         """註冊維護任務"""
@@ -77,7 +78,15 @@ class MaintenanceScheduler:
             try:
                 for task in self.tasks.values():
                     if task.should_run():
-                        await task.execute()
+                        try:
+                            await asyncio.wait_for(task.execute(), timeout=self.task_timeout_seconds)
+                        except asyncio.TimeoutError:
+                            task.last_error = f"超過 {self.task_timeout_seconds:g} 秒執行時限"
+                            log.error(f"維護任務 '{task.name}' 執行逾時：{task.last_error}")
+                        except Exception as e:
+                            log.error(f"維護任務 '{task.name}' 執行失敗: {e}")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 log.error(f"維護排程迴圈發生錯誤: {e}")
 

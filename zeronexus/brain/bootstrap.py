@@ -13,6 +13,7 @@ import time
 import shutil
 import logging
 import importlib.util
+from pathlib import PurePosixPath
 
 log = logging.getLogger("ZeroNexus.Brain.Bootstrap")
 
@@ -312,12 +313,31 @@ def download_and_extract_llama_binaries(target_dir: str, max_retries: int = 3) -
                 urllib.request.urlretrieve(url, tar_path)
 
             if os.path.exists(tar_path) and os.path.getsize(tar_path) >= 1024 * 1024:
+                target_root = os.path.realpath(target_dir)
                 with tarfile.open(tar_path, "r:gz") as tar:
                     for member in tar.getmembers():
-                        parts = member.name.split("/", 1)
-                        if len(parts) > 1 and parts[1]:
-                            member.name = parts[1]
-                            tar.extract(member, path=target_dir)
+                        parts = PurePosixPath(member.name).parts
+                        if len(parts) < 2:
+                            continue
+                        relative = PurePosixPath(*parts[1:])
+                        if relative.is_absolute() or any(part in ("..", "") for part in relative.parts):
+                            raise ValueError(f"不安全的壓縮檔路徑: {member.name!r}")
+                        if not (member.isfile() or member.isdir()):
+                            raise ValueError(f"不支援的壓縮檔項目類型: {member.name!r}")
+                        destination = os.path.realpath(os.path.join(target_root, *relative.parts))
+                        if os.path.commonpath((target_root, destination)) != target_root:
+                            raise ValueError(f"壓縮檔路徑超出目標目錄: {member.name!r}")
+                        member.name = str(relative)
+                        if member.isdir():
+                            os.makedirs(destination, exist_ok=True)
+                            continue
+                        os.makedirs(os.path.dirname(destination), exist_ok=True)
+                        source = tar.extractfile(member)
+                        if source is None:
+                            raise ValueError(f"無法讀取壓縮檔項目: {member.name!r}")
+                        with source, open(destination, "wb") as output:
+                            shutil.copyfileobj(source, output)
+                        os.chmod(destination, member.mode & 0o755)
 
                 if os.path.exists(tar_path):
                     os.remove(tar_path)

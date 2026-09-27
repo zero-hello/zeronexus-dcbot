@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -139,6 +140,7 @@ class CacheManager:
         self._redis: Any = None
         self._use_redis: bool = False
         self._is_initialized: bool = False
+        self._cleanup_task: Optional[asyncio.Task[None]] = None
 
     async def initialize(self) -> None:
         if self._is_initialized:
@@ -159,7 +161,8 @@ class CacheManager:
         self._is_initialized = True
 
         # 啟動背景清理任務，定期清除過期項目
-        self._cleanup_task = asyncio.create_task(self._cleanup_loop(), name="cache_cleanup")
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._cleanup_loop(), name="cache_cleanup")
 
     async def _cleanup_loop(self) -> None:
         """背景任務：定期清理過期快取項目，防止記憶體無界增長。"""
@@ -175,23 +178,14 @@ class CacheManager:
             except Exception as e:
                 log.warning(f"Cache cleanup error: {e}")
 
-    async def close(self) -> None:
-        """關閉快取管理器，清理背景任務。"""
-        if hasattr(self, '_cleanup_task') and self._cleanup_task:
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
-        await self._memory.clear()
-
     async def get(self, key: str) -> Optional[Any]:
         if self._use_redis and self._redis:
             try:
-                import pickle
                 val = await self._redis.get(key)
                 if val is not None:
-                    return pickle.loads(val)
+                    if isinstance(val, bytes):
+                        val = val.decode("utf-8")
+                    return json.loads(val)
                 return None
             except Exception as e:
                 log.warning(f"Redis get failed: {e}. Falling back to memory.")
@@ -201,8 +195,7 @@ class CacheManager:
         effective_ttl = ttl if ttl is not None else config.cache.default_ttl_seconds
         if self._use_redis and self._redis:
             try:
-                import pickle
-                data = pickle.dumps(value)
+                data = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
                 if effective_ttl > 0:
                     await self._redis.setex(key, effective_ttl, data)
                 else:
@@ -253,6 +246,14 @@ class CacheManager:
 
     async def close(self) -> None:
         """Gracefully closes cache connections and clears memory references."""
+        cleanup_task = getattr(self, "_cleanup_task", None)
+        if cleanup_task is not None:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
         if self._use_redis and self._redis:
             try:
                 if hasattr(self._redis, "aclose"):
