@@ -28,7 +28,7 @@ def test_capability_prompt_lists_real_registry_inventory_compactly() -> None:
     prompt = capability_registry.get_dynamic_capabilities_prompt(user_prompt="請摘要這篇文章")
     assert "ai_summarize_text" in prompt
     assert "AI_WORKFLOW" in prompt
-    assert len(prompt) < 12_000
+    assert len(prompt) < 2_000
 
 
 def test_tool_intent_routes_to_function_calling_provider_only() -> None:

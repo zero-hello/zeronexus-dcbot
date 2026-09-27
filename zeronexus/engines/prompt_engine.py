@@ -391,11 +391,9 @@ class SystemPromptEngine:
         except Exception:
             brain_capsule = ""
 
-        try:
-            from zeronexus.intelligence.capability_registry import capability_registry
-            capabilities_prompt = capability_registry.get_dynamic_capabilities_prompt()
-        except Exception:
-            capabilities_prompt = ""
+        # Runtime capabilities are injected once by ContextBuilder. Avoid duplicating
+        # the full tool catalog in every system prompt (large token/latency overhead).
+        capabilities_prompt = ""
 
         natural_conversation_mandate = (
             "# 【自然對話與互動原則】\n"

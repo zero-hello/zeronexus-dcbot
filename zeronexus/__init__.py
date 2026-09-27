@@ -3,6 +3,6 @@
 One Platform. Many Capabilities. Zero Dependence on AI.
 """
 
-__version__ = "2.9.0"
+__version__ = "2.9.1"
 __codename__ = "ZeroNexus"
 __shortname__ = "ZN"
