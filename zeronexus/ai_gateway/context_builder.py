@@ -101,6 +101,39 @@ def estimate_messages_tokens(messages: List[Dict[str, str]]) -> int:
     return total + 2  # Conversation priming tokens
 
 
+def format_conversation_for_summary(
+    history: List[Dict[str, str]],
+    max_chars: int = 24_000,
+    max_message_chars: int = 1_500,
+) -> str:
+    """Build a bounded transcript for summarization, retaining the newest context."""
+    if max_chars <= 0 or max_message_chars <= 0:
+        return ""
+
+    lines: List[str] = []
+    used = 0
+    for item in reversed(history):
+        role = "使用者" if item.get("role") == "user" else "AI"
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        if len(content) > max_message_chars:
+            content = content[:max_message_chars] + "…[訊息已截斷]"
+        line = f"{role}：{content}"
+        if used + len(line) + 1 > max_chars:
+            remaining = max_chars - used
+            marker = "…[較早對話已略過]"
+            if remaining > len(marker):
+                clipped = line[:remaining - len(marker)] + marker
+                lines.append(clipped)
+            break
+        lines.append(line)
+        used += len(line) + 1
+
+    lines.reverse()
+    return "\n".join(lines)
+
+
 def _to_utc(dt: datetime) -> datetime:
     """Ensures datetime is timezone-aware UTC."""
     if dt.tzinfo is None:
@@ -1192,4 +1225,3 @@ def combine_thinking_and_tools(
             sections.append(f"## ⚙️ 工具調用與執行脈絡\n{trace}")
 
     return "\n\n---\n\n".join(sections) if sections else None
-
