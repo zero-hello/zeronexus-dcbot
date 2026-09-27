@@ -307,6 +307,13 @@ class MusicConfig:
     auto_leave_seconds: int = 180
     reconnect_retries: int = 5
 
+    @staticmethod
+    def _node_password(node: dict[str, Any]) -> str:
+        env_name = str(node.get("password_env", "")).strip()
+        if env_name:
+            return os.getenv(env_name, "").strip()
+        return str(node.get("password", "youshallnotpass")).strip()
+
     def __post_init__(self) -> None:
         self.public_discovery_enabled = _safe_bool(os.getenv("AUDIO_NODE_PUBLIC_DISCOVERY"), self.public_discovery_enabled)
         self.public_discovery_url_ssl = os.getenv("AUDIO_NODE_PUBLIC_DISCOVERY_URL_SSL", self.public_discovery_url_ssl).strip() or self.public_discovery_url_ssl
@@ -322,8 +329,18 @@ class MusicConfig:
         )
         nodes_list = [primary_node]
 
+        env_node = AudioNodeConfig(
+            host=_safe_str(os.getenv("AUDIO_NODE_1_HOST"), ""),
+            port=_safe_int(os.getenv("AUDIO_NODE_1_PORT"), 443, min_val=1, max_val=65535),
+            password=_safe_str(os.getenv("AUDIO_NODE_1_PASSWORD"), ""),
+            secure=_safe_bool(os.getenv("AUDIO_NODE_1_SECURE"), True),
+            identifier=_safe_str(os.getenv("AUDIO_NODE_1_IDENTIFIER"), "env-node-1"),
+        )
+        if env_node.host and env_node.password:
+            nodes_list.append(env_node)
+
         # Scan for additional env nodes: AUDIO_NODE_1_*, AUDIO_NODE_2_*, etc.
-        for i in range(1, 10):
+        for i in range(2, 10):
             prefix = f"AUDIO_NODE_{i}_"
             host = os.getenv(f"{prefix}HOST", "").strip()
             if not host:
@@ -356,7 +373,7 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "2.8.9"
+    version: str = "2.8.12"
     owner_id: str = "1514971711739789352"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"
@@ -483,7 +500,7 @@ class Config:
                                 AudioNodeConfig(
                                     host=str(n["host"]).strip(),
                                     port=_safe_int(n.get("port"), 2333),
-                                    password=str(n.get("password", "youshallnotpass")).strip(),
+                                    password=self.music._node_password(n),
                                     secure=_safe_bool(n.get("secure"), False),
                                     identifier=str(n.get("name") or n.get("identifier") or n["host"]).strip(),
                                 )

@@ -87,12 +87,30 @@ class NodePoolManager:
                     "secure": n.secure,
                 })
 
-            # 2. 若啟用公共節點自動探測，自清單探測在線節點
-            candidate_nodes = list(seed_nodes)
-            if config.music.auto_fetch_public_nodes:
+            # 2. 探測已設定的節點；公共節點清單只在沒有任何可用設定節點時載入。
+            candidate_nodes = [node for node in seed_nodes if node.get("password")]
+            skipped_nodes = len(seed_nodes) - len(candidate_nodes)
+            if skipped_nodes:
+                log.warning(f"[NodePoolManager] 忽略 {skipped_nodes} 個未設定認證密碼的 Lavalink 節點。")
+            initial_probes = await NodeProbe.probe_multiple(
+                candidate_nodes, concurrency=5, timeout_seconds=2.0
+            ) if candidate_nodes else []
+            healthy_initial = [p for p in initial_probes if p.is_online and p.is_v4]
+
+            if not healthy_initial and config.music.auto_fetch_public_nodes:
                 try:
                     scraped = await PublicNodeScraper.discover_public_nodes()
-                    candidate_nodes.extend(scraped)
+                    configured_credentials = {
+                        (node["host"].lower(), node["port"]): node["password"]
+                        for node in seed_nodes if node.get("password")
+                    }
+                    candidate_nodes = []
+                    for node in scraped:
+                        endpoint = (node["host"].lower(), node["port"])
+                        if endpoint in configured_credentials:
+                            candidate = dict(node)
+                            candidate["password"] = configured_credentials[endpoint]
+                            candidate_nodes.append(candidate)
                 except Exception as ex:
                     log.warning(f"[NodePoolManager] 公共節點抓取失敗: {ex}")
 
@@ -104,8 +122,11 @@ class NodePoolManager:
             ]
 
             # 3. 執行探針篩選可用且支援 YouTube 的前 3~5 名節點
-            log.info(f"[NodePoolManager] 正在探測 {len(candidate_nodes)} 個候選節點...")
-            probe_results = await NodeProbe.probe_multiple(candidate_nodes, concurrency=10, timeout_seconds=4.0)
+            if healthy_initial and candidate_nodes == seed_nodes:
+                probe_results = initial_probes
+            else:
+                log.info(f"[NodePoolManager] 正在探測 {len(candidate_nodes)} 個候選節點...")
+                probe_results = await NodeProbe.probe_multiple(candidate_nodes, concurrency=10, timeout_seconds=2.5)
 
             valid_probes = [
                 p for p in probe_results
@@ -121,18 +142,9 @@ class NodePoolManager:
             ))
 
             if not valid_probes:
-                log.warning("[NodePoolManager] 探測無可用公共節點，回退至預設靜態配置。")
-                valid_probes = [
-                    NodeProbe.probe_node(
-                        host=n.host,
-                        port=n.port,
-                        password=n.password,
-                        secure=n.secure,
-                        identifier=n.identifier,
-                    )
-                    for n in config.music.nodes
-                ]
-                valid_probes = await asyncio.gather(*valid_probes)
+                log.warning("[NodePoolManager] 目前沒有健康 Lavalink 節點；略過離線節點以避免 Wavelink DNS 重連風暴。")
+                self._initialized = True
+                return
 
             # 端點去重：相同 host:port 只保留一筆最低延遲紀錄
             unique_probes = []
@@ -185,8 +197,25 @@ class NodePoolManager:
                     log.info(f"[NodePoolManager] 成功連線至 {len(wavelink_nodes)} 個 Lavalink 節點！")
                 except Exception as ex:
                     log.error(f"[NodePoolManager] Wavelink 節點池連線發生例外: {ex}")
+                    self._initialized = False
             else:
                 log.error("[NodePoolManager] 找不到任何可用的 Lavalink 節點！")
+
+    async def initialize_with_retry(self, bot: commands.Bot) -> None:
+        """以有上限的指數退避在背景重試 Lavalink 初始化。"""
+        for attempt in range(max(1, config.music.reconnect_retries)):
+            self._initialized = False
+            await self.initialize(bot)
+            if getattr(wavelink.Pool, "nodes", {}):
+                connected = any(
+                    node.status is wavelink.NodeStatus.CONNECTED
+                    for node in wavelink.Pool.nodes.values()
+                )
+                if connected:
+                    return
+            delay = min(60.0, 2.0 ** attempt)
+            log.warning(f"[NodePoolManager] Lavalink 尚未就緒，{delay:.0f} 秒後重試 ({attempt + 1}/{config.music.reconnect_retries})")
+            await asyncio.sleep(delay)
 
     @classmethod
     async def handle_node_disconnect(cls, node: wavelink.Node) -> None:

@@ -202,6 +202,10 @@ class HighDimensionalEmotionProjector:
     def __init__(self, dynamics: Optional[NeurotransmitterDynamics] = None) -> None:
         self.dynamics = dynamics or NeurotransmitterDynamics()
         self._init_lexical_anchors()
+        self.neural_array = None
+
+    def initialize_neural_array(self) -> None:
+        """Load optional ONNX models after the Discord gateway is online."""
         try:
             from .neural_models import HierarchicalNeuralArray
             self.neural_array = HierarchicalNeuralArray()

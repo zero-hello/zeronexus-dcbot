@@ -1,6 +1,6 @@
 """ZeroNexus 本地生物神經與情緒大腦套件 (ZeroNexus Bio-Brain Package)"""
 
-from zeronexus.brain.core import BioBrainCore, bio_brain
+from zeronexus.brain.core import BioBrainCore, bio_brain, start_brain_background_services
 from zeronexus.brain.emotion_projector import EmotionAnalysisResult, HighDimensionalEmotionProjector
 from zeronexus.brain.memory_vault import EncryptedMemoryVault, MemoryRecord
 from zeronexus.brain.neuro_transmitters import NeuroChemicalProfile, NeuroTransmitterEngine
@@ -18,6 +18,7 @@ from zeronexus.brain.heartbeat_system import BrainHeartbeatDaemon
 
 __all__ = [
     "bio_brain",
+    "start_brain_background_services",
     "BioBrainCore",
     "NeuroTransmitterEngine",
     "NeuroChemicalProfile",

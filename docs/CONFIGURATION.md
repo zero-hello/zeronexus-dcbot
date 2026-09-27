@@ -21,4 +21,6 @@ ZeroNexus 採用嚴格的雙層配置架構：
 | `AudioStream_HOST` | `127.0.0.1` | 音訊串流伺服器主機位址 |
 | `AudioStream_PORT` | `2333` | 音訊串流服務連接埠 |
 | `AudioStream_PASSWORD` | `youshallnotpass` | 音訊串流節點認證密碼 |
+| `AUDIO_NODE_1_HOST` / `AUDIO_NODE_1_PASSWORD` | 私有 Lavalink 主機與密碼 | 選填；節點密碼只由環境變數載入，不要寫入 `settings.json` |
+| `AUDIO_NODE_2_PASSWORD` / `AUDIO_NODE_3_PASSWORD` | 公開節點密碼 | 選填；分別對應 settings.json 中的第二、第三個節點 |
 | `TZ` | `Asia/Taipei` | 系統時區 |

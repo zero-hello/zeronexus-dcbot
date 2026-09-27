@@ -100,7 +100,7 @@ class MusicCog(commands.Cog):
         import logging
         # 抑制 Wavelink 底層 TrackException 冗長之 Java StackTrace 終端刷屏
         logging.getLogger("TrackException").setLevel(logging.CRITICAL)
-        self.bot.loop.create_task(self.node_manager.initialize(self.bot))
+        self.bot.loop.create_task(self.node_manager.initialize_with_retry(self.bot))
 
     def cog_unload(self) -> None:
         """Cog 卸載時清理所有背景進度條刷新任務、無人自動退出計時任務與控制面板引用（防洩漏）。"""
@@ -282,6 +282,13 @@ class MusicCog(commands.Cog):
                     pass
 
         best_node = self.node_manager.get_best_node()
+        if best_node is None:
+            await InteractionResponder.safe_send(
+                interaction,
+                "🎵 音樂服務目前正在連線或暫時不可用，請稍後再試；其他機器人功能不受影響。",
+                ephemeral=True,
+            )
+            return None
         if player is not None and isinstance(player, wavelink.Player):
             # 若播放器閒置且所在節點並非最優健康節點，主動遷移至最優節點以確保點播品質
             if best_node and player.node != best_node and best_node.status is wavelink.NodeStatus.CONNECTED and not player.playing:

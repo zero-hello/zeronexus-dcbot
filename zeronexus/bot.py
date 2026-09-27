@@ -950,6 +950,22 @@ class ZeroNexusBot(commands.Bot):
             await event_bus.emit("ready", self)
             # 登入就緒後在背景自動執行一次版本檢查
             self._spawn_background(self._check_version_and_notify_safe(), name="startup_version_check")
+            self._spawn_background(self._bootstrap_brain_async(), name="brain_model_bootstrap")
+
+    async def _bootstrap_brain_async(self) -> None:
+        """Download and load optional local models off the Discord event loop."""
+        try:
+            from zeronexus.brain.bootstrap import ensure_brain_models_ready
+            from zeronexus.brain import bio_brain, start_brain_background_services
+
+            start_brain_background_services()
+            ready = await asyncio.to_thread(ensure_brain_models_ready, console_output=True)
+            if not ready:
+                log.warning("本地大腦模型尚未就緒，繼續使用快速規則式備援。")
+                return
+            await asyncio.to_thread(bio_brain.emotion_projector.initialize_neural_array)
+        except Exception as exc:
+            log.warning(f"本地大腦模型背景初始化失敗，將使用輕量備援：{exc}")
 
     async def _trigger_typing_safe(self, channel: discord.abc.Messageable) -> None:
         """Triggers channel typing indicator safely without breaking execution on Discord API error."""

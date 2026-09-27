@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import asyncio
 from typing import Any, Dict, List
 
 import aiohttp
@@ -61,8 +62,10 @@ class PublicNodeScraper:
     @classmethod
     async def discover_public_nodes(cls) -> List[Dict[str, Any]]:
         """動態彙整三大公開來源之節點清單。"""
-        ssl_nodes = await cls.fetch_nodes_from_url(cls.DARREN_SSL_URL, is_ssl=True)
-        non_ssl_nodes = await cls.fetch_nodes_from_url(cls.DARREN_NON_SSL_URL, is_ssl=False)
+        ssl_nodes, non_ssl_nodes = await asyncio.gather(
+            cls.fetch_nodes_from_url(cls.DARREN_SSL_URL, is_ssl=True),
+            cls.fetch_nodes_from_url(cls.DARREN_NON_SSL_URL, is_ssl=False),
+        )
 
         # 加入 Serenetia 與經典熱門公用節點兜底備選
         fallback_seeds = [

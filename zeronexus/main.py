@@ -58,17 +58,7 @@ async def startup_self_check() -> bool:
     summary_str = " | ".join([f"{name} ({cnt})" for name, cnt in gateway_providers])
     log.info(f"✔ AI 網關：{summary_str}")
 
-    # 4. 本地生物大腦神經模型矩陣守護與開機自癒
-    try:
-        from zeronexus.brain.bootstrap import ensure_brain_models_ready
-        brain_ok = await asyncio.to_thread(ensure_brain_models_ready, console_output=True)
-        if not brain_ok:
-            log.critical("✘ 生物大腦神經模型自癒失敗，無法安全開機！已中止啟動。")
-            return False
-    except Exception as e:
-        log.warning(f"大腦神經模型開機檢驗例外: {e}")
-
-    # 5. 外部 API 與環境
+    # 4. 外部 API 與環境
     cwa_status = "連線啟用" if config.external.cwa_api_key else "免金鑰降級支援"
     log.info(f"✔ 即時氣象：台灣中央氣象署 CWA ({cwa_status})")
 

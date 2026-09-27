@@ -13,7 +13,6 @@ import datetime
 import logging
 from typing import Dict, Optional, Tuple
 
-from zeronexus.brain.bootstrap import ensure_brain_models_ready
 from zeronexus.brain.circadian import CircadianRhythmEngine, TZ_TAIPEI
 from zeronexus.brain.attachment import PersonalAttachmentEngine
 from zeronexus.brain.emotion_projector import EmotionAnalysisResult, HighDimensionalEmotionProjector
@@ -49,11 +48,6 @@ class BioBrainCore:
         if getattr(self, "_initialized", False):
             return
 
-        try:
-            ensure_brain_models_ready(console_output=False)
-        except Exception:
-            pass
-
         log.info("⚡ 正在初始化 ZeroNexus 本地生物神經網絡與情緒大腦...")
         self.neuro_engine = NeuroTransmitterEngine()
         self.emotion_projector = HighDimensionalEmotionProjector()
@@ -70,11 +64,6 @@ class BioBrainCore:
             core_engine=self,
         )
         self.heartbeat = BrainHeartbeatDaemon(self.cognitive_cortex, tick_interval=30.0)
-        try:
-            self.heartbeat.start()
-        except Exception:
-            pass
-
         self._initialized = True
         log.info("✔ ZeroNexus 本地生物大腦與類腦高階認知中樞初始化完畢（動機系統 + 預測編碼 + GWT + DMN）！")
 
@@ -403,3 +392,11 @@ class BioBrainCore:
 
 # 全域單例
 bio_brain = BioBrainCore()
+
+
+def start_brain_background_services() -> None:
+    """Start optional persistent brain jobs once an asyncio loop is available."""
+    try:
+        bio_brain.heartbeat.start()
+    except Exception as exc:
+        log.warning(f"啟動大腦背景心跳失敗: {exc}")
