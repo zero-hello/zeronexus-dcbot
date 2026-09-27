@@ -14,7 +14,7 @@ import logging
 from typing import Dict, Optional, Tuple
 
 from zeronexus.brain.bootstrap import ensure_brain_models_ready
-from zeronexus.brain.circadian import CircadianRhythmEngine
+from zeronexus.brain.circadian import CircadianRhythmEngine, TZ_TAIPEI
 from zeronexus.brain.attachment import PersonalAttachmentEngine
 from zeronexus.brain.emotion_projector import EmotionAnalysisResult, HighDimensionalEmotionProjector
 from zeronexus.brain.memory_vault import EncryptedMemoryVault
@@ -391,7 +391,7 @@ class BioBrainCore:
 
     def trigger_nightly_reflection(self, diary_text: str) -> bool:
         """觸發夜間心智反思日記，固化記憶並恢復生理體力，並生成深層夢境"""
-        today_str = datetime.date.today().isoformat()
+        today_str = datetime.datetime.now(TZ_TAIPEI).date().isoformat()
         ok = self.memory_vault.save_conscious_diary(today_str, diary_text)
         if ok:
             self.neuro_engine.sleep_and_restore()

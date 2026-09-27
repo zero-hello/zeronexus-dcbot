@@ -97,7 +97,9 @@ class MCTSThoughtSearchEngine:
     """
 
     def __init__(self, max_iterations: int = 40, exploration_weight: float = 1.25) -> None:
-        self.max_iterations = max_iterations
+        # 安全上限：防止組合爆炸
+        self.max_iterations = min(max_iterations, 200)
+        self.max_depth_limit = 8  # 深度上限
         self.exploration_weight = exploration_weight
 
     def search_optimal_reasoning_path(
@@ -106,6 +108,8 @@ class MCTSThoughtSearchEngine:
         context_facts: Optional[List[str]] = None,
         max_depth: int = 4,
     ) -> Tuple[List[Dict[str, Any]], float]:
+        # 強制限制深度上限
+        max_depth = min(max_depth, self.max_depth_limit)
         """
         執行 MCTS 思考推導，搜尋最優思維鏈。
         

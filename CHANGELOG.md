@@ -2,6 +2,32 @@
 
 ---
 
+## [2.8.3] - 2026-09-27
+
+### 🔴 Brain 子系統修復（並發安全 + 數值一致性）
+- 更新 [`zeronexus/brain/neuro_transmitters.py`](zeronexus/brain/neuro_transmitters.py)：
+  - 加入 `threading.RLock` 保護 `apply_homeostasis_decay` 與 `stimulate` 的 read-modify-write 操作
+  - 精力恢復公式加入上限保護，避免極端溢位
+- 更新 [`zeronexus/brain/emotion_state_engine.py`](zeronexus/brain/emotion_state_engine.py)：
+  - 加入 `threading.RLock` 保護 `apply_time_decay` 與 `update_state`
+  - 補全 `social_need` 與 `energy` 的半衰期定義
+- 更新 [`zeronexus/brain/core.py`](zeronexus/brain/core.py)：
+  - `trigger_nightly_reflection` 改用臺灣時區日期
+- 更新 [`zeronexus/brain/circadian.py`](zeronexus/brain/circadian.py)：
+  - 修正深夜時段邏輯判斷
+
+### 🔴 Intelligence 子系統修復（並發安全 + 狀態管理）
+- 更新 [`zeronexus/intelligence/cognitive_network.py`](zeronexus/intelligence/cognitive_network.py)：
+  - 加入 `threading.RLock` 保護活化能量操作
+  - 加入 `_auto_decay()` 自動衰減機制，防止認知網絡飽和
+- 更新 [`zeronexus/intelligence/deep_thinking_controller.py`](zeronexus/intelligence/deep_thinking_controller.py)：
+  - `active_contexts` 改用 `OrderedDict` + TTL 淘汰機制
+  - 加入 `threading.RLock` 保護並發修改
+- 更新 [`zeronexus/intelligence/thought_search_mcts.py`](zeronexus/intelligence/thought_search_mcts.py)：
+  - 加入 `max_iterations` 與 `max_depth` 安全上限
+
+---
+
 ## [2.8.2] - 2026-09-27
 
 ### 🔴 God Class 拆分完成

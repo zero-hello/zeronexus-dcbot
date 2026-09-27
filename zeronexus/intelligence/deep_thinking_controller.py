@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, List, Optional, Set, Tuple
@@ -192,7 +195,10 @@ class DeepThinkingController:
         self.cognition = cognition or cognitive_network
         self.causal = causal or causal_engine
         # 紀錄已啟用的頻道或使用者 ID (channel_id 或 user_id 字串)
-        self.active_contexts: Set[str] = set()
+        # 使用 OrderedDict 支援 TTL 淘汰，防止無限增長
+        self._active_contexts: OrderedDict[str, float] = OrderedDict()
+        self._lock = threading.RLock()  # 並發保護
+        self._context_ttl = 86400  # 24 小時未活動自動過期
 
     def evaluate_autonomous_deep_thinking(
         self,
@@ -274,10 +280,11 @@ class DeepThinkingController:
 
     def set_active(self, context_key: str, active: bool) -> None:
         """設定指定頻道或使用者之深度思考狀態"""
-        if active:
-            self.active_contexts.add(context_key)
-        else:
-            self.active_contexts.discard(context_key)
+        with self._lock:
+            if active:
+                self._active_contexts[context_key] = time.time()
+            else:
+                self._active_contexts.pop(context_key, None)
 
     async def generate_intent_reply(
         self,
@@ -323,8 +330,17 @@ class DeepThinkingController:
             return "收到你的確認囉～隨時為你待命！"
 
     def is_enabled(self, context_key: str) -> bool:
-        """檢查指定頻道或使用者是否啟用深度思考"""
-        return context_key in self.active_contexts
+        """檢查指定頻道或使用者是否啟用深度思考（含 TTL 過期檢查）"""
+        with self._lock:
+            # 清理過期項目
+            now = time.time()
+            expired = [
+                k for k, t in self._active_contexts.items()
+                if now - t > self._context_ttl
+            ]
+            for k in expired:
+                del self._active_contexts[k]
+            return context_key in self._active_contexts
 
     async def generate_model_thought(
         self,

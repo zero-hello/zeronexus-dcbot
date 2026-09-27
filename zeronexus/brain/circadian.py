@@ -63,7 +63,7 @@ class CircadianRhythmEngine:
             micro_action = "（舒服地靠在椅背上，嘴角揚起放鬆的笑意）"
             is_sleepy = False
             is_deep_sleep = False
-        elif 23.0 <= hour or hour < 3.0:
+        elif hour >= 23.0 or hour < 3.0:
             phase = "深夜微醺期"
             energy_modifier = 0.75
             tone_guidance = "精力逐漸下滑，帶著夜貓子的微睏與慵懶，說話較為柔和綿軟，會主動關心對方別熬太晚。"

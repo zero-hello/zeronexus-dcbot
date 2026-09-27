@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -118,6 +119,8 @@ class EmotionStateEngine:
         "curiosity": 7200.0,    # 好奇心基底穩定
         "trust": 21600.0,       # 信任具備高度穩定性 (6 小時半衰期)
         "calmness": 3600.0,     # 平靜回歸基準
+        "energy": 86400.0,      # 精力約 1 天緩慢回歸基準
+        "social_need": 14400.0, # 社交渴望約 4 小時半衰期
     }
 
     # 基準恆常態 (Homeostasis Baselines)
@@ -140,6 +143,7 @@ class EmotionStateEngine:
         self.state_file = state_file or DEFAULT_EMOTION_STATE_FILE
         self.personality = PersonalityMatrix()
         self.state = self._load_or_initialize()
+        self._lock = threading.RLock()  # 並發保護：防止 read-modify-write 競爭
 
     def _load_or_initialize(self) -> ContinuousEmotionState:
         """自磁碟安全載入或初始化情緒狀態"""
@@ -190,32 +194,33 @@ class EmotionStateEngine:
 
     def apply_time_decay(self, current_time: Optional[float] = None) -> None:
         """依照真實流逝時間執行非對稱 Leaky Integrator 衰減方程式"""
-        now = current_time or time.time()
-        elapsed = max(0.0, now - self.state.last_update_timestamp)
-        if elapsed < 1.0:
-            return  # 1 秒內微小間隔略過
+        with self._lock:
+            now = current_time or time.time()
+            elapsed = max(0.0, now - self.state.last_update_timestamp)
+            if elapsed < 1.0:
+                return  # 1 秒內微小間隔略過
 
-        # 各狀態指數回歸 Homeostasis 基準線
-        for dim, half_life in self.DECAY_HALF_LIVES.items():
-            current_val = getattr(self.state, dim, None)
-            if current_val is None:
-                continue
-            baseline = self.BASELINES.get(dim, 0.5)
-            decay_factor = math.exp(- (math.log(2.0) / half_life) * elapsed)
-            new_val = baseline + (current_val - baseline) * decay_factor
-            setattr(self.state, dim, ConstraintLayer.clamp_state(new_val))
+            # 各狀態指數回歸 Homeostasis 基準線
+            for dim, half_life in self.DECAY_HALF_LIVES.items():
+                current_val = getattr(self.state, dim, None)
+                if current_val is None:
+                    continue
+                baseline = self.BASELINES.get(dim, 0.5)
+                decay_factor = math.exp(- (math.log(2.0) / half_life) * elapsed)
+                new_val = baseline + (current_val - baseline) * decay_factor
+                setattr(self.state, dim, ConstraintLayer.clamp_state(new_val))
 
-        # 生理精力自然緩慢恢復（最高到 1.0，睡眠/閒置時每小時恢復約 0.05）
-        energy_recovery = (elapsed / 3600.0) * 0.05
-        self.state.energy = ConstraintLayer.clamp_state(self.state.energy + energy_recovery)
+            # 生理精力自然緩慢恢復（最高到 1.0，睡眠/閒置時每小時恢復約 0.05）
+            energy_recovery = (elapsed / 3600.0) * 0.05
+            self.state.energy = ConstraintLayer.clamp_state(self.state.energy + energy_recovery)
 
-        # 長時間無人互動時，社交渴望 (social_need) 逐漸累積（但有上限保護）
-        if elapsed > 3600.0:
-            social_acc = (elapsed / 86400.0) * 0.20  # 每天最多累積 0.2
-            self.state.social_need = ConstraintLayer.clamp_state(self.state.social_need + social_acc, max_val=0.85)
+            # 長時間無人互動時，社交渴望 (social_need) 逐漸累積（但有上限保護）
+            if elapsed > 3600.0:
+                social_acc = (elapsed / 86400.0) * 0.20  # 每天最多累積 0.2
+                self.state.social_need = ConstraintLayer.clamp_state(self.state.social_need + social_acc, max_val=0.85)
 
-        self.state.last_update_timestamp = now
-        self._persist()
+            self.state.last_update_timestamp = now
+            self._persist()
 
     def update_state(
         self,
@@ -230,46 +235,47 @@ class EmotionStateEngine:
         
         回傳實際變動量記錄。
         """
-        # 1. 先處理流逝時間代謝
-        self.apply_time_decay()
+        with self._lock:
+            # 1. 先處理流逝時間代謝
+            self.apply_time_decay()
 
-        applied_deltas: Dict[str, float] = {}
-        imp = max(0.2, min(3.0, ConstraintLayer.sanitize_float(importance, 1.0)))
+            applied_deltas: Dict[str, float] = {}
+            imp = max(0.2, min(3.0, ConstraintLayer.sanitize_float(importance, 1.0)))
 
-        # 人格調節權重
-        personality_modifiers = {
-            "happiness": self.personality.friendliness * 1.1,
-            "curiosity": self.personality.curiosity * 1.2,
-            "trust": self.personality.patience * 1.0,
-            "frustration": (1.0 - self.personality.patience * 0.4),
-            "anger": (1.0 - self.personality.patience * 0.5),
-            "fear": (1.0 - self.personality.confidence * 0.4),
-            "excitement": self.personality.openness * 1.1,
-            "calmness": self.personality.patience * 1.1,
-            "social_need": self.personality.sociability * 1.0,
-        }
+            # 人格調節權重
+            personality_modifiers = {
+                "happiness": self.personality.friendliness * 1.1,
+                "curiosity": self.personality.curiosity * 1.2,
+                "trust": self.personality.patience * 1.0,
+                "frustration": (1.0 - self.personality.patience * 0.4),
+                "anger": (1.0 - self.personality.patience * 0.5),
+                "fear": (1.0 - self.personality.confidence * 0.4),
+                "excitement": self.personality.openness * 1.1,
+                "calmness": self.personality.patience * 1.1,
+                "social_need": self.personality.sociability * 1.0,
+            }
 
-        for dim, raw_delta in deltas.items():
-            if not hasattr(self.state, dim):
-                continue
+            for dim, raw_delta in deltas.items():
+                if not hasattr(self.state, dim):
+                    continue
 
-            current_val = getattr(self.state, dim)
-            safe_delta = ConstraintLayer.clamp_delta(raw_delta)
-            modifier = personality_modifiers.get(dim, 1.0)
-            effective_delta = safe_delta * imp * modifier
+                current_val = getattr(self.state, dim)
+                safe_delta = ConstraintLayer.clamp_delta(raw_delta)
+                modifier = personality_modifiers.get(dim, 1.0)
+                effective_delta = safe_delta * imp * modifier
 
-            new_val = ConstraintLayer.clamp_state(current_val + effective_delta)
-            setattr(self.state, dim, new_val)
-            applied_deltas[dim] = round(new_val - current_val, 4)
+                new_val = ConstraintLayer.clamp_state(current_val + effective_delta)
+                setattr(self.state, dim, new_val)
+                applied_deltas[dim] = round(new_val - current_val, 4)
 
-        # 互動消耗極微量精力
-        self.state.energy = ConstraintLayer.clamp_state(self.state.energy - 0.005)
-        # 互動滿足社交需求
-        self.state.social_need = ConstraintLayer.clamp_state(self.state.social_need - 0.04)
+            # 互動消耗極微量精力
+            self.state.energy = ConstraintLayer.clamp_state(self.state.energy - 0.005)
+            # 互動滿足社交需求
+            self.state.social_need = ConstraintLayer.clamp_state(self.state.social_need - 0.04)
 
-        self.state.last_update_timestamp = time.time()
-        self._persist()
-        return applied_deltas
+            self.state.last_update_timestamp = time.time()
+            self._persist()
+            return applied_deltas
 
     def get_snapshot(self) -> Dict[str, Any]:
         """取得當前情緒狀態與人格之完整快照"""

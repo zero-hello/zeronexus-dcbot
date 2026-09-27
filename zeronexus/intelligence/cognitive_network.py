@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -91,6 +92,8 @@ class CognitiveNetwork:
         self.reverse_synapses: Dict[str, Set[str]] = {}  # target -> {sources}
         self.activation_threshold: float = 0.25
         self.max_spread_hops: int = 4
+        self._lock = threading.RLock()  # 並發保護：防止活化能量競爭
+        self._last_global_decay = time.time()  # 自動衰減時間戳
         self._bootstrap_knowledge_base()
 
     @property
@@ -166,6 +169,16 @@ class CognitiveNetwork:
             self.synapses[target_id][source_id] = rev_link
             self.reverse_synapses[source_id].add(target_id)
 
+    def _auto_decay(self) -> None:
+        """每次活化前自動執行全局衰減，防止認知網絡飽和。"""
+        now = time.time()
+        elapsed = now - self._last_global_decay
+        if elapsed > 60:  # 每 60 秒執行一次
+            with self._lock:
+                for node in self.nodes.values():
+                    node.decay(elapsed)
+                self._last_global_decay = now
+
     def spread_activation(
         self,
         initial_stimuli: Dict[str, float],
@@ -182,6 +195,9 @@ class CognitiveNetwork:
         回傳：
             所有被激活超過門檻的節點與最終能量映射
         """
+        # 0. 自動衰減：防止認知網絡飽和
+        self._auto_decay()
+
         # 1. 注入初始刺激
         active_frontier: Dict[str, float] = {}
         for cid, energy in initial_stimuli.items():

@@ -13,6 +13,7 @@
 import json
 import logging
 import math
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -53,6 +54,7 @@ class NeuroTransmitterEngine:
     def __init__(self, state_file: Optional[Path] = None) -> None:
         self.state_file = state_file or DEFAULT_NEURO_STATE_FILE
         self.profile = self._load_or_initialize()
+        self._lock = threading.RLock()  # 並發保護：防止 read-modify-write 競爭
 
     def _load_or_initialize(self) -> NeuroChemicalProfile:
         """從本地磁碟載入神經狀態，若不存在則初始化"""
@@ -99,31 +101,32 @@ class NeuroTransmitterEngine:
         隨著真實世界時間的流逝，神經遞質濃度會依指數規律逐漸代謝、回到基因基準線（Homeostasis）。
         同時在無人打擾時，體力精力會隨時間自動恢復。
         """
-        now = time.time()
-        elapsed_seconds = max(0.0, now - self.profile.last_update_timestamp)
-        if elapsed_seconds < 1.0:
-            return
+        with self._lock:
+            now = time.time()
+            elapsed_seconds = max(0.0, now - self.profile.last_update_timestamp)
+            if elapsed_seconds < 1.0:
+                return
 
-        elapsed_minutes = elapsed_seconds / 60.0
+            elapsed_minutes = elapsed_seconds / 60.0
 
-        # 多巴胺半衰期約 45 分鐘（興奮會慢慢回歸平靜）
-        dopamine_decay_rate = 1.0 - math.exp(-0.015 * elapsed_minutes)
-        self.profile.dopamine += (self.profile.baseline_dopamine - self.profile.dopamine) * dopamine_decay_rate
+            # 多巴胺半衰期約 45 分鐘（興奮會慢慢回歸平靜）
+            dopamine_decay_rate = 1.0 - math.exp(-0.015 * elapsed_minutes)
+            self.profile.dopamine += (self.profile.baseline_dopamine - self.profile.dopamine) * dopamine_decay_rate
 
-        # 皮質醇半衰期約 60 分鐘（委屈與壓力消退較慢）
-        cortisol_decay_rate = 1.0 - math.exp(-0.011 * elapsed_minutes)
-        self.profile.cortisol += (self.profile.baseline_cortisol - self.profile.cortisol) * cortisol_decay_rate
+            # 皮質醇半衰期約 60 分鐘（委屈與壓力消退較慢）
+            cortisol_decay_rate = 1.0 - math.exp(-0.011 * elapsed_minutes)
+            self.profile.cortisol += (self.profile.baseline_cortisol - self.profile.cortisol) * cortisol_decay_rate
 
-        # 血清素半衰期約 90 分鐘（心情放鬆程度）
-        serotonin_decay_rate = 1.0 - math.exp(-0.008 * elapsed_minutes)
-        self.profile.serotonin += (self.profile.baseline_serotonin - self.profile.serotonin) * serotonin_decay_rate
+            # 血清素半衰期約 90 分鐘（心情放鬆程度）
+            serotonin_decay_rate = 1.0 - math.exp(-0.008 * elapsed_minutes)
+            self.profile.serotonin += (self.profile.baseline_serotonin - self.profile.serotonin) * serotonin_decay_rate
 
-        # 體力精力恢復：每閒置休息 1 小時恢復約 15% 精力
-        energy_recovery = 0.25 * elapsed_minutes
-        self.profile.energy = min(100.0, self.profile.energy + energy_recovery)
+            # 體力精力恢復：每閒置休息 1 小時恢復約 15% 精力
+            energy_recovery = 0.25 * min(elapsed_minutes, 1440.0)  # 上限一天，避免極端溢位
+            self.profile.energy = min(100.0, self.profile.energy + energy_recovery)
 
-        self.profile.last_update_timestamp = now
-        self._persist()
+            self.profile.last_update_timestamp = now
+            self._persist()
 
     def get_oxytocin(self, user_id: str) -> float:
         """取得特定使用者的催產素親密度（預設為 25.0 初見友善值）"""
@@ -139,22 +142,23 @@ class NeuroTransmitterEngine:
         energy_cost: float = 1.5,
     ) -> Dict[str, float]:
         """接收感測器之神經刺激脈衝，即時更新化學遞質濃度"""
-        self.apply_homeostasis_decay()
+        with self._lock:
+            self.apply_homeostasis_decay()
 
-        # 施加增量
-        self.profile.dopamine = max(0.0, min(100.0, self.profile.dopamine + delta_dopamine))
-        self.profile.serotonin = max(0.0, min(100.0, self.profile.serotonin + delta_serotonin))
-        self.profile.cortisol = max(0.0, min(100.0, self.profile.cortisol + delta_cortisol))
-        self.profile.energy = max(5.0, min(100.0, self.profile.energy - energy_cost))
+            # 施加增量
+            self.profile.dopamine = max(0.0, min(100.0, self.profile.dopamine + delta_dopamine))
+            self.profile.serotonin = max(0.0, min(100.0, self.profile.serotonin + delta_serotonin))
+            self.profile.cortisol = max(0.0, min(100.0, self.profile.cortisol + delta_cortisol))
+            self.profile.energy = max(5.0, min(100.0, self.profile.energy - energy_cost))
 
-        # 更新與特定使用者的專屬親密度
-        uid_str = str(user_id)
-        current_bond = self.get_oxytocin(uid_str)
-        new_bond = max(0.0, min(100.0, current_bond + delta_oxytocin))
-        self.profile.oxytocin_bonds[uid_str] = round(new_bond, 2)
+            # 更新與特定使用者的專屬親密度
+            uid_str = str(user_id)
+            current_bond = self.get_oxytocin(uid_str)
+            new_bond = max(0.0, min(100.0, current_bond + delta_oxytocin))
+            self.profile.oxytocin_bonds[uid_str] = round(new_bond, 2)
 
-        self.profile.last_update_timestamp = time.time()
-        self._persist()
+            self.profile.last_update_timestamp = time.time()
+            self._persist()
 
         return {
             "dopamine": round(self.profile.dopamine, 2),
