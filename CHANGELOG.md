@@ -2,6 +2,15 @@
 
 ---
 
+## [2.8.5] - 2026-09-27
+
+### 🔴 緊急修復：NameError 導致系統無法啟動
+- 更新 [`zeronexus/models/user.py`](zeronexus/models/user.py)：
+  - 修正 `AIModelQuotaRecord` 複合索引使用 `Index()` 但未匯入的 NameError
+  - 在 SQLAlchemy import 中補上 `Index`
+
+---
+
 ## [2.8.4] - 2026-09-27
 
 ### 🔴 定期維護機制
