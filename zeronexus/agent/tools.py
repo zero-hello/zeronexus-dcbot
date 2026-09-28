@@ -39,8 +39,9 @@ class ReadOnlyTool:
         self.metadata = metadata or {}
         self._guild_lock = asyncio.Lock() if self.metadata.get("scope") == "current_guild_visible_channels_only" else None
 
-    async def execute(self, **kwargs: Any) -> Dict[str, Any]:
+    async def execute(self, _timeout_seconds: Optional[float] = None, **kwargs: Any) -> Dict[str, Any]:
         t0 = time.perf_counter()
+        from zeronexus.core.stats import stats
         clean_args = {
             k: str(v) if not isinstance(v, (int, float, bool, list, dict, type(None))) else v
             for k, v in kwargs.items()
@@ -55,37 +56,56 @@ class ReadOnlyTool:
                 user = kwargs.get("user")
                 bot = kwargs.get("bot")
                 if guild is None or user is None or bot is None:
+                    stats.record_tool_execution(self.name, (time.perf_counter() - t0) * 1000, False)
                     return {"error": "Discord 工具需要目前互動的伺服器、提問者與 Bot 上下文。"}
                 bot_guild = bot.get_guild(getattr(guild, "id", 0)) if hasattr(bot, "get_guild") else None
                 if bot_guild is None or getattr(bot_guild, "id", None) != getattr(guild, "id", None):
+                    stats.record_tool_execution(self.name, (time.perf_counter() - t0) * 1000, False)
                     return {"error": "只允許讀取目前 Bot 所在的互動伺服器；跨伺服器查詢已拒絕。"}
                 user_guild = getattr(user, "guild", None)
                 if user_guild is None and hasattr(guild, "get_member"):
                     user_guild = guild.get_member(getattr(user, "id", 0))
                 if user_guild is None or getattr(user_guild, "guild", guild).id != guild.id:
+                    stats.record_tool_execution(self.name, (time.perf_counter() - t0) * 1000, False)
                     return {"error": "無法確認提問者屬於目前伺服器，已拒絕讀取。"}
                 channel = kwargs.get("channel")
                 guild_id = getattr(guild, "id", None)
                 if channel is not None and getattr(getattr(channel, "guild", None), "id", None) != guild_id:
+                    stats.record_tool_execution(self.name, (time.perf_counter() - t0) * 1000, False)
                     return {"error": "只允許使用目前互動伺服器的頻道上下文。"}
                 if self._guild_lock:
                     async with self._guild_lock:
-                        res = await self.handler(**kwargs)
+                        res = await asyncio.wait_for(self.handler(**kwargs), timeout=_timeout_seconds) if _timeout_seconds else await self.handler(**kwargs)
                 else:
-                    res = await self.handler(**kwargs)
+                    res = await asyncio.wait_for(self.handler(**kwargs), timeout=_timeout_seconds) if _timeout_seconds else await self.handler(**kwargs)
             else:
-                res = await self.handler(**kwargs)
+                res = await asyncio.wait_for(self.handler(**kwargs), timeout=_timeout_seconds) if _timeout_seconds else await self.handler(**kwargs)
             latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+            failed = isinstance(res, dict) and ("error" in res or res.get("is_error") is True)
+            stats.record_tool_execution(self.name, latency_ms, not failed)
             log.info(
-                f"[🛠️ 工具調用 / TOOL CALL] 執行: {self.name} | 參數: {args_repr} | 耗時: {latency_ms}ms | 狀態: [成功]"
+                f"[🛠️ 工具調用 / TOOL CALL] 執行: {self.name} | 參數: {args_repr} | 耗時: {latency_ms}ms | 狀態: [{'失敗' if failed else '成功'}]"
             )
             return res
+        except asyncio.TimeoutError:
+            latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+            stats.record_tool_execution(self.name, latency_ms, False, timed_out=True)
+            log.warning(f"[🛠️ 工具調用 / TOOL CALL] {self.name} 超時 ({latency_ms}ms)")
+            return {"error": f"工具執行超時：{self.name}"}
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+            stats.record_tool_execution(self.name, latency_ms, False)
             log.error(
                 f"[🛠️ 工具調用 / TOOL CALL] 執行: {self.name} | 參數: {args_repr} | 耗時: {latency_ms}ms | 狀態: [失敗] | 錯誤: {e}"
             )
             raise
+
+    async def execute_bounded(self, timeout_seconds: float = 15.0, **kwargs: Any) -> Dict[str, Any]:
+        """Execute a tool with an interactive timeout bound."""
+        timeout = max(0.1, min(float(timeout_seconds), 60.0))
+        return await self.execute(_timeout_seconds=timeout, **kwargs)
 
     def to_openai_tool_schema(self) -> Dict[str, Any]:
         """Exports standard OpenAPI/JSON Schema for model function calling."""
@@ -206,7 +226,7 @@ async def execute_tool(name: str, args: Optional[Dict[str, Any]] = None, **kwarg
         return {"error": f"Tool '{name}' is not registered in agent tool catalog."}
     merged_args = dict(args or {})
     merged_args.update(kwargs)
-    return await tool.execute(**merged_args)
+    return await tool.execute_bounded(**merged_args)
 
 
 __all__ = ["ReadOnlyTool", "AgentToolRegistry", "agent_tools", "execute_tool"]

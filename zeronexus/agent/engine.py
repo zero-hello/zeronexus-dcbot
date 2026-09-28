@@ -13,6 +13,7 @@ Produces progressive multi-stage status updates for Discord live card rendering.
 import json
 import re
 import time
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
@@ -21,6 +22,7 @@ import discord
 from zeronexus.agent.tools import agent_tools
 from zeronexus.ai_gateway.gateway import ai_gateway
 from zeronexus.core.logger import log
+from zeronexus.intelligence.dynamic_projector import DynamicToolProjector
 
 
 @dataclass
@@ -62,14 +64,17 @@ class AgentEngine:
         channel: Optional[discord.TextChannel] = None,
         user: Optional[discord.User | discord.Member] = None,
         progress_callback: Optional[Callable[[AgentProgress], Coroutine[Any, Any, None]]] = None,
+        timeout_seconds: float = 90.0,
+        max_tool_calls: int = 6,
     ) -> AgentProgress:
-        """Executes a diagnostic or analytical agent task through all 5 stages."""
+        """Execute a bounded, verified, read-only agent task."""
         start_time = time.perf_counter()
         progress = AgentProgress(
             task_goal=task_goal,
             current_stage="PLANNER",
             stage_description="正在解析使用者目標並擬定執行計畫...",
         )
+        deadline = start_time + max(5.0, min(float(timeout_seconds), 300.0))
 
         async def emit_update(stage: str, desc: str) -> None:
             progress.current_stage = stage
@@ -81,11 +86,28 @@ class AgentEngine:
                 except Exception as cb_err:
                     log.warning(f"Agent progress callback error: {cb_err}")
 
+        def remaining_seconds() -> float:
+            return max(0.1, deadline - time.perf_counter())
+
         # -----------------------------------------------------------------
         # Stage 1: Planner
         # -----------------------------------------------------------------
-        await emit_update("PLANNER", "📋 [階段 1/5] 正在拆解目標、構建思考鏈並擬定步驟...")
-        planned_steps = await self._plan_task(task_goal)
+        await emit_update("PLANNER", "📋 正在解析目標並選取相關唯讀工具...")
+        from zeronexus.intelligence.complexity_router import ComplexityLevel
+
+        projected = DynamicToolProjector.project(task_goal, min_tools=1, max_tools=max_tool_calls)
+        if not projected.tools:
+            projected = DynamicToolProjector.project(task_goal, min_tools=1, max_tools=max_tool_calls, complexity=ComplexityLevel.MEDIUM)
+        planned_steps = await asyncio.wait_for(
+            self._plan_task(task_goal, allowed_tool_names=set(projected.tool_names)),
+            timeout=min(25.0, remaining_seconds()),
+        )
+        if not planned_steps:
+            planned_steps = [
+                AgentStep(step_id=idx + 1, title=f"呼叫相關工具 {tool.name}", tool_name=tool.name, parameters={})
+                for idx, tool in enumerate(projected.tools[:max(1, min(max_tool_calls, 3))])
+            ]
+        planned_steps = planned_steps[:max(1, min(int(max_tool_calls), 10))]
         progress.steps = planned_steps
         for s in progress.steps:
             if s.thought:
@@ -98,10 +120,10 @@ class AgentEngine:
         # -----------------------------------------------------------------
         await emit_update("ROUTER", "🔀 [階段 2/5] 正在驗證受限唯讀邊界並分派工具...")
         for step in progress.steps:
-            if step.tool_name and not self.tools.get_tool(step.tool_name):
-                # Fallback matching
-                matched_tool = self._fuzzy_match_tool(step.tool_name)
-                step.tool_name = matched_tool
+            if step.tool_name and (step.tool_name not in set(projected.tool_names) or not self.tools.get_tool(step.tool_name)):
+                step.status = "FAILED"
+                step.error = "規劃器選用未投影或未註冊工具，已拒絕執行。"
+                step.tool_name = None
             if step.tool_name:
                 progress.chain_of_thought.append(f"【安全路由】：步驟 {step.step_id} 唯讀安全校驗通過 ➔ 分派工具 `{step.tool_name}`")
             else:
@@ -112,6 +134,12 @@ class AgentEngine:
         # -----------------------------------------------------------------
         await emit_update("EXECUTOR", "⚙️ [階段 3/5] 正在執行受限唯讀工具收集數據...")
         for step in progress.steps:
+            if step.status == "FAILED":
+                continue
+            if remaining_seconds() <= 0.1:
+                step.status = "FAILED"
+                step.error = "Agent 整體執行時限已到，已停止後續工具呼叫。"
+                continue
             step.status = "RUNNING"
             await emit_update("EXECUTOR", f"⚙️ 正在執行步驟 {step.step_id}：{step.title}...")
 
@@ -137,7 +165,11 @@ class AgentEngine:
                     params["channel"] = channel
                 if "user" not in params and user:
                     params["user"] = user
-                res = await tool.execute(**params)
+                params.setdefault("bot", getattr(getattr(guild, "_state", None), "_client", None))
+                res = await tool.execute_bounded(
+                    timeout_seconds=min(15.0, max(1.0, remaining_seconds() / max(1, len(progress.steps)))),
+                    **params,
+                )
                 step.result = res
 
                 # Check if tool execution result indicates an internal error
@@ -269,22 +301,30 @@ class AgentEngine:
 
         return progress
 
-    async def _plan_task(self, task_goal: str) -> List[AgentStep]:
-        """Uses domain heuristics + LLM to break goal into structured steps."""
-        tool_summary = self.tools.get_tools_prompt_summary()
+    async def _plan_task(self, task_goal: str, allowed_tool_names: Optional[set[str]] = None) -> List[AgentStep]:
+        """Plan using only the compact tool set already selected for this task."""
+        allowed_tool_names = allowed_tool_names or set()
+        tool_summary = "\n".join(
+            f"- {tool.name}: {tool.description} (參數: {tool.parameters_desc})"
+            for tool in self.tools.list_tools()
+            if tool.name in allowed_tool_names
+        )
         goal_lower = task_goal.lower()
 
         # 1. High-confidence heuristic for full platform/bot inspection
         if any(k in task_goal for k in ["全方位深度巡檢", "巡檢系統資源", "平台巡檢", "模組健康狀態", "bot資源"]) or task_goal in ["系統巡檢", "系統診斷", "平台診斷", "全盤巡檢"]:
-            return [
+            preset = [
                 AgentStep(step_id=1, title="探測 Bot 與系統資源負載 (CPU/RAM/Uptime)", tool_name="system_diagnostics", parameters={}, thought="採集 Python 程序記憶體駐留集 (RSS)、系統 CPU 負載與持續運行時間以建立效能基準"),
                 AgentStep(step_id=2, title="檢查全平台 11 個功能模組運行狀態", tool_name="module_health", parameters={}, thought="遍歷 11 個核心功能模組之 Lifecycle 狀態與註冊指令數，確認是否有模組異常"),
-                AgentStep(step_id=3, title="檢查當前 Discord 伺服器規模與權限配置", tool_name="guild_diagnostics", parameters={}, thought="讀取目前伺服器成員總數、頻道拓撲與機器人關鍵管理員權限位元"),
-                AgentStep(step_id=4, title="讀取資料庫數據規模與配額大盤", tool_name="database_stats", parameters={}, thought="統計 SQLite 數據規模、每日配額分派與經濟模組錢包健康狀態"),
             ]
+            if guild and user:
+                preset.append(AgentStep(step_id=3, title="檢查目前伺服器可見資訊與權限", tool_name="guild_diagnostics", parameters={}, thought="僅統計提問者可見範圍與 Bot 權限"))
+            preset = [step for step in preset if step.tool_name in allowed_tool_names]
+            if preset:
+                return preset
 
         # 2. Pure math calculation
-        if task_goal.startswith("計算") or re.match(r"^[\d\.\+\-\*\/\(\)\^\s]{3,}$", task_goal.strip()):
+        if (task_goal.startswith("計算") or re.match(r"^[\d\.\+\-\*\/\(\)\^\s]{3,}$", task_goal.strip())) and "calculator" in allowed_tool_names:
             m = re.search(r"[\d\.\+\-\*\/\(\)\^\s]{3,}", task_goal)
             expr = m.group(0).strip() if m else "1+1"
             return [
@@ -292,6 +332,8 @@ class AgentEngine:
             ]
 
         # 3. LLM based planning
+        if not allowed_tool_names:
+            return []
         planner_prompt = (
             f"你是一個專為 ZeroNexus 打造的原生 Agent 任務規劃器 (Planner)。\n"
             f"使用者目標：{task_goal}\n\n"
@@ -310,6 +352,9 @@ class AgentEngine:
             res, _ = await ai_gateway.generate_response(
                 system_instruction="你是一個嚴格遵從 JSON 格式的 Agent Planner。只輸出純 JSON 陣列。",
                 messages=[{"role": "user", "content": planner_prompt}],
+                allow_tools=False,
+                max_tokens=900,
+                timeout=20,
             )
             raw = res.text.strip()
             match = re.search(r"\[\s*\{.*\}\s*\]", raw, re.DOTALL)
@@ -318,8 +363,8 @@ class AgentEngine:
                 steps = []
                 for item in data:
                     t_name = item.get("tool_name")
-                    if t_name and not self.tools.get_tool(t_name):
-                        t_name = self._fuzzy_match_tool(t_name)
+                    if t_name and (t_name not in allowed_tool_names or not self.tools.get_tool(t_name)):
+                        t_name = None
                     steps.append(AgentStep(
                         step_id=item.get("step_id", len(steps) + 1),
                         title=item.get("title", f"執行步驟 {len(steps) + 1}"),
@@ -328,34 +373,17 @@ class AgentEngine:
                         thought=item.get("thought") or f"為達成目標執行步驟 {len(steps) + 1}",
                     ))
                 if steps:
-                    return steps
+                    return [step for step in steps if step.tool_name in allowed_tool_names][:3]
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             log.warning(f"LLM planner failed: {e}. Using fallback heuristic planning.")
 
-        # 4. Fallback heuristics if LLM planning is unavailable
-        if any(k in goal_lower for k in ["mc", "minecraft", "hypixel"]) or re.search(r"[a-zA-Z0-9\.\-_]+\.(?:net|org|com|io|me|tw|xyz|cc)", task_goal):
-            host = "mc.hypixel.net"
-            if "hypixel" in goal_lower:
-                host = "mc.hypixel.net"
-            else:
-                dm = re.search(r"([a-zA-Z0-9\.\-_]+\.(?:net|org|com|io|me|tw|xyz|cc)[a-zA-Z0-9\.\-_]*)", task_goal)
-                if dm:
-                    host = dm.group(1).strip()
-            return [AgentStep(step_id=1, title=f"探測 Minecraft 伺服器 ({host})", tool_name="minecraft_probe", parameters={"host": host}, thought=f"透過 socket ping 通訊協定直接探測 Minecraft 伺服器 {host} 即時在線狀態與延遲")]
-
-        if any(k in goal_lower for k in ["天氣", "氣象", "下雨", "溫度"]):
-            county = "臺北市"
-            for c in ["臺北市", "新北市", "桃園市", "臺中市", "臺南市", "高雄市", "基隆市", "新竹市", "嘉義市", "宜蘭縣", "花蓮縣", "臺東縣"]:
-                if c[:2] in task_goal:
-                    county = c
-                    break
-            return [AgentStep(step_id=1, title=f"查詢氣象署 ({county}) 即時預報", tool_name="weather_probe", parameters={"county": county}, thought=f"串接交通部中央氣象署開放資料 API 檢索 {county} 即時天氣觀測與 36 小時預報")]
-
-        if "地震" in goal_lower:
-            return [AgentStep(step_id=1, title="查詢氣象署最新顯著有感地震", tool_name="earthquake_probe", parameters={}, thought="檢索中央氣象署最新發布之編號地震速報與震度資料")]
-
-        # Default single step
-        return [AgentStep(step_id=1, title="讀取系統與核心模組狀態", tool_name="system_diagnostics", parameters={}, thought="採集系統基礎健康資訊進行整體評估")]
+        # 4. Fallback to deterministic intent projection, never unrelated system probes.
+        return [
+            AgentStep(step_id=index + 1, title=f"查詢相關資料：{tool_name}", tool_name=tool_name, parameters={})
+            for index, tool_name in enumerate(list(allowed_tool_names)[:3])
+        ]
 
     def _fuzzy_match_tool(self, name: str) -> Optional[str]:
         n = name.lower()

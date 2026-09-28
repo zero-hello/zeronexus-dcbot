@@ -7,6 +7,7 @@ Implements /代理人 commands:
 """
 
 import time
+import asyncio
 from typing import Any
 
 import discord
@@ -104,7 +105,7 @@ class AgentCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "📝 任務說明長度請保持在 500 個字元以內，清晰精煉的描述有助於代理人更精確地規劃路線圖！", ephemeral=True)
             return
 
-        if not await InteractionResponder.safe_defer(interaction):
+        if not await InteractionResponder.safe_defer(interaction, ephemeral=True):
             return
 
         # Initial card
@@ -133,12 +134,17 @@ class AgentCog(commands.Cog):
                     pass
 
         try:
-            final_progress = await agent_engine.run_task(
-                task_goal=任務,
-                guild=interaction.guild,
-                channel=interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None,
-                user=interaction.user,
-                progress_callback=on_progress,
+            final_progress = await asyncio.wait_for(
+                agent_engine.run_task(
+                    task_goal=任務,
+                    guild=interaction.guild,
+                    channel=interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None,
+                    user=interaction.user,
+                    progress_callback=on_progress,
+                    timeout_seconds=90.0,
+                    max_tool_calls=6,
+                ),
+                timeout=95.0,
             )
             # Final guaranteed render
             final_card = self._render_progress_card(final_progress)
