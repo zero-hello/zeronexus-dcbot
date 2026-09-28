@@ -104,7 +104,7 @@ async def test_other_players_cannot_operate_public_game_board() -> None:
 
 
 @pytest.mark.asyncio
-async def test_manual_end_records_score_and_disables_controls_except_restart() -> None:
+async def test_manual_end_records_score_and_removes_all_controls() -> None:
     from discord.ui import Button
 
     view = Game2048View(1, SimpleNamespace(id=2, name="owner", display_name="owner"))
@@ -115,10 +115,43 @@ async def test_manual_end_records_score_and_disables_controls_except_restart() -
         record = AsyncMock()
         edit = AsyncMock()
         monkeypatch.setattr(view, "_record_result_once", record)
-        monkeypatch.setattr("zeronexus.modules.entertainment.cog.InteractionResponder.safe_edit", edit)
+        finish = AsyncMock()
+        monkeypatch.setattr(view, "_finish_public_board", finish)
         await view.end_game.callback(interaction)
 
     assert view.status == "ended"
     record.assert_awaited_once()
-    buttons = [item for item in view.children if isinstance(item, Button)]
-    assert all(item.disabled or view._button_name(item) == "restart" for item in buttons)
+    finish.assert_awaited_once_with(interaction)
+
+
+@pytest.mark.asyncio
+async def test_invalid_move_is_public_and_does_not_send_private_message() -> None:
+    view = Game2048View(1, SimpleNamespace(id=2, name="owner", display_name="owner"))
+    view.board = [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    interaction = SimpleNamespace(user=SimpleNamespace(id=2))
+    private_reply = AsyncMock()
+    public_edit = AsyncMock()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("zeronexus.modules.entertainment.cog.InteractionResponder.safe_send", private_reply)
+        monkeypatch.setattr("zeronexus.modules.entertainment.cog.InteractionResponder.safe_edit", public_edit)
+        await view.move_left.callback(interaction)
+
+    private_reply.assert_not_awaited()
+    public_edit.assert_awaited_once()
+    assert view.score == 0 and view.moves == 0
+
+
+@pytest.mark.asyncio
+async def test_finish_public_board_removes_view_and_disables_buttons() -> None:
+    from discord.ui import Button
+
+    view = Game2048View(1, SimpleNamespace(id=2, name="owner", display_name="owner"))
+    interaction = SimpleNamespace(user=SimpleNamespace(id=2))
+    edit = AsyncMock()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("zeronexus.modules.entertainment.cog.InteractionResponder.safe_edit", edit)
+        await view._finish_public_board(interaction)
+
+    edit.assert_awaited_once()
+    assert edit.await_args.kwargs["view"] is None
+    assert all(button.disabled for button in view.children if isinstance(button, Button))

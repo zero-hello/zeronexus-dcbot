@@ -1049,7 +1049,7 @@ class Game2048View(discord.ui.View):
                 return
             new_state, gained, changed = move_2048(self.board, direction)
             if not changed:
-                await InteractionResponder.safe_send(interaction, "這個方向無法移動，棋盤保持不變。", ephemeral=True)
+                await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
                 return
             self.board = new_state
             self.score += gained
@@ -1063,16 +1063,27 @@ class Game2048View(discord.ui.View):
             if not has_2048_moves(self.board):
                 self.status = "lost"
             if self.status == "lost":
-                for child in self.children:
-                    if isinstance(child, discord.ui.Button) and self._button_name(child) != "restart":
-                        child.disabled = True
                 try:
                     await self._record_result_once()
                 except Exception as exc:
                     log.warning(f"儲存 2048 最佳成績失敗：{exc}")
+                self._disable_controls_after_settlement()
             if milestone:
                 await InteractionResponder.safe_send(interaction, "🏆 你拼出 2048 了！可以繼續挑戰更高方塊，分數會在遊戲結束時記錄。", ephemeral=True)
-            await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
+            if self.status == "lost":
+                await self._finish_public_board(interaction)
+            else:
+                await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
+
+    def _disable_controls_after_settlement(self) -> None:
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
+    async def _finish_public_board(self, interaction: discord.Interaction) -> None:
+        self._disable_controls_after_settlement()
+        self.stop()
+        await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=None)
 
     @discord.ui.button(label="■", style=discord.ButtonStyle.secondary, disabled=True, row=0)
     async def corner_top_left(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -1113,8 +1124,11 @@ class Game2048View(discord.ui.View):
     @discord.ui.button(label="重新開始", emoji="🔄", style=discord.ButtonStyle.secondary, row=3)
     async def restart(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         async with self._lock:
-            if self.moves and not self._result_recorded:
-                await self._record_result_once()
+            if self.status == "playing" and self.moves and not self._result_recorded:
+                try:
+                    await self._record_result_once()
+                except Exception as exc:
+                    log.warning(f"2048 restart score persistence failed: {exc}")
             self.board = new_2048_board()
             self.started_at = time.monotonic()
             self.score = 0
@@ -1134,32 +1148,26 @@ class Game2048View(discord.ui.View):
     async def end_game(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         async with self._lock:
             if self.status != "playing":
-                await InteractionResponder.safe_send(interaction, "這局已結束，成績已結算。", ephemeral=True)
+                await InteractionResponder.safe_send(interaction, "這局已經結束並結算了。", ephemeral=True)
                 return
             self.status = "ended"
             try:
                 await self._record_result_once()
             except Exception as exc:
                 log.warning(f"2048 manual end score persistence failed: {exc}")
-            for child in self.children:
-                if isinstance(child, discord.ui.Button):
-                    child.disabled = self._button_name(child) != "restart"
-            await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
+            await self._finish_public_board(interaction)
 
     async def on_timeout(self) -> None:
         self.stop()
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
         if self.status == "playing":
-            self.status = "lost"
+            self.status = "ended"
         try:
             await self._record_result_once()
         except Exception as exc:
             log.warning(f"2048 timeout score persistence failed: {exc}")
         if self.message:
             try:
-                await self.message.edit(embed=self.render_card().to_embed(), view=self)
+                await self.message.edit(embed=self.render_card().to_embed(), view=None)
             except Exception:
                 pass
 
