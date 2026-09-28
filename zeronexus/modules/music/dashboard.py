@@ -13,6 +13,7 @@ import wavelink
 from zeronexus.core.config import config
 from zeronexus.lavalink.node_pool import NodePoolManager
 from zeronexus.ui.card import ZNCard
+from zeronexus.ui.responder import InteractionResponder
 from zeronexus.ui.theme import ZNColor, ZNStatusPill
 
 
@@ -100,10 +101,11 @@ def build_now_playing_card(player: wavelink.Player, volume: int) -> ZNCard:
 class VolumeModal(discord.ui.Modal, title="🔊 調整音樂播放音量"):
     """音量微調彈出視窗表單。"""
 
-    def __init__(self, player: wavelink.Player, current_volume: int, on_refresh: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    def __init__(self, player: wavelink.Player, current_volume: int, on_refresh: Callable[[], Coroutine[Any, Any, None]], guild_id: Optional[int] = None) -> None:
         super().__init__()
         self.player = player
         self.on_refresh = on_refresh
+        self.guild_id = guild_id
         max_v = config.music.max_volume
 
         self.volume_input = discord.ui.TextInput(
@@ -117,6 +119,13 @@ class VolumeModal(discord.ui.Modal, title="🔊 調整音樂播放音量"):
         self.add_item(self.volume_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 這個音量視窗只適用於原伺服器。", ephemeral=True)
+            return
+        voice = getattr(interaction.user, "voice", None)
+        if self.player.channel and (not voice or not voice.channel or voice.channel.id != self.player.channel.id):
+            await InteractionResponder.safe_send(interaction, "❌ 請先加入 Bot 所在的語音頻道，再調整音量。", ephemeral=True)
+            return
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         val_str = self.volume_input.value.strip()
@@ -141,10 +150,11 @@ class VolumeModal(discord.ui.Modal, title="🔊 調整音樂播放音量"):
 class SpeedModal(discord.ui.Modal, title="⚡ 調整音樂播放倍速"):
     """播放倍速調整彈出視窗表單 (支援 0.25x ~ 4.0x)。"""
 
-    def __init__(self, player: wavelink.Player, current_speed: float, on_refresh: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    def __init__(self, player: wavelink.Player, current_speed: float, on_refresh: Callable[[], Coroutine[Any, Any, None]], guild_id: Optional[int] = None) -> None:
         super().__init__()
         self.player = player
         self.on_refresh = on_refresh
+        self.guild_id = guild_id
 
         speed_str = f"{current_speed:.2f}".rstrip("0").rstrip(".") if current_speed != int(current_speed) else f"{int(current_speed)}"
         self.speed_input = discord.ui.TextInput(
@@ -158,6 +168,13 @@ class SpeedModal(discord.ui.Modal, title="⚡ 調整音樂播放倍速"):
         self.add_item(self.speed_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 這個倍速視窗只適用於原伺服器。", ephemeral=True)
+            return
+        voice = getattr(interaction.user, "voice", None)
+        if self.player.channel and (not voice or not voice.channel or voice.channel.id != self.player.channel.id):
+            await InteractionResponder.safe_send(interaction, "❌ 請先加入 Bot 所在的語音頻道，再調整倍速。", ephemeral=True)
+            return
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         val_str = self.speed_input.value.strip()
@@ -221,6 +238,19 @@ class NowPlayingView(discord.ui.View):
         self.on_add_song = on_add_song
         self.text_channel_id = text_channel_id
         self._sync_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 這個音樂控制面板只適用於原伺服器。", ephemeral=True)
+            return False
+        voice = getattr(interaction.user, "voice", None)
+        if not voice or not voice.channel or getattr(getattr(self.player, "channel", None), "id", None) != getattr(voice.channel, "id", None):
+            await InteractionResponder.safe_send(interaction, "❌ 請先加入 Bot 正在播放的語音頻道，再操作音樂控制面板。", ephemeral=True)
+            return False
+        if self.text_channel_id and interaction.channel_id != self.text_channel_id:
+            await InteractionResponder.safe_send(interaction, "❌ 請在原播放控制面板所在頻道操作。", ephemeral=True)
+            return False
+        return True
 
     def _sync_buttons(self) -> None:
         """依播放器狀態更新按鈕樣式與標籤。"""
@@ -291,7 +321,7 @@ class NowPlayingView(discord.ui.View):
             color=ZNColor.PRIMARY,
             footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
         )
-        ended_view = TrackEndedView(self.on_add_song) if self.on_add_song else None
+        ended_view = TrackEndedView(self.on_add_song, self.guild_id, self.player) if self.on_add_song else None
         lv = card.to_layout_view(extra_view=ended_view)
 
         if not interaction.response.is_done():
@@ -321,7 +351,7 @@ class NowPlayingView(discord.ui.View):
 
     @discord.ui.button(label="🔊 音量", style=discord.ButtonStyle.secondary, row=0)
     async def btn_volume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        modal = VolumeModal(self.player, self.volume, self.refresh_dashboard)
+        modal = VolumeModal(self.player, self.volume, self.refresh_dashboard, self.guild_id)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="🔁 循環：關閉", style=discord.ButtonStyle.secondary, row=1)
@@ -350,7 +380,7 @@ class NowPlayingView(discord.ui.View):
     @discord.ui.button(label="⚡ 倍速：1.0x", style=discord.ButtonStyle.secondary, row=1)
     async def btn_speed(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         current_speed = getattr(self.player, "_playback_speed", 1.0)
-        modal = SpeedModal(self.player, current_speed, self.refresh_dashboard)
+        modal = SpeedModal(self.player, current_speed, self.refresh_dashboard, self.guild_id)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="➕ 添加歌曲", style=discord.ButtonStyle.success, row=1)
@@ -454,9 +484,21 @@ class PlaylistPromptView(discord.ui.View):
 class TrackEndedView(discord.ui.View):
     """全部曲目播放完畢後之待機面板 View。"""
 
-    def __init__(self, on_add_song: Callable[[discord.Interaction, str], Coroutine[Any, Any, None]]) -> None:
+    def __init__(self, on_add_song: Callable[[discord.Interaction, str], Coroutine[Any, Any, None]], guild_id: Optional[int] = None, player: Optional[wavelink.Player] = None) -> None:
         super().__init__(timeout=None)
         self.on_add_song = on_add_song
+        self.guild_id = guild_id
+        self.player = player
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 這個音樂面板只適用於原伺服器。", ephemeral=True)
+            return False
+        voice = getattr(interaction.user, "voice", None)
+        if self.player is not None and (not voice or not voice.channel or getattr(getattr(self.player, "channel", None), "id", None) != getattr(voice.channel, "id", None)):
+            await InteractionResponder.safe_send(interaction, "❌ 請先加入 Bot 所在的語音頻道，再新增歌曲。", ephemeral=True)
+            return False
+        return True
 
     @discord.ui.button(label="➕ 添加歌曲", style=discord.ButtonStyle.success)
     async def btn_add_song(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:

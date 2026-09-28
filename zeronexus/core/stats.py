@@ -208,6 +208,12 @@ class StatsTracker:
         metric.total_latency_ms += max(0.0, latency_ms)
         self.tool_invocations_total += 1
 
+    def record_image_generation(self, success: bool = True) -> None:
+        """Record successful image output only; failed attempts are not generations."""
+        if success:
+            self.image_generations_total += 1
+            self.external_api_calls["image_gen"] += 1
+
     def get_tool_execution_summary(self, limit: int = 100) -> List[Dict[str, Any]]:
         ranked = sorted(self.ai_tools.items(), key=lambda item: item[1].calls, reverse=True)
         return [
@@ -232,8 +238,10 @@ class StatsTracker:
     def increment(self, metric_name: str, count: int = 1) -> None:
         """動態遞增統計指標。"""
         if metric_name == "images_generated":
-            self.image_generations_total += count
-            self.external_api_calls["image_gen"] += count
+            self.record_image_generation(True)
+            if count > 1:
+                self.image_generations_total += count - 1
+                self.external_api_calls["image_gen"] += count - 1
         elif metric_name == "tool_calls_count":
             self.external_api_calls["tools"] += count
         elif metric_name == "total_replies":
@@ -364,7 +372,7 @@ class StatsTracker:
                 "ai_interactions_failed": self.ai_interactions_failure,
                 "ai_fallback_total": self.ai_fallback_total,
                 "tool_invocations_total": self.tool_invocations_total,
-                "images_generated": self.external_api_calls.get("image_gen", 0),
+                "images_generated": self.image_generations_total,
             },
             "module_calls": dict(self.module_calls),
             "external_apis": dict(self.external_api_calls),

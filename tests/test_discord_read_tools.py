@@ -17,14 +17,18 @@ def test_channel_access_is_current_guild_and_viewer_scoped() -> None:
     guild = SimpleNamespace(id=1, me=bot, get_member=lambda user_id: requester if user_id == requester.id else None)
     bot.guild = guild
     requester = _member(20, guild, True)
+    requester.guild_permissions.read_message_history = True
     hidden_user = _member(21, guild, False)
+    history_denied_user = _member(22, guild, True)
+    history_denied_user.guild_permissions.read_message_history = False
     channel = SimpleNamespace(guild=guild, name="public", permissions_for=lambda who: SimpleNamespace(
-        view_channel=(who.id in {10, 20}), read_message_history=(who.id == 10)
+        view_channel=(who.id in {10, 20, 22}), read_message_history=(who.id in {10, 20})
     ))
     foreign_guild = SimpleNamespace(id=2)
 
     assert ChannelInspectorEngine.authorize_channel_access(channel, requester, guild) is None
     assert "沒有查看" in ChannelInspectorEngine.authorize_channel_access(channel, hidden_user, guild)
+    assert "歷史" in ChannelInspectorEngine.authorize_channel_access(channel, history_denied_user, guild)
     assert "目前互動" in ChannelInspectorEngine.authorize_channel_access(channel, requester, foreign_guild)
     assert "跨伺服器查詢" in ChannelInspectorEngine.authorize_channel_access(channel, None, guild)
 
@@ -45,6 +49,32 @@ async def test_channel_fetch_fails_closed_without_requester_and_rejects_foreign_
 
     msgs, err = await inspector.fetch_channel_messages(channel, requester=None, expected_guild=guild)
     assert not msgs and err and "跨伺服器" in err
+    history.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_channel_history_requires_requester_read_history_permission() -> None:
+    bot = _member(10, None, True)
+    guild = SimpleNamespace(id=1, me=bot, get_member=lambda user_id: requester)
+    bot.guild = guild
+    requester = _member(20, guild, True)
+    requester.guild_permissions.read_message_history = False
+    history = AsyncMock()
+    channel = SimpleNamespace(
+        guild=guild,
+        name="limited-history",
+        history=history,
+        permissions_for=lambda who: SimpleNamespace(
+            view_channel=True,
+            read_message_history=(who.id == bot.id),
+        ),
+    )
+
+    messages, error = await ChannelInspectorEngine().fetch_channel_messages(
+        channel, requester=requester, expected_guild=guild
+    )
+    assert messages == []
+    assert error and "歷史" in error
     history.assert_not_called()
 
 

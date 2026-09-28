@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import secrets
 from typing import List, Tuple
 
 Board = List[List[int]]
@@ -22,8 +23,12 @@ def spawn_tile(board: Board, rng: random.Random | None = None) -> bool:
     empty = [(r, c) for r in range(SIZE) for c in range(SIZE) if board[r][c] == 0]
     if not empty:
         return False
-    r, c = rng.choice(empty)
-    board[r][c] = 4 if rng.random() < 0.1 else 2
+    if rng is random:
+        r, c = secrets.choice(empty)
+        board[r][c] = 4 if secrets.randbelow(10) == 0 else 2
+    else:
+        r, c = rng.choice(empty)
+        board[r][c] = 4 if rng.random() < 0.1 else 2
     return True
 
 

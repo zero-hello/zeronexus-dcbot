@@ -43,8 +43,21 @@ class DiagnosticsManager:
             "all_healthy": True,
         }
 
+        import asyncio
+
+        async def _check_db():
+            return await db.health_check()
+
+        async def _check_cache():
+            return await cache.health_check()
+
+        db_res, cache_res = await asyncio.gather(_check_db(), _check_cache(), return_exceptions=True)
+        if isinstance(db_res, BaseException):
+            db_res = {"healthy": False, "latency_ms": -1, "error": str(db_res)}
+        if isinstance(cache_res, BaseException):
+            cache_res = {"healthy": False, "latency_ms": -1, "error": str(cache_res)}
+
         # 1. Database check
-        db_res = await db.health_check()
         results["subsystems"]["database"] = {
             "name": "資料庫 (Database)",
             "icon": DiagnosticStatus.HEALTHY if db_res.get("healthy") else DiagnosticStatus.OFFLINE,
@@ -56,7 +69,6 @@ class DiagnosticsManager:
             results["all_healthy"] = False
 
         # 2. Cache check
-        cache_res = await cache.health_check()
         results["subsystems"]["cache"] = {
             "name": "快取系統 (Cache)",
             "icon": DiagnosticStatus.HEALTHY if cache_res.get("healthy") else DiagnosticStatus.OFFLINE,

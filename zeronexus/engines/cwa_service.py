@@ -318,19 +318,20 @@ class CWAService:
 
             elif intent.intent_type == CWAIntentType.TAIWAN_OVERVIEW:
                 overview = await cwa_client.get_all_counties_overview()
+                if not overview:
+                    raise RuntimeError("中央氣象署未回傳全台縣市預報資料。")
                 summary_lines = []
-                for item in overview[:12]:
+                for item in overview:
                     summary_lines.append(
                         f"- {item['county']}: {item['wx']}, 氣溫 {item['min_temp']}~{item['max_temp']}, 降雨機率 {item['rain_prob']}"
                     )
                 summary_block = "\n".join(summary_lines)
 
                 grounding = (
-                    f"【交通部中央氣象署 (CWA) 全台 22 縣市官方天氣概況（真實真值）】：\n"
+                    f"【交通部中央氣象署 (CWA) 全台 {len(overview)} 個縣市官方天氣概況】：\n"
                     f"{summary_block}\n"
-                    f"- 其餘縣市亦皆由中央氣象署即時同步監測中。\n"
                     f"- 資料來源：中央氣象署 (F-C0032-001)\n"
-                    f"【嚴格準則】：請以此官方全台概況為真值，親切為使用者摘要台灣各地天氣趨勢。"
+                    f"【嚴格準則】：僅摘要上列實際回傳之官方資料，不得推稱未列出縣市的天氣狀態。"
                 )
 
                 log.info(f"[CWA_TOOL_SUCCESS] 全台天氣概況工具執行成功 [工具呼叫碼={tool_call_id}]")

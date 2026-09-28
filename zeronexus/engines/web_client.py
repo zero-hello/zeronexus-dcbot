@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import base64
 import html
 import re
@@ -414,30 +415,47 @@ class WebClient:
                 "content": "",
             }
 
+        if not await self._pin_safe_dns(url):
+            return {
+                "success": False, "url": url, "status": "CONTENT_BLOCKED",
+                "error_code": "DNS_REBINDING_BLOCKED",
+                "error_message": "無法固定至已驗證的公開 DNS 位址，已拒絕連線。",
+                "data_tag": "UNTRUSTED_EXTERNAL_DATA", "content": "",
+            }
+
         client = await self._get_client(timeout=10.0)
         curr_url = url
         try:
             for _ in range(5):
-                resp = await client.get(curr_url, follow_redirects=False)
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    loc = resp.headers.get("location")
-                    if not loc:
-                        break
-                    next_url = urljoin(curr_url, loc)
-                    is_safe_hop, hop_err, _ = await validate_safe_url_async(next_url)
-                    if not is_safe_hop:
-                        return {
-                            "success": False,
-                            "url": next_url,
-                            "status": "CONTENT_BLOCKED",
-                            "error_code": "SSRF_REDIRECT_BLOCKED",
-                            "error_message": f"重導向目標遭 SSRF 防禦阻斷: {hop_err}",
-                            "data_tag": "UNTRUSTED_EXTERNAL_DATA",
-                            "content": "",
-                        }
-                    curr_url = next_url
-                    continue
-                break
+                async with client.stream("GET", curr_url, follow_redirects=False) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location")
+                        if not loc:
+                            break
+                        next_url = urljoin(curr_url, loc)
+                        is_safe_hop, hop_err, _ = await validate_safe_url_async(next_url)
+                        if not is_safe_hop:
+                            return {
+                                "success": False,
+                                "url": next_url,
+                                "status": "CONTENT_BLOCKED",
+                                "error_code": "SSRF_REDIRECT_BLOCKED",
+                                "error_message": f"重導向目標遭 SSRF 防禦阻斷: {hop_err}",
+                                "data_tag": "UNTRUSTED_EXTERNAL_DATA",
+                                "content": "",
+                            }
+                        if not await self._pin_safe_dns(next_url):
+                            return {
+                                "success": False, "url": next_url, "status": "CONTENT_BLOCKED",
+                                "error_code": "DNS_REBINDING_BLOCKED",
+                                "error_message": "重導向目標 DNS 無法固定於已驗證的公開位址。",
+                                "data_tag": "UNTRUSTED_EXTERNAL_DATA", "content": "",
+                            }
+                        curr_url = next_url
+                        continue
+                    body = await self._read_bounded_response(resp, 2 * 1024 * 1024)
+                    resp._content = body
+                    break
 
             # 【P1 修復】實際連線前的最終落地驗證：再驗證一次最終 URL，
             # 縮小「DNS 驗證時間點」與「實際連線時間點」之間的 Rebinding 時間窗
@@ -545,6 +563,7 @@ class WebClient:
                 "data_tag": "UNTRUSTED_EXTERNAL_DATA",
                 "content": "",
             }
+
         except Exception as e:
             return {
                 "success": False,
@@ -555,6 +574,44 @@ class WebClient:
                 "data_tag": "UNTRUSTED_EXTERNAL_DATA",
                 "content": "",
             }
+
+    @staticmethod
+    async def _read_bounded_response(response: httpx.Response, limit_bytes: int) -> bytes:
+        declared = response.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > limit_bytes:
+            raise ValueError("網頁回應超過 2 MB 安全讀取上限。")
+        chunks = bytearray()
+        async for chunk in response.aiter_bytes():
+            if len(chunks) + len(chunk) > limit_bytes:
+                chunks.extend(chunk[: max(0, limit_bytes - len(chunks))])
+                break
+            chunks.extend(chunk)
+        return bytes(chunks)
+
+    @staticmethod
+    async def _pin_safe_dns(url: str) -> bool:
+        """Fail closed when any current DNS answer for a hostname is non-public."""
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host:
+            return False
+        try:
+            literal = ipaddress.ip_address(host)
+            return literal.is_global
+        except ValueError:
+            pass
+        try:
+            infos = await asyncio.to_thread(
+                __import__("socket").getaddrinfo,
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                0,
+                __import__("socket").SOCK_STREAM,
+            )
+            addresses = {ipaddress.ip_address(item[4][0]) for item in infos}
+            return bool(addresses) and all(address.is_global for address in addresses)
+        except Exception:
+            return False
 
 
 _SEARCH_INTENT_PATTERNS = [
@@ -674,4 +731,3 @@ def detect_search_intent(text: str) -> Optional[str]:
 
 
 web_client = WebClient()
-

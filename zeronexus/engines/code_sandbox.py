@@ -67,6 +67,8 @@ class CodeSandboxEngine:
     DEFAULT_TIMEOUT: float = 5.0
     MAX_TIMEOUT: float = 10.0
     DEFAULT_MEMORY_MB: int = 1024
+    MAX_OUTPUT_BYTES: int = 2 * 1024 * 1024
+    MAX_IMAGE_OUTPUT_BYTES: int = 8 * 1024 * 1024
 
     # Discord Dark Mode Color Palette (Vibrant & High-End)
     DISCORD_PALETTE: List[str] = [
@@ -429,13 +431,11 @@ except Exception as save_err:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=clean_env,
+                    preexec_fn=self._apply_process_limits if os.name == "posix" else None,
                 )
 
                 try:
-                    stdout_data, stderr_data = await asyncio.wait_for(
-                        proc.communicate(),
-                        timeout=timeout_val,
-                    )
+                    stdout_data, stderr_data = await asyncio.wait_for(self._communicate_bounded(proc), timeout=timeout_val)
                 except asyncio.TimeoutError:
                     try:
                         proc.kill()
@@ -460,13 +460,19 @@ except Exception as save_err:
                 has_image = os.path.isfile(output_png) and os.path.getsize(output_png) > 0
                 image_bytes: Optional[bytes] = None
                 image_base64: Optional[str] = None
+                output_error = None
                 if has_image:
-                    with open(output_png, "rb") as img_f:
-                        image_bytes = img_f.read()
+                    image_size = os.path.getsize(output_png)
+                    if image_size > self.MAX_IMAGE_OUTPUT_BYTES:
+                        has_image = False
+                        output_error = f"圖表輸出超過 {self.MAX_IMAGE_OUTPUT_BYTES // (1024 * 1024)} MB 安全限制。"
+                    else:
+                        with open(output_png, "rb") as img_f:
+                            image_bytes = img_f.read(self.MAX_IMAGE_OUTPUT_BYTES + 1)
                         image_base64 = base64.b64encode(image_bytes).decode("ascii")
 
                 is_success = (proc.returncode == 0) and ("執行階段錯誤" not in stderr_str)
-                err_msg = None
+                err_msg = output_error
                 if not is_success:
                     err_msg = stderr_str.strip() or f"行程退出代碼異常: {proc.returncode}"
 
@@ -492,6 +498,60 @@ except Exception as save_err:
                     execution_time_ms=elapsed_ms,
                     error=f"沙盒內部異常: {e}",
                 )
+
+    async def _communicate_bounded(self, proc: asyncio.subprocess.Process) -> tuple[bytes, bytes]:
+        """Drain child pipes while enforcing a strict combined output cap."""
+        assert proc.stdout is not None and proc.stderr is not None
+        stdout_buffer = bytearray()
+        stderr_buffer = bytearray()
+        total_bytes = 0
+        exceeded = asyncio.Event()
+
+        async def drain(reader: asyncio.StreamReader, target: bytearray) -> None:
+            nonlocal total_bytes
+            while chunk := await reader.read(65536):
+                remaining = self.MAX_OUTPUT_BYTES - total_bytes
+                if remaining <= 0:
+                    exceeded.set()
+                    continue
+                accepted = chunk[:remaining]
+                target.extend(accepted)
+                total_bytes += len(accepted)
+                if len(chunk) > remaining:
+                    exceeded.set()
+
+        stdout_task = asyncio.create_task(drain(proc.stdout, stdout_buffer))
+        stderr_task = asyncio.create_task(drain(proc.stderr, stderr_buffer))
+        wait_task = asyncio.create_task(proc.wait())
+        output_limit_task = asyncio.create_task(exceeded.wait())
+        try:
+            done, _ = await asyncio.wait({stdout_task, stderr_task, wait_task, output_limit_task}, return_when=asyncio.FIRST_COMPLETED)
+            if output_limit_task in done and exceeded.is_set() and not wait_task.done():
+                proc.kill()
+            await wait_task
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            if exceeded.is_set():
+                stderr_buffer.extend(b"\n[Sandbox output exceeded the configured limit and was truncated.]")
+            return bytes(stdout_buffer), bytes(stderr_buffer)
+        finally:
+            for task in (stdout_task, stderr_task, wait_task, output_limit_task):
+                if not task.done():
+                    task.cancel()
+
+    @staticmethod
+    def _apply_process_limits() -> None:
+        """Apply process-level CPU, address-space, file-size and descriptor caps."""
+        try:
+            import resource
+            cpu_seconds = int(CodeSandboxEngine.MAX_TIMEOUT) + 2
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+            memory_bytes = CodeSandboxEngine.DEFAULT_MEMORY_MB * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+            output_bytes = CodeSandboxEngine.MAX_IMAGE_OUTPUT_BYTES
+            resource.setrlimit(resource.RLIMIT_FSIZE, (output_bytes, output_bytes))
+            resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+        except Exception:
+            pass
 
     async def plot_chart(
         self,

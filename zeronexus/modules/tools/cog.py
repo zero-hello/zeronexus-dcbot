@@ -258,6 +258,16 @@ class ToolsCog(commands.Cog):
         self.mc伺服器 = self.mc_status_command
         self.mc玩家 = self.mc_player_command
 
+    async def cog_unload(self) -> None:
+        for reminder in self.active_reminders.values():
+            task = reminder.get("task")
+            if task and not task.done():
+                task.cancel()
+        tasks = [reminder.get("task") for reminder in self.active_reminders.values() if reminder.get("task")]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.active_reminders.clear()
+
     @tools_group.command(name="計算", description="安全沙盒符號與任意精度數學計算器")
     @app_commands.describe(表達式="數學運算式 (例如 2**100, sin(pi/4), (5+3)*4)")
     @command_guard("tools")
@@ -901,7 +911,15 @@ class ToolsCog(commands.Cog):
                 await InteractionResponder.safe_send(interaction, "❌ 系統當前排程提醒佇列已滿，請稍後再試。", ephemeral=True)
                 return
 
-            rem_id = f"REM-{secrets.token_hex(2).upper()}"
+            rem_id = f"REM-{secrets.token_hex(4).upper()}"
+            reminder_entry: Dict[str, Any] = {
+                "id": rem_id,
+                "user_id": user_id,
+                "target_epoch": target_epoch,
+                "reason": note,
+                "task": None,
+            }
+            self.active_reminders[rem_id] = reminder_entry
 
             async def _reminder_runner(rem_key: str, t_epoch: float, u_id: int, ch_id: int, reason: str) -> None:
                 try:
@@ -941,13 +959,7 @@ class ToolsCog(commands.Cog):
                         pass
 
             task = asyncio.create_task(_reminder_runner(rem_id, target_epoch, user_id, channel_id, note))
-            self.active_reminders[rem_id] = {
-                "id": rem_id,
-                "user_id": user_id,
-                "target_epoch": target_epoch,
-                "reason": note,
-                "task": task,
-            }
+            reminder_entry["task"] = task
 
             diff_sec = int(target_epoch - time.time())
             card = ZNCard(

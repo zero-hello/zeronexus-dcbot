@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import random
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,8 +30,8 @@ from discord.ext import commands
 from sqlalchemy import desc, select, update
 
 from zeronexus.core.database import db
-from zeronexus.models.user import EconomyWallet
 from zeronexus.models.game import Game2048BestScore
+from zeronexus.models.user import EconomyWallet
 from zeronexus.engines.game_2048 import new_board as new_2048_board, move as move_2048, has_moves as has_2048_moves, max_tile as max_2048_tile, spawn_tile as spawn_2048_tile
 from zeronexus.modules.base import BaseModule, CommandMetadata
 from zeronexus.security.guard import command_guard
@@ -70,20 +71,29 @@ async def _record_2048_result(guild_id: int, user_id: int, score: int, tile: int
         result = await session.execute(stmt)
         record = result.scalars().first()
         if record is None:
-            record = Game2048BestScore(guild_id=guild_id, user_id=user_id)
-            session.add(record)
-            await session.flush()
+            try:
+                async with session.begin_nested():
+                    record = Game2048BestScore(
+                        guild_id=guild_id, user_id=user_id, best_score=score,
+                        best_tile=tile, best_moves=moves, games_played=1,
+                    )
+                    session.add(record)
+                    await session.flush()
+                return
+            except Exception:
+                record = (await session.execute(select(Game2048BestScore).where(
+                    Game2048BestScore.guild_id == guild_id,
+                    Game2048BestScore.user_id == user_id,
+                ).with_for_update())).scalars().first()
+                if record is None:
+                    raise
+
+        record.games_played += 1
+        if (score, tile) > (record.best_score, record.best_tile):
             record.best_score = score
             record.best_tile = tile
             record.best_moves = moves
-            record.games_played = 1
-        else:
-            record.games_played += 1
-            if (score, tile) > (record.best_score, record.best_tile):
-                record.best_score = score
-                record.best_tile = tile
-                record.best_moves = moves
-                record.updated_at = datetime.now(timezone.utc)
+        record.updated_at = datetime.now(timezone.utc)
 
 
 async def _get_2048_best(guild_id: int, user_id: int) -> Optional[Game2048BestScore]:
@@ -480,7 +490,7 @@ class NumberBombSession:
         self.channel_id = channel_id
         self.min_val = min_val
         self.max_val = max_val
-        self.bomb = random.randint(min_val + 1, max_val - 1)
+        self.bomb = secrets.randbelow(max_val - min_val - 1) + min_val + 1
         self.active = True
         self.last_guesser: Optional[str] = None
         self.last_guess: Optional[int] = None
@@ -492,7 +502,7 @@ class NumberBombSession:
     def reset(self, min_val: int = 1, max_val: int = 100) -> None:
         self.min_val = min_val
         self.max_val = max_val
-        self.bomb = random.randint(min_val + 1, max_val - 1)
+        self.bomb = secrets.randbelow(max_val - min_val - 1) + min_val + 1
         self.active = True
         self.last_guesser = None
         self.last_guess = None
@@ -792,6 +802,9 @@ class TicTacToeView(discord.ui.View):
                 self.add_item(TicTacToeButton(x, y))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.p1.guild.id:
+            await InteractionResponder.safe_send(interaction, "❌ 此井字棋只適用於發起對局的伺服器。", ephemeral=True)
+            return False
         if interaction.user.id not in (self.p1.id, self.p2.id):
             await InteractionResponder.safe_send(interaction, "❌ 此井字棋為專屬對弈，觀戰成員請勿點擊。", ephemeral=True)
             return False
@@ -857,6 +870,9 @@ class Connect4View(discord.ui.View):
             self.add_item(Connect4ColButton(c))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.p1.guild.id:
+            await InteractionResponder.safe_send(interaction, "❌ 此四子棋只適用於發起對局的伺服器。", ephemeral=True)
+            return False
         if interaction.user.id not in (self.p1.id, self.p2.id):
             await InteractionResponder.safe_send(interaction, "❌ 此四子棋為雙人專屬對弈，觀戰成員請勿點擊。", ephemeral=True)
             return False
@@ -1037,6 +1053,9 @@ class Game2048View(discord.ui.View):
             self._result_recorded = True
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 此 2048 棋盤只適用於發起遊戲的伺服器。", ephemeral=True)
+            return False
         if interaction.user.id != self.user_id:
             await InteractionResponder.safe_send(interaction, "只有開局玩家可以操作這盤 2048。你也可以使用 `/娛樂 2048` 開始自己的遊戲。", ephemeral=True)
             return False
@@ -1191,7 +1210,7 @@ class DiceReRollView(discord.ui.View):
                 await InteractionResponder.safe_send(interaction, "❌ 此按鈕僅限投擲者操作喔！", ephemeral=True)
                 return
 
-            rolls = [random.randint(1, self.sides) for _ in range(self.count)]
+            rolls = [secrets.randbelow(self.sides) + 1 for _ in range(self.count)]
             total = sum(rolls)
             crit = "🔥 完美大成功！" if (self.sides == 20 and 20 in rolls) else ""
 
@@ -1230,7 +1249,7 @@ class CoinReFlipView(discord.ui.View):
                 await InteractionResponder.safe_send(interaction, "❌ 此按鈕僅限投擲者操作喔！", ephemeral=True)
                 return
 
-            is_heads = random.choice([True, False])
+            is_heads = bool(secrets.randbelow(2))
             result_str = "正面" if is_heads else "反面"
             icon = "🟡" if is_heads else "⚪"
 
@@ -1594,7 +1613,7 @@ class EntertainmentCog(commands.Cog):
     ])
     @command_guard("entertainment")
     async def coinflip_command(self, interaction: discord.Interaction, 猜測: Optional[str] = None) -> None:
-        is_heads = random.choice([True, False])
+        is_heads = bool(secrets.randbelow(2))
         result_str = "正面" if is_heads else "反面"
         icon = "🟡" if is_heads else "⚪"
 
@@ -1629,7 +1648,7 @@ class EntertainmentCog(commands.Cog):
     async def roll_command(self, interaction: discord.Interaction, 數量: int = 1, 面數: int = 6) -> None:
         count = max(1, min(10, 數量))
         sides = max(2, min(100, 面數))
-        rolls = [random.randint(1, sides) for _ in range(count)]
+        rolls = [secrets.randbelow(sides) + 1 for _ in range(count)]
         total = sum(rolls)
         crit = "🔥 完美大成功！" if (sides == 20 and 20 in rolls) else ""
 
@@ -1677,13 +1696,23 @@ class EntertainmentCog(commands.Cog):
     async def daily_command(self, interaction: discord.Interaction) -> None:
         now = datetime.now(timezone.utc)
         async with db.session() as session:
-            stmt = select(EconomyWallet).where(EconomyWallet.user_id == interaction.user.id)
+            stmt = select(EconomyWallet).where(EconomyWallet.user_id == interaction.user.id).with_for_update()
             res = await session.execute(stmt)
             wallet = res.scalars().first()
 
             if not wallet:
-                wallet = EconomyWallet(user_id=interaction.user.id, points=200, daily_streak=1, last_daily_claim=now)
-                session.add(wallet)
+                try:
+                    async with session.begin_nested():
+                        wallet = EconomyWallet(user_id=interaction.user.id, points=200, daily_streak=1, last_daily_claim=now)
+                        session.add(wallet)
+                        await session.flush()
+                except Exception:
+                    wallet = (await session.execute(select(EconomyWallet).where(EconomyWallet.user_id == interaction.user.id).with_for_update())).scalars().first()
+                    if wallet is None:
+                        raise
+                if wallet.last_daily_claim != now:
+                    await InteractionResponder.safe_send(interaction, "⏳ 簽到請求剛剛已由另一個操作完成，請查看錢包餘額。", ephemeral=True)
+                    return
                 reward = 100
                 streak = 1
                 streak_msg = "🎉 歡迎首次簽到！獲得新手大禮包 100 點數！"
@@ -1867,7 +1896,7 @@ class EntertainmentCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "2048 排行榜依伺服器分開計算，請在伺服器中開始遊戲。", ephemeral=True)
             return
         view = Game2048View(interaction.guild_id, interaction.user)
-        msg = await InteractionResponder.safe_send(interaction, card=view.render_card(), view=view, ephemeral=False)
+        msg = await InteractionResponder.safe_send(interaction, card=view.render_card(), view=view, ephemeral=True)
         if msg:
             view.message = msg
 
@@ -1921,7 +1950,7 @@ class EntertainmentCog(commands.Cog):
             status_pill=ZNStatusPill.FUN,
             color=ZNColor.PRIMARY,
         )
-        msg = await InteractionResponder.safe_send(interaction, card=card, view=view)
+        msg = await InteractionResponder.safe_send(interaction, card=card, view=view, ephemeral=True)
         if msg:
             view.message = msg
 
@@ -2012,7 +2041,7 @@ class EntertainmentCog(commands.Cog):
             ("🍵 末吉", "先苦後甘，上午若有波折下午必迎轉機，保持沉著穩健！", "米色", "2", "溫熱開水"),
             ("⚡ 凶", "今日不宜衝動下重大決策，部署伺服器前請務必做備份！", "紫色", "1", "備份隨身碟"),
         ]
-        title, desc_txt, lucky_color, lucky_num, lucky_item = random.choice(fortunes)
+        title, desc_txt, lucky_color, lucky_num, lucky_item = secrets.choice(fortunes)
         card = ZNCard(
             title=f"今日運勢詩籤 — {title}",
             description=(
@@ -2189,7 +2218,7 @@ class EntertainmentCog(commands.Cog):
                 "畫家搬來了一大塊巨大的冰塊墊在腳下，將繩索套在脖子上後等待冰塊自然融化。融化後的水流到了排水孔，只剩下少量水漬。",
             ),
         ]
-        title, prompt, truth = random.choice(riddles)
+        title, prompt, truth = secrets.choice(riddles)
         card = ZNCard(
             title=title,
             description=f"**情境謎面**：\n{prompt}\n\n||**湯底真相**：\n{truth}|| *(點擊黑色方塊揭曉湯底)*",

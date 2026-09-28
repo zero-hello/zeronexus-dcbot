@@ -1604,7 +1604,7 @@ class ZeroNexusBot(commands.Bot):
             return        # 1. Natural Language Quota Inquiry check (Direct quota read, zero AI cost, zero burn)
         if quota_service.is_quota_inquiry(user_prompt):
             try:
-                q_info = await quota_service.get_user_quota_info(message.author.id)
+                q_info = await quota_service.get_user_quota_info(message.author.id, guild_id=message.guild.id if message.guild else None)
             except Exception as q_err:
                 # 【P0-A 修復】額度查詢失敗時降級為零成本模型並放行，絕不中斷 AI 對話
                 log.warning(f"[AI Pipeline] stage=quota_inquiry 額度查詢失敗，降級放行: {q_err}")
@@ -1699,7 +1699,7 @@ class ZeroNexusBot(commands.Bot):
         # 2. Quota Check & Reservation (atomic 3-phase)
         t_q0 = time.perf_counter()
         try:
-            allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id)
+            allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(message.author.id, guild_id=message.guild.id if message.guild else None)
         except Exception as quota_err:
             # 【P0-A 修復】額度系統故障（DB 鎖定/連線異常）時降級為零成本模型放行，絕不讓使用者收不到任何回應
             log.error(f"[AI Pipeline] stage=quota_reserve 額度預約系統異常，降級為零成本模型放行: {quota_err}", exc_info=True)

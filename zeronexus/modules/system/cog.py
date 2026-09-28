@@ -267,7 +267,7 @@ class SystemCog(commands.Cog):
         )
 
     @sys_group.command(name="診斷", description="掃描全系統健全狀態 (Gateway, DB, AI, Cache, 模組)")
-    @command_guard("system")
+    @command_guard("system", required_level=ZNPermissionLevel.ADMINISTRATOR)
     async def diagnostics_command(self, interaction: discord.Interaction) -> None:
         if not await InteractionResponder.safe_defer(interaction):
             return
@@ -578,7 +578,10 @@ class SystemCog(commands.Cog):
     @sys_group.command(name="重新連線", description="管理員指令：安全重新連接 Discord Gateway")
     @command_guard("system", required_level=ZNPermissionLevel.ADMINISTRATOR)
     async def reconnect_command(self, interaction: discord.Interaction) -> None:
-        card = ZNCard(title="Gateway 重連指令已確認", description="已發起心跳安全自癒程序，將維持現有工作連線安全刷新。", status_pill=ZNStatusPill.SUCCESS)
+        if self.bot.is_ready():
+            card = ZNCard(title="Gateway 連線正常", description=f"Discord Gateway 目前正常運作，心跳延遲 `{self.bot.latency * 1000:.1f} ms`；無需重連。", status_pill=ZNStatusPill.SUCCESS, color=ZNColor.SUCCESS)
+        else:
+            card = ZNCard(title="Gateway 尚未就緒", description="目前連線正在 Discord.py 的自動恢復流程中。請稍候並重新執行 `/系統 延遲` 確認狀態。", status_pill=ZNStatusPill.WARNING, color=ZNColor.WARNING)
         await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
 
     @sys_group.command(name="安全稽核", description="伺服器安全性配置檢測與特權身分體檢")
@@ -591,6 +594,15 @@ class SystemCog(commands.Cog):
 
         admins = [m for m in g.members if m.guild_permissions.administrator]
         bots = [m for m in g.members if m.bot]
+        risks = []
+        if len(admins) > max(3, len(g.members) // 5):
+            risks.append("管理員人數偏多，建議定期檢視特權身分組")
+        if not g.mfa_level:
+            risks.append("伺服器未要求管理員啟用雙重驗證")
+        if g.verification_level.value < discord.VerificationLevel.medium.value:
+            risks.append("伺服器驗證等級較低")
+        rating = "需改善" if len(risks) >= 2 else ("注意" if risks else "未發現明顯風險")
+        risk_text = "\n".join(f"- ⚠️ {risk}" for risk in risks) if risks else "- ✅ 未發現上述常見配置風險"
 
         card = ZNCard(
             title=f"{g.name} — 安全性體檢報告",
@@ -599,10 +611,11 @@ class SystemCog(commands.Cog):
                 f"- 👑 **具備管理員權限成員**：`{len(admins)} 人`\n"
                 f"- 🤖 **第三方機器人數量**：`{len(bots)} 個`\n"
                 f"- 🔒 **2FA 雙重認證需求**：`{'要求管理員啟用 2FA' if g.mfa_level else '未強制要求'}`\n"
-                f"- ✅ **安全評級**：`A+ (正常)`"
+                f"- 📋 **檢查摘要**：{risk_text}\n"
+                f"- 🛡️ **安全評估**：`{rating}`（僅依本指令列出的設定項目）"
             ),
             status_pill=ZNStatusPill.MODERATION,
-            color=ZNColor.SUCCESS,
+            color=ZNColor.SUCCESS if not risks else ZNColor.WARNING,
         )
         await InteractionResponder.safe_send(interaction, card=card)
 

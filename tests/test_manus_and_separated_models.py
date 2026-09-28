@@ -117,6 +117,13 @@ def test_manus_quota_default_is_thirty():
     assert quota_service.get_model_default_limit("manus.ai/manus") == 30
 
 
+def test_permission_engine_developer_api_used_by_ai_admin_commands():
+    from zeronexus.security.permissions import PermissionEngine
+
+    assert callable(getattr(PermissionEngine, "is_developer", None))
+    assert not hasattr(PermissionEngine, "check_developer")
+
+
 @pytest.mark.asyncio
 async def test_manus_quota_exhaustion_blocking():
     """驗證 Manus 額度達到 30 次上限後，用完就沒了（正確阻斷請求）。"""
@@ -156,5 +163,4 @@ async def test_manus_quota_exhaustion_blocking():
     assert resv is None
     assert used >= 30
     assert limit == 30
-
 

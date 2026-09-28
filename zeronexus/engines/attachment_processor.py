@@ -14,6 +14,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 import discord
+import httpx
 
 from zeronexus.core.logger import log
 
@@ -50,6 +51,30 @@ def clean_attachment_filename(raw_name: Optional[str]) -> str:
     base = os.path.basename(raw_name or "attachment")
     clean = re.sub(r"[\r\n\t\x00-\x1f`]", "", base).strip()
     return clean[:80] or "attachment"
+
+
+async def _read_attachment_bounded(attachment: discord.Attachment, max_bytes: int) -> bytes:
+    """Read an attachment without trusting the declared size or buffering unlimited data."""
+    if not isinstance(attachment, discord.Attachment) and hasattr(attachment, "read"):
+        data = await asyncio.wait_for(attachment.read(), timeout=ATTACHMENT_TIMEOUT_SECONDS)
+        if len(data) > max_bytes:
+            raise ValueError(f"附件實際內容超過 {format_size(max_bytes)} 安全上限。")
+        return data
+    chunks: List[bytes] = []
+    total = 0
+    timeout = httpx.Timeout(ATTACHMENT_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        async with client.stream("GET", attachment.url) as response:
+            response.raise_for_status()
+            length = response.headers.get("content-length", "")
+            if length.isdigit() and int(length) > max_bytes:
+                raise ValueError(f"附件實際內容超過 {format_size(max_bytes)} 安全上限。")
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(f"附件實際內容超過 {format_size(max_bytes)} 安全上限。")
+                chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def ingest_attachments(
@@ -127,7 +152,7 @@ async def ingest_attachments(
             if final_mime == "image/jpg":
                 final_mime = "image/jpeg"
             try:
-                img_bytes = await asyncio.wait_for(att.read(), timeout=ATTACHMENT_TIMEOUT_SECONDS)
+                img_bytes = await _read_attachment_bounded(att, MAX_IMAGE_BYTES)
                 if not img_bytes:
                     log.warning(f"Attachment '{fname}' yielded empty bytes after read.")
                     continue
@@ -174,7 +199,7 @@ async def ingest_attachments(
         elif ext in DOC_EXTS or "pdf" in ctype or "wordprocessingml" in ctype:
             try:
                 from zeronexus.engines.community_suite import MultimodalFileIngester
-                file_bytes = await asyncio.wait_for(att.read(), timeout=ATTACHMENT_TIMEOUT_SECONDS)
+                file_bytes = await _read_attachment_bounded(att, MAX_ATTACHMENT_BYTES)
                 if not file_bytes:
                     continue
                 if ext == ".pdf" or "pdf" in ctype:
@@ -212,7 +237,7 @@ async def ingest_attachments(
         # b. 文字/程式碼檔案
         elif ext in TEXT_CODE_EXTS or ctype.startswith("text/"):
             try:
-                raw_bytes = await asyncio.wait_for(att.read(), timeout=ATTACHMENT_TIMEOUT_SECONDS)
+                raw_bytes = await _read_attachment_bounded(att, MAX_ATTACHMENT_BYTES)
                 if not raw_bytes:
                     continue
                 truncated = False

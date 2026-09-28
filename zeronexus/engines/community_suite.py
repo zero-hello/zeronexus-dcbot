@@ -42,6 +42,7 @@ from zeronexus.ai_gateway.gateway import ai_gateway
 from zeronexus.core.database import db
 from zeronexus.core.logger import log
 from zeronexus.engines.web_client import web_client
+from zeronexus.models.game import PredictionBetRecord, PredictionMarketRecord
 from zeronexus.models.user import EconomyWallet
 from zeronexus.ui.card import ZNCard
 from zeronexus.ui.responder import InteractionResponder
@@ -1733,7 +1734,9 @@ class PredictionMarketManager:
         for mid in expired_ids:
             self.markets.pop(mid, None)
 
-        market_id = secrets.token_hex(3).upper()
+        market_id = secrets.token_hex(6).upper()
+        while market_id in self.markets:
+            market_id = secrets.token_hex(6).upper()
         market = PredictionMarket(
             market_id=market_id,
             guild_id=guild_id,
@@ -1744,6 +1747,40 @@ class PredictionMarketManager:
         )
         self.markets[market_id] = market
         return market
+
+    async def persist_market(self, market: PredictionMarket) -> None:
+        async with db.session() as session:
+            session.add(PredictionMarketRecord(
+                market_id=market.market_id, guild_id=market.guild_id, creator_id=market.creator_id,
+                title=market.title[:500], option_a=market.option_a[:100], option_b=market.option_b[:100],
+                created_at=market.created_at,
+            ))
+
+    async def load_guild_markets(self, guild_id: int) -> None:
+        async with db.session() as session:
+            rows = (await session.execute(select(PredictionMarketRecord).where(
+                PredictionMarketRecord.guild_id == guild_id,
+            ))).scalars().all()
+            market_ids = [row.market_id for row in rows]
+            bet_rows = (await session.execute(select(PredictionBetRecord).where(
+                PredictionBetRecord.market_id.in_(market_ids),
+            ))).scalars().all() if market_ids else []
+        grouped: Dict[str, List[BetRecord]] = {}
+        for bet in bet_rows:
+            grouped.setdefault(bet.market_id, []).append(BetRecord(bet.user_id, bet.option, bet.amount, bet.timestamp))
+        for row in rows:
+            if row.market_id not in self.markets:
+                self.markets[row.market_id] = PredictionMarket(
+                    market_id=row.market_id, guild_id=row.guild_id, creator_id=row.creator_id,
+                    title=row.title, option_a=row.option_a, option_b=row.option_b,
+                    pool_a=row.pool_a, pool_b=row.pool_b, bets=grouped.get(row.market_id, []),
+                    is_settled=row.is_settled, winning_option=row.winning_option, created_at=row.created_at,
+                )
+
+    async def get_market_async(self, market_id: str, guild_id: int) -> Optional[PredictionMarket]:
+        await self.load_guild_markets(guild_id)
+        market = self.get_market(market_id)
+        return market if market and market.guild_id == guild_id else None
 
     def get_market(self, market_id: str) -> Optional[PredictionMarket]:
         return self.markets.get(market_id.upper())
@@ -1770,25 +1807,27 @@ class PredictionMarketManager:
             if market.is_settled:
                 return False, "❌ 此賭盤已結算封盤，無法再下注。", market
 
-            # Atomic wallet balance deduction
+            # Keep wallet debit, durable wager, and pool update in one transaction.
             async with db.session() as session:
-                stmt = select(EconomyWallet).where(EconomyWallet.user_id == user_id)
-                res = await session.execute(stmt)
-                wallet = res.scalars().first()
-                if not wallet or wallet.points < amount:
-                    current_pts = wallet.points if wallet else 0
-                    return False, f"❌ 點數餘額不足！您目前僅有 `{current_pts:,}` 點數，無法支付 `{amount:,}` 點數。", market
-
-                stmt_deduct = (
-                    update(EconomyWallet)
-                    .where(EconomyWallet.user_id == user_id, EconomyWallet.points >= amount)
-                    .values(points=EconomyWallet.points - amount)
-                )
+                stmt_deduct = update(EconomyWallet).where(
+                    EconomyWallet.user_id == user_id, EconomyWallet.points >= amount,
+                ).values(points=EconomyWallet.points - amount)
                 deduct_res = await session.execute(stmt_deduct)
                 if deduct_res.rowcount == 0:
-                    return False, "❌ 扣款並行衝突，請稍後再試。", market
+                    wallet = (await session.execute(select(EconomyWallet).where(EconomyWallet.user_id == user_id))).scalars().first()
+                    current_pts = wallet.points if wallet else 0
+                    return False, f"❌ 點數餘額不足！您目前僅有 `{current_pts:,}` 點數，無法支付 `{amount:,}` 點數。", market
+                market_stmt = update(PredictionMarketRecord).where(
+                    PredictionMarketRecord.market_id == market.market_id,
+                    PredictionMarketRecord.is_settled.is_(False),
+                ).values(**({"pool_a": PredictionMarketRecord.pool_a + amount} if opt_upper == "A" else {"pool_b": PredictionMarketRecord.pool_b + amount}))
+                market_result = await session.execute(market_stmt)
+                if market_result.rowcount == 0:
+                    await session.rollback()
+                    return False, "❌ 賭盤已結算或資料已不存在，投注已取消。", market
+                session.add(PredictionBetRecord(market_id=market.market_id, user_id=user_id, option=opt_upper, amount=amount))
 
-            # Record bet in market
+            # Update process-local cache after the database transaction commits.
             if opt_upper == "A":
                 market.pool_a += amount
             else:
@@ -1816,29 +1855,44 @@ class PredictionMarketManager:
         async with market._lock:
             if market.is_settled:
                 return False, "❌ 此賭盤先前已經結算過囉！", 0, 0
-
-            market.is_settled = True
-            market.winning_option = win_opt
-
-            odds_a, odds_b = market.calculate_odds()
-            win_odds = odds_a if win_opt == "A" else odds_b
-
             winners_count = 0
             total_payout = 0
 
             async with db.session() as session:
-                for bet in market.bets:
+                persisted_market = (await session.execute(select(PredictionMarketRecord).where(
+                    PredictionMarketRecord.market_id == market.market_id,
+                    PredictionMarketRecord.guild_id == market.guild_id,
+                ).with_for_update())).scalars().first()
+                if persisted_market is None:
+                    return False, "❌ 賭盤持久化資料不存在，未執行結算。", 0, 0
+                total_pool = persisted_market.pool_a + persisted_market.pool_b
+                odds_a = round((total_pool / persisted_market.pool_a) * 0.95, 2) if persisted_market.pool_a else 2.0
+                odds_b = round((total_pool / persisted_market.pool_b) * 0.95, 2) if persisted_market.pool_b else 2.0
+                win_odds = max(1.05, odds_a if win_opt == "A" else odds_b)
+                persisted_bets = (await session.execute(select(PredictionBetRecord).where(
+                    PredictionBetRecord.market_id == market.market_id,
+                ))).scalars().all()
+                market_result = await session.execute(update(PredictionMarketRecord).where(
+                    PredictionMarketRecord.market_id == market.market_id,
+                    PredictionMarketRecord.is_settled.is_(False),
+                ).values(is_settled=True, winning_option=win_opt))
+                if market_result.rowcount == 0:
+                    return False, "❌ 賭盤已結算或找不到持久化紀錄。", 0, 0
+                for bet in persisted_bets:
                     if bet.option == win_opt:
                         payout = int(bet.amount * win_odds)
                         if payout > 0:
-                            stmt_pay = (
-                                update(EconomyWallet)
-                                .where(EconomyWallet.user_id == bet.user_id)
-                                .values(points=EconomyWallet.points + payout)
-                            )
-                            await session.execute(stmt_pay)
+                            stmt_pay = update(EconomyWallet).where(
+                                EconomyWallet.user_id == bet.user_id,
+                            ).values(points=EconomyWallet.points + payout)
+                            pay_result = await session.execute(stmt_pay)
+                            if pay_result.rowcount == 0:
+                                session.add(EconomyWallet(user_id=bet.user_id, points=100 + payout))
                             winners_count += 1
                             total_payout += payout
+
+            market.is_settled = True
+            market.winning_option = win_opt
 
             return True, f"🎉 賭盤 #{market.market_id} 結算完成！獲勝選項為 `{win_opt}`（賠率 `{win_odds}x`），共向 {winners_count} 名贏家派發 {total_payout:,} 點數！", winners_count, total_payout
 

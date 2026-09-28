@@ -7,11 +7,11 @@
 [![Discord.py 2.5+](https://img.shields.io/badge/Discord.py-2.5%2B-5865F2?logo=discord&logoColor=white)](https://discordpy.readthedocs.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Async%20Event--Driven-blueviolet)](#-系統架構)
 [![AI Gateway](https://img.shields.io/badge/AI%20Gateway-Gemini%20%7C%20DeepSeek%20%7C%20Qwen-FF6F00)](#-三階模型智慧閘道)
-[![Version](https://img.shields.io/badge/version-2.9.10-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.9.11-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Terms of Service](https://img.shields.io/badge/Terms%20of%20Service-TOS-blue)](TERMS_OF_SERVICE.md)
 [![Privacy Policy](https://img.shields.io/badge/Privacy%20Policy-Policy-green)](PRIVACY_POLICY.md)
-[![Changelog](https://img.shields.io/badge/Changelog-v2.9.10-orange)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v2.9.11-orange)](CHANGELOG.md)
 
 ---
 
@@ -114,7 +114,7 @@ ZeroNexus/
 │   └── prompts/            # Prompt 生成工具
 ├── tests/                  # 大腦生理神經與核心系統單元測試集
 ├── update.py               # 安全單向自動更新器（Pull-Only）
-├── version.txt             # 當前發布版本標記 (v2.9.10)
+├── version.txt             # 當前發布版本標記 (v2.9.11)
 ├── main.py                 # 核心主程式入口點
 └── run.py                  # 統一快捷啟動入口點
 ```

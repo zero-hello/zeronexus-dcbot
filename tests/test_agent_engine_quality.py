@@ -48,3 +48,34 @@ async def test_agent_never_runs_unprojected_tools() -> None:
     assert result.steps[0].status == "FAILED"
     assert "未投影" in (result.steps[0].error or "")
     safe_tool.handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_agent_treats_error_payload_as_failure_even_when_online_false() -> None:
+    engine = AgentEngine()
+    tool = ReadOnlyTool(
+        name="minecraft_probe",
+        description="probe",
+        parameters_desc="host",
+        handler=AsyncMock(return_value={"online": False, "error": "DNS lookup failed"}),
+    )
+    engine.tools = type("Registry", (), {
+        "get_tool": lambda self, name: tool if name == "minecraft_probe" else None,
+        "list_tools": lambda self: [tool],
+    })()
+
+    async def fake_plan(goal, allowed_tool_names=None):
+        return [AgentStep(1, "probe", "minecraft_probe", {"host": "example.invalid"})]
+
+    engine._plan_task = fake_plan
+    with (
+        patch("zeronexus.intelligence.dynamic_projector.DynamicToolProjector.project") as project,
+        patch("zeronexus.agent.engine.ai_gateway.generate_response", new=AsyncMock(return_value=(SimpleNamespace(text="report"), None))),
+    ):
+        projected_tool = type("Projected", (), {"name": "minecraft_probe"})()
+        project.return_value.tools = [projected_tool]
+        project.return_value.tool_names = ["minecraft_probe"]
+        result = await engine.run_task("probe", timeout_seconds=10)
+
+    assert result.steps[0].status == "FAILED"
+    assert "DNS lookup failed" in (result.steps[0].error or "")

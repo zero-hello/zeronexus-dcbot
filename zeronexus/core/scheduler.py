@@ -243,7 +243,7 @@ class Scheduler:
     async def trigger_job(self, name: str) -> bool:
         """Manually triggers an existing job immediately if enabled and not already running."""
         job = self._jobs.get(name)
-        if not job or not job.enabled:
+        if not job or not job.enabled or not self._running:
             return False
         if job.is_running or job.lock.locked():
             log.warning(f"Cannot trigger job '{name}': already running.")

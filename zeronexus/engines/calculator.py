@@ -171,14 +171,18 @@ class SecurityVisitor(ast.NodeVisitor):
         self.node_count += 1
         if self.node_count > self.max_nodes:
             raise ValueError(f"運算式過於複雜 (節點數量超限: 上限 {self.max_nodes})。")
+        if getattr(node, "_depth", 0) > self.max_depth:
+            raise ValueError(f"運算式巢狀層級超限 (上限 {self.max_depth})。")
         if not isinstance(node, ALLOWED_NODE_TYPES):
             raise ValueError(f"不允許的語法節點: {type(node).__name__}")
-        super().generic_visit(node)
+        for child in ast.iter_child_nodes(node):
+            setattr(child, "_depth", getattr(node, "_depth", 0) + 1)
+            self.visit(child)
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id not in ALLOWED_LOCALS:
             raise ValueError(f"不允許的變數或函式名稱: '{node.id}'")
-        self.generic_visit(node)
+        self.node_count += 1
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         if isinstance(node.op, ast.Pow):
@@ -210,6 +214,9 @@ class SecurityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        self.node_count += 1
+        if getattr(node, "_depth", 0) > self.max_depth:
+            raise ValueError(f"運算式巢狀層級超限 (上限 {self.max_depth})。")
         # Check function name
         if not isinstance(node.func, ast.Name):
             raise ValueError("不允許的動態函式呼叫。")
@@ -248,7 +255,12 @@ class SecurityVisitor(ast.NodeVisitor):
                         if abs(sub.value) > 700:
                             raise ValueError("exp 引數常數項過大 (上限 700)。")
 
-        self.generic_visit(node)
+        # Validate args/keywords only. The function identifier was checked explicitly.
+        for child in ast.iter_child_nodes(node):
+            if child is node.func:
+                continue
+            setattr(child, "_depth", getattr(node, "_depth", 0) + 1)
+            self.visit(child)
 
 
 def _insert_implicit_multiplication(s: str) -> str:

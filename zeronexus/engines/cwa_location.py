@@ -351,6 +351,8 @@ class CWALocationResolver:
     def resolve(cls, query: str) -> CWALocationResult:
         """Resolves natural language location string or user prompt to CWA county and station."""
         raw = query.strip()
+        if not raw:
+            return CWALocationResult(query=raw, is_matched=False)
 
         # 1. Check for Taiwan overview
         for kw in cls.OVERVIEW_KEYWORDS:

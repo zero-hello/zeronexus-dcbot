@@ -154,7 +154,7 @@ class MusicCog(commands.Cog):
                                     color=ZNColor.PRIMARY,
                                     footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
                                 )
-                                ended_view = TrackEndedView(self._create_on_add_song(player))
+                                ended_view = TrackEndedView(self._create_on_add_song(player), guild_id, player)
                                 lv = idle_card.to_layout_view(extra_view=ended_view, timeout=None)
                                 try:
                                     await dashboard.message.edit(view=lv, embed=None)
@@ -707,7 +707,7 @@ class MusicCog(commands.Cog):
             color=ZNColor.PRIMARY,
             footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
         )
-        ended_view = TrackEndedView(self._create_on_add_song(player))
+        ended_view = TrackEndedView(self._create_on_add_song(player), guild_id, player)
         dashboard = self._dashboards.get(guild_id)
         updated = False
         if dashboard and dashboard.message:
@@ -1148,7 +1148,7 @@ class MusicCog(commands.Cog):
                 color=ZNColor.PRIMARY,
                 footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
             )
-            ended_view = TrackEndedView(self._create_on_add_song(player))
+            ended_view = TrackEndedView(self._create_on_add_song(player), guild_id, player)
             lv = idle_card.to_layout_view(extra_view=ended_view)
             dashboard = self._dashboards.get(guild_id)
             if dashboard and dashboard.message:
@@ -1208,7 +1208,7 @@ class MusicCog(commands.Cog):
             footer_text=f"🔊 音量：{vol}%  |  🎵 音樂播放器待機中",
         )
 
-        ended_view = TrackEndedView(self._create_on_add_song(player))
+        ended_view = TrackEndedView(self._create_on_add_song(player), guild_id, player)
         lv = card.to_layout_view(extra_view=ended_view, timeout=None)
         dashboard = self._dashboards.get(guild_id)
 

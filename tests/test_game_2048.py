@@ -94,6 +94,7 @@ async def test_other_players_cannot_operate_public_game_board() -> None:
     view = Game2048View(1, SimpleNamespace(id=2, name="owner", display_name="owner"))
     interaction = SimpleNamespace(
         user=SimpleNamespace(id=3),
+        guild_id=1,
     )
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
@@ -155,3 +156,14 @@ async def test_finish_public_board_removes_view_and_disables_buttons() -> None:
     edit.assert_awaited_once()
     assert edit.await_args.kwargs["view"] is None
     assert all(button.disabled for button in view.children if isinstance(button, Button))
+
+
+@pytest.mark.asyncio
+async def test_2048_rejects_interaction_from_another_guild() -> None:
+    view = Game2048View(1, SimpleNamespace(id=2, name="owner", display_name="owner"))
+    interaction = SimpleNamespace(user=SimpleNamespace(id=2), guild_id=99)
+    reply = AsyncMock()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("zeronexus.modules.entertainment.cog.InteractionResponder.safe_send", reply)
+        assert not await view.interaction_check(interaction)
+    reply.assert_awaited_once()

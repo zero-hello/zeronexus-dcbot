@@ -23,7 +23,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from zeronexus.core.scheduler import scheduler
 from zeronexus.engines.community_suite import (
     CyberCourtJuryView,
     PartyRecruitmentView,
@@ -101,22 +100,6 @@ class CommunityModule(BaseModule):
                     implemented=True,
                 )
             )
-
-        # Register Daily 23:00 Late Night Diary Reminder
-        try:
-            scheduler.add_daily_job(
-                name="community_late_night_diary",
-                func=self._daily_diary_reminder,
-                hour=23,
-                minute=0,
-                timezone_name="Asia/Taipei",
-            )
-        except Exception:
-            pass
-
-    async def _daily_diary_reminder(self) -> None:
-        """Daily 23:00 reminder job for late night diary check-in."""
-        pass
 
     async def shutdown(self) -> None:
         """Cleans up background jobs and sessions."""
@@ -493,13 +476,22 @@ class CommunityCog(commands.Cog, name="社群狂歡與多模態套件"):
         選項a: Optional[str] = "會",
         選項b: Optional[str] = "不會",
     ) -> None:
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "❌ 預測賭盤僅限在伺服器中建立。", ephemeral=True)
+            return
         market = prediction_market.create_market(
-            guild_id=interaction.guild_id or 0,
+            guild_id=interaction.guild_id,
             creator_id=interaction.user.id,
             title=主題,
             option_a=選項a or "會",
             option_b=選項b or "不會",
         )
+        try:
+            await prediction_market.persist_market(market)
+        except Exception:
+            prediction_market.markets.pop(market.market_id, None)
+            await InteractionResponder.safe_send(interaction, "❌ 賭盤建立失敗，資料庫未能保存，請稍後再試。", ephemeral=True)
+            return
 
         card = ZNCard(
             title=f"🎰 預測賭盤開盤 ➔ #{market.market_id}",
@@ -532,6 +524,9 @@ class CommunityCog(commands.Cog, name="社群狂歡與多模態套件"):
         選項: str,
         下注點數: int,
     ) -> None:
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "❌ 預測賭盤僅限在伺服器中下注。", ephemeral=True)
+            return
         if 下注點數 <= 0:
             await InteractionResponder.safe_send(interaction, "❌ 下注點數必須大於 0！", ephemeral=True)
             return
@@ -541,7 +536,7 @@ class CommunityCog(commands.Cog, name="社群狂歡與多模態套件"):
             await InteractionResponder.safe_send(interaction, "❌ 下注選項必須為 'A' 或 'B'。", ephemeral=True)
             return
 
-        m = prediction_market.get_market(盤號)
+        m = await prediction_market.get_market_async(盤號, interaction.guild_id)
         if not m:
             await InteractionResponder.safe_send(interaction, "❌ 查無此賭盤編號。", ephemeral=True)
             return
@@ -593,18 +588,21 @@ class CommunityCog(commands.Cog, name="社群狂歡與多模態套件"):
         盤號: str,
         獲勝選項: str,
     ) -> None:
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "❌ 預測賭盤僅限在伺服器中結算。", ephemeral=True)
+            return
         win_opt = (獲勝選項 or "").strip().upper()
         if win_opt not in ("A", "B"):
             await InteractionResponder.safe_send(interaction, "❌ 獲勝選項必須為 'A' 或 'B'。", ephemeral=True)
             return
 
-        market = prediction_market.get_market(盤號)
+        market = await prediction_market.get_market_async(盤號, interaction.guild_id)
         if not market:
             await InteractionResponder.safe_send(interaction, "❌ 查無此賭盤編號。", ephemeral=True)
             return
         is_admin = bool(interaction.user.guild_permissions and interaction.user.guild_permissions.administrator) if interaction.guild else False
-        if interaction.user.id != market.creator_id and not is_admin:
-            await InteractionResponder.safe_send(interaction, "❌ 僅有發起莊家或伺服器管理員可進行結算！", ephemeral=True)
+        if not is_admin:
+            await InteractionResponder.safe_send(interaction, "❌ 為避免發起人操控輸贏，賭盤只能由伺服器管理員結算。", ephemeral=True)
             return
         if market.is_settled:
             await InteractionResponder.safe_send(interaction, "❌ 此賭盤先前已經結算過囉！", ephemeral=True)
@@ -639,7 +637,10 @@ class CommunityCog(commands.Cog, name="社群狂歡與多模態套件"):
     @app_commands.describe(盤號="要查看的賭盤代號")
     @command_guard("community")
     async def bet_view_command(self, interaction: discord.Interaction, 盤號: str) -> None:
-        market = prediction_market.get_market(盤號)
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "❌ 預測賭盤僅限在伺服器中查看。", ephemeral=True)
+            return
+        market = await prediction_market.get_market_async(盤號, interaction.guild_id)
         if not market:
             await InteractionResponder.safe_send(interaction, "❌ 查無此賭盤編號。", ephemeral=True)
             return

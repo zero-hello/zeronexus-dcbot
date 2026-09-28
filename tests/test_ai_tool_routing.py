@@ -61,3 +61,13 @@ def test_gateway_builds_tool_schema_once_for_gemini() -> None:
         pool.get_available_key = MagicMock(return_value=None)
     projected = DynamicToolProjector.project("查目前天氣")
     assert projected.tools
+
+
+def test_stats_tracker_records_successful_image_generation() -> None:
+    from zeronexus.core.stats import StatsTracker
+
+    tracker = StatsTracker()
+    tracker.record_image_generation(True)
+    tracker.record_image_generation(False)
+    assert tracker.images_generated == 1
+    assert tracker.summary()["usage"]["images_generated"] == 1

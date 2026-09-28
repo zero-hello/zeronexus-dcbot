@@ -2795,22 +2795,34 @@ class FreeAPIEngine:
             }
             # Manual Hop-by-Hop SSRF Redirect Validation (Max 5 hops)
             for _ in range(5):
-                resp = await client.get(curr_url, headers=headers, follow_redirects=False)
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    loc = resp.headers.get("location")
-                    if not loc:
-                        break
-                    next_url = urllib.parse.urljoin(curr_url, loc)
-                    is_safe_hop, hop_err, _ = await validate_safe_url_async(next_url)
-                    if not is_safe_hop:
-                        return {
-                            "status": "ERROR",
-                            "url": next_url,
-                            "error": f"安全性防禦阻斷：重導向目標為受限位址 ({hop_err})",
-                        }
-                    curr_url = next_url
-                    continue
-                break
+                async with client.stream("GET", curr_url, headers=headers, follow_redirects=False) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location")
+                        if not loc:
+                            break
+                        next_url = urllib.parse.urljoin(curr_url, loc)
+                        is_safe_hop, hop_err, _ = await validate_safe_url_async(next_url)
+                        if not is_safe_hop:
+                            return {
+                                "status": "ERROR",
+                                "url": next_url,
+                                "error": f"安全性防禦阻斷：重導向目標為受限位址 ({hop_err})",
+                            }
+                        curr_url = next_url
+                        continue
+                    content_length = resp.headers.get("content-length", "")
+                    if content_length.isdigit() and int(content_length) > 2 * 1024 * 1024:
+                        return {"status": "ERROR", "url": curr_url, "error": "網頁內容超過 2 MB 安全讀取上限。"}
+                    raw_limited = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        remaining = 2 * 1024 * 1024 - len(raw_limited)
+                        if remaining <= 0:
+                            break
+                        raw_limited.extend(chunk[:remaining])
+                        if len(chunk) > remaining:
+                            break
+                    resp._content = bytes(raw_limited)
+                    break
 
             # 【P1 修復】實際讀取內容前對最終落地 URL 再驗證一次，縮小 DNS Rebinding 時間窗
             final_safe, final_err, _ = await validate_safe_url_async(curr_url)

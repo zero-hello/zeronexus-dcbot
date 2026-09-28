@@ -158,6 +158,8 @@ class ChannelInspectorEngine:
         requester_perms = channel.permissions_for(requester_member)
         if not getattr(requester_perms, "view_channel", False):
             return "您沒有查看此頻道的權限，無法讀取或分析其中內容。"
+        if not getattr(requester_perms, "read_message_history", False):
+            return "您缺少讀取此頻道訊息歷史的權限，無法讀取或分析其中內容。"
         return None
 
     async def fetch_channel_messages(

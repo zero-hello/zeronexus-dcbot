@@ -271,7 +271,7 @@ class AICog(commands.Cog):
         interaction: discord.Interaction,
         回合數: app_commands.Range[int, 3, 30] = 12,
     ) -> None:
-        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
+        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id, guild_id=interaction.guild_id)
         if not allowed:
             await InteractionResponder.safe_send(
                 interaction,
@@ -366,7 +366,7 @@ class AICog(commands.Cog):
             return
 
         # Check quota & atomic 3-phase reservation
-        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
+        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id, guild_id=interaction.guild_id)
         if not allowed:
             await InteractionResponder.safe_send(
                 interaction,
@@ -1192,16 +1192,6 @@ class AICog(commands.Cog):
                 else:
                     settings.ai_persona = 人格
 
-                # Also update user's preference
-                u_stmt = select(UserProfile).where(UserProfile.user_id == interaction.user.id)
-                u_res = await session.execute(u_stmt)
-                prof = u_res.scalars().first()
-                if not prof:
-                    prof = UserProfile(user_id=interaction.user.id, preferred_persona=人格)
-                    session.add(prof)
-                else:
-                    prof.preferred_persona = 人格
-
             card = ZNCard(
                 title="AI 伺服器預設人格已更新",
                 description=(
@@ -1566,7 +1556,7 @@ class AICog(commands.Cog):
         """Shared implementation for /人工智慧 對話額度 and /人工智慧 額度查詢."""
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
         # Strictly uses quota_service (Asia/Taipei UTC+8 and handles in-flight)
-        q_info = await quota_service.get_user_quota_info(interaction.user.id)
+        q_info = await quota_service.get_user_quota_info(interaction.user.id, guild_id=interaction.guild_id)
         used = q_info["used"]
         limit = q_info["limit"]
         is_dev = q_info["is_dev"]
@@ -1608,7 +1598,7 @@ class AICog(commands.Cog):
     @app_commands.describe(成員="欲重設配額的伺服器成員")
     @command_guard("ai")
     async def quota_reset_command(self, interaction: discord.Interaction, 成員: discord.Member) -> None:
-        if not PermissionEngine.check_developer(interaction.user.id):
+        if not PermissionEngine.is_developer(interaction.user.id):
             await InteractionResponder.safe_send(
                 interaction,
                 "🛡️ 此操作屬於核心系統級指令，僅限系統開發者與核心管理團隊執行。",
@@ -1620,17 +1610,7 @@ class AICog(commands.Cog):
         today_str = quota_service.get_today_str()
         await quota_service.reset_user_quota(成員.id, today_str)
         await quota_service.reset_user_image_quota(成員.id, today_str)
-        async with db.session() as session:
-            stmt = delete(AIQuotaRecord).where(
-                AIQuotaRecord.user_id == 成員.id,
-                AIQuotaRecord.date_str == today_str,
-            )
-            await session.execute(stmt)
-            stmt_img = delete(AIImageQuotaRecord).where(
-                AIImageQuotaRecord.user_id == 成員.id,
-                AIImageQuotaRecord.date_str == today_str,
-            )
-            await session.execute(stmt_img)
+        await quota_service.reset_user_model_quotas(成員.id, today_str)
 
         card = ZNCard(
             title="配額已重設完畢",
@@ -1660,7 +1640,7 @@ class AICog(commands.Cog):
     @ai_group.command(name="金鑰狀態", description="查詢 AI 閘道金鑰池運行健康度")
     @command_guard("ai")
     async def key_status_command(self, interaction: discord.Interaction) -> None:
-        if not PermissionEngine.check_developer(interaction.user.id):
+        if not PermissionEngine.is_developer(interaction.user.id):
             await InteractionResponder.safe_send(
                 interaction,
                 "🛡️ 金鑰池診斷屬於高敏感度系統操作，僅限開發者查閱。",
@@ -1749,7 +1729,7 @@ class AICog(commands.Cog):
             return
 
         # Check quota & atomic 3-phase reservation
-        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id)
+        allowed, reservation, projected_used, effective_limit = await quota_service.reserve_quota(interaction.user.id, guild_id=interaction.guild_id)
         if not allowed:
             await InteractionResponder.safe_send(
                 interaction,

@@ -179,8 +179,7 @@ class AgentEngine:
                 if isinstance(res, dict) and res.get("is_error") is True:
                     step.status = "FAILED"
                     step.error = res.get("error_message") or "工具計算或執行返回錯誤"
-                elif isinstance(res, dict) and "error" in res and res.get("online") is not False:
-                    # Note: 'online': False in minecraft probe is a valid telemetry status, not a tool failure
+                elif isinstance(res, dict) and "error" in res:
                     step.status = "FAILED"
                     step.error = str(res.get("error"))
                 else:
@@ -210,7 +209,7 @@ class AgentEngine:
                 if res.get("is_error") is True:
                     step.status = "FAILED"
                     step.error = res.get("error_message") or "運算引擎異常"
-                elif "error" in res and res.get("online") is not False:
+                elif "error" in res:
                     step.status = "FAILED"
                     step.error = str(res.get("error"))
 

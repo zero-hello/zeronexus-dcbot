@@ -125,13 +125,25 @@ class QuotaService:
         self,
         user_id: int,
         max_daily_override: Optional[int] = None,
+        guild_id: Optional[int] = None,
     ) -> Tuple[bool, Optional[QuotaReservation], int, int]:
         """Atomically checks and reserves 1 quota slot for user_id.
 
         Returns (allowed, reservation, projected_used, effective_limit).
         """
         today_str = self.get_today_str()
-        default_limit = max_daily_override or config.ai.daily_limit_per_user
+        default_limit = max_daily_override if max_daily_override is not None else config.ai.daily_limit_per_user
+        if max_daily_override is None and guild_id is not None:
+            try:
+                from zeronexus.models.guild import GuildSettings
+
+                async with db.session() as session:
+                    guild_settings = await session.get(GuildSettings, guild_id)
+                    configured_limit = getattr(guild_settings, "ai_daily_limit", None) if guild_settings else None
+                    if isinstance(configured_limit, int) and configured_limit > 0:
+                        default_limit = configured_limit
+            except Exception as exc:
+                log.warning("Failed to load guild AI quota override for guild %s: %s", guild_id, exc)
         is_dev = config.discord.is_dev(user_id)
 
         await self._daily_cleanup_if_needed()
@@ -144,7 +156,6 @@ class QuotaService:
                 if r.user_id == user_id and not r.committed and not r.released and (now_ts - r.created_at > 300.0 or r.date_str != today_str)
             ]
             for sr in stale_user_res:
-                self._in_flight[user_id] = max(0, self._in_flight[user_id] - 1)
                 sr.released = True
                 self._active_reservations.pop(sr.reservation_id, None)
                 log.warning(f"Auto-reclaimed stale AI quota reservation {sr.reservation_id} for user {user_id}.")
@@ -157,7 +168,7 @@ class QuotaService:
                 res = await session.execute(stmt)
                 record = res.scalars().first()
                 current_used = record.used_count if record else 0
-                effective_limit = (record.limit_override if record and record.limit_override else default_limit)
+                effective_limit = default_limit
 
             # Strictly count in-flight reservations belonging to today's date
             today_in_flight = sum(
@@ -188,6 +199,11 @@ class QuotaService:
         """Commits the reserved quota into the database upon successful response completion."""
         async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
+                return
+            if reservation.date_str != self.get_today_str():
+                reservation.released = True
+                self._active_reservations.pop(reservation.reservation_id, None)
+                self._in_flight[reservation.user_id] = max(0, self._in_flight[reservation.user_id] - 1)
                 return
 
             async with db.session() as session:
@@ -224,23 +240,37 @@ class QuotaService:
             self._active_reservations.pop(reservation.reservation_id, None)
 
     async def cleanup_stale_reservations(self, timeout_seconds: float = 300.0) -> int:
-        """Purges uncommitted/unreleased reservations older than timeout_seconds to recover in-flight slots."""
+        """Purges stale text, image, and model reservations without leaking in-flight counters."""
         now = time.time()
-        stale_reservations: List[QuotaReservation] = []
-        for r in list(self._active_reservations.values()):
-            if not r.committed and not r.released and (now - r.created_at > timeout_seconds):
-                stale_reservations.append(r)
+        stale_text = [r for r in list(self._active_reservations.values()) if not r.committed and not r.released and (now - r.created_at > timeout_seconds or r.date_str != self.get_today_str())]
+        stale_images = [r for r in list(self._active_image_reservations.values()) if not r.committed and not r.released and (now - r.created_at > timeout_seconds or r.date_str != self.get_today_str())]
+        stale_models = [r for r in list(self._active_model_reservations.values()) if not r.committed and not r.released and (now - r.created_at > timeout_seconds or r.date_str != self.get_today_str())]
 
-        for r in stale_reservations:
-            await self.release_quota(r)
-            log.warning(f"Reclaimed stale AI quota reservation {r.reservation_id} for user {r.user_id}.")
+        for reservation in stale_text:
+            await self.release_quota(reservation)
+        for reservation in stale_images:
+            await self.release_image_quota(reservation)
+        for reservation in stale_models:
+            await self.release_model_quota(reservation)
+        stale_count = len(stale_text) + len(stale_images) + len(stale_models)
+        if stale_count:
+            log.warning("Reclaimed %s stale AI quota reservations (text=%s, image=%s, model=%s).", stale_count, len(stale_text), len(stale_images), len(stale_models))
+        return stale_count
 
-        return len(stale_reservations)
-
-    async def get_user_quota_info(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_quota_info(self, user_id: int, guild_id: Optional[int] = None) -> Dict[str, Any]:
         """Reads current quota usage metrics for user_id without modifying state."""
         today_str = self.get_today_str()
         default_limit = config.ai.daily_limit_per_user
+        if guild_id is not None:
+            try:
+                from zeronexus.models.guild import GuildSettings
+                async with db.session() as session:
+                    guild_settings = await session.get(GuildSettings, guild_id)
+                    configured_limit = getattr(guild_settings, "ai_daily_limit", None) if guild_settings else None
+                    if isinstance(configured_limit, int) and configured_limit > 0:
+                        default_limit = configured_limit
+            except Exception as exc:
+                log.warning("Failed to load guild AI quota override for guild %s: %s", guild_id, exc)
         is_dev = config.discord.is_dev(user_id)
 
         async with db.session() as session:
@@ -251,7 +281,7 @@ class QuotaService:
             res = await session.execute(stmt)
             record = res.scalars().first()
             used = record.used_count if record else 0
-            limit = record.limit_override if record and record.limit_override else default_limit
+            limit = default_limit
 
         in_flight = self._in_flight.get(user_id, 0)
         total_used = used + in_flight
@@ -271,10 +301,22 @@ class QuotaService:
         """Resets the quota usage for a specific user for today (or specified date)."""
         target_date = date_str or self.get_today_str()
         async with self._get_user_lock(user_id):
-            self._in_flight[user_id] = 0
+            for reservation in list(self._active_reservations.values()):
+                if reservation.user_id == user_id and reservation.date_str == target_date:
+                    reservation.released = True
+                    self._active_reservations.pop(reservation.reservation_id, None)
+            self._in_flight[user_id] = sum(1 for r in self._active_reservations.values() if r.user_id == user_id and r.date_str == self.get_today_str() and not r.released and not r.committed)
             # Clear reminders
             for t in [20, 10, 5, 1]:
                 self._reminded_thresholds.pop((user_id, target_date, t), None)
+            for reservation in list(self._active_model_reservations.values()):
+                if reservation.user_id == user_id and reservation.date_str == target_date:
+                    reservation.released = True
+                    self._active_model_reservations.pop(reservation.reservation_id, None)
+                    key = (user_id, getattr(reservation, "model_id", "default"))
+                    self._model_in_flight[key] = max(0, self._model_in_flight[key] - 1)
+                    if self._model_in_flight[key] == 0:
+                        self._model_in_flight.pop(key, None)
 
             async with db.session() as session:
                 stmt = select(AIQuotaRecord).where(
@@ -292,9 +334,21 @@ class QuotaService:
     async def reset_all_daily_quotas(self, date_str: Optional[str] = None) -> int:
         """Resets all quota usage records for the specified date (defaults to today)."""
         target_date = date_str or self.get_today_str()
-        self._in_flight.clear()
         self._reminded_thresholds.clear()
-        self._active_reservations.clear()
+        for reservation in list(self._active_reservations.values()):
+            if reservation.date_str == target_date:
+                reservation.released = True
+                self._active_reservations.pop(reservation.reservation_id, None)
+        for reservation in list(self._active_model_reservations.values()):
+            if reservation.date_str == target_date:
+                reservation.released = True
+                self._active_model_reservations.pop(reservation.reservation_id, None)
+                key = (reservation.user_id, getattr(reservation, "model_id", "default"))
+                self._model_in_flight[key] = max(0, self._model_in_flight[key] - 1)
+                if self._model_in_flight[key] == 0:
+                    self._model_in_flight.pop(key, None)
+        for uid in list(self._in_flight):
+            self._in_flight[uid] = sum(1 for r in self._active_reservations.values() if r.user_id == uid and r.date_str == self.get_today_str() and not r.released and not r.committed)
 
         async with db.session() as session:
             stmt = update(AIQuotaRecord).where(AIQuotaRecord.date_str == target_date).values(used_count=0)
@@ -315,7 +369,7 @@ class QuotaService:
         Returns (allowed, reservation, projected_used, effective_limit).
         """
         today_str = self.get_today_str()
-        default_limit = max_daily_override or self.DAILY_IMAGE_LIMIT
+        default_limit = max_daily_override if max_daily_override is not None else self.DAILY_IMAGE_LIMIT
         is_dev = config.discord.is_dev(user_id)
 
         async with self._get_user_lock(user_id):
@@ -326,7 +380,6 @@ class QuotaService:
                 if r.user_id == user_id and not r.committed and not r.released and (now_ts - r.created_at > 300.0 or r.date_str != today_str)
             ]
             for sr in stale_user_res:
-                self._image_in_flight[user_id] = max(0, self._image_in_flight[user_id] - 1)
                 sr.released = True
                 self._active_image_reservations.pop(sr.reservation_id, None)
                 log.warning(f"Auto-reclaimed stale AI image quota reservation {sr.reservation_id} for user {user_id}.")
@@ -339,7 +392,7 @@ class QuotaService:
                 res = await session.execute(stmt)
                 record = res.scalars().first()
                 current_used = record.used_count if record else 0
-                effective_limit = (record.limit_override if record and record.limit_override else default_limit)
+                effective_limit = default_limit
 
             # Strictly count in-flight reservations belonging to today's date (prevent midnight bleed)
             today_in_flight = sum(
@@ -369,6 +422,11 @@ class QuotaService:
         """Commits the reserved image quota into the database upon successful image generation."""
         async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
+                return
+            if reservation.date_str != self.get_today_str():
+                reservation.released = True
+                self._active_image_reservations.pop(reservation.reservation_id, None)
+                self._image_in_flight[reservation.user_id] = max(0, self._image_in_flight[reservation.user_id] - 1)
                 return
 
             async with db.session() as session:
@@ -418,7 +476,7 @@ class QuotaService:
             res = await session.execute(stmt)
             record = res.scalars().first()
             used = record.used_count if record else 0
-            limit = record.limit_override if record and record.limit_override else default_limit
+            limit = default_limit
 
         today_in_flight = sum(
             1 for r in self._active_image_reservations.values()
@@ -442,7 +500,11 @@ class QuotaService:
         """Resets the image quota usage for a specific user for today (or specified date)."""
         target_date = date_str or self.get_today_str()
         async with self._get_user_lock(user_id):
-            self._image_in_flight[user_id] = 0
+            for reservation in list(self._active_image_reservations.values()):
+                if reservation.user_id == user_id and reservation.date_str == target_date:
+                    reservation.released = True
+                    self._active_image_reservations.pop(reservation.reservation_id, None)
+            self._image_in_flight[user_id] = sum(1 for r in self._active_image_reservations.values() if r.user_id == user_id and r.date_str == self.get_today_str() and not r.released and not r.committed)
             async with db.session() as session:
                 stmt = select(AIImageQuotaRecord).where(
                     AIImageQuotaRecord.user_id == user_id,
@@ -459,13 +521,32 @@ class QuotaService:
     async def reset_all_daily_image_quotas(self, date_str: Optional[str] = None) -> int:
         """Resets all image quota usage records for the specified date (defaults to today)."""
         target_date = date_str or self.get_today_str()
-        self._image_in_flight.clear()
-        self._active_image_reservations.clear()
+        for reservation in list(self._active_image_reservations.values()):
+            if reservation.date_str == target_date:
+                reservation.released = True
+                self._active_image_reservations.pop(reservation.reservation_id, None)
+        for uid in list(self._image_in_flight):
+            self._image_in_flight[uid] = sum(1 for r in self._active_image_reservations.values() if r.user_id == uid and r.date_str == self.get_today_str() and not r.released and not r.committed)
 
         async with db.session() as session:
             stmt = update(AIImageQuotaRecord).where(AIImageQuotaRecord.date_str == target_date).values(used_count=0)
             res = await session.execute(stmt)
             return res.rowcount or 0
+
+    async def reset_all_daily_model_quotas(self, date_str: Optional[str] = None) -> int:
+        target_date = date_str or self.get_today_str()
+        for reservation in list(self._active_model_reservations.values()):
+            if reservation.date_str == target_date:
+                reservation.released = True
+                self._active_model_reservations.pop(reservation.reservation_id, None)
+                key = (reservation.user_id, getattr(reservation, "model_id", "default"))
+                self._model_in_flight[key] = max(0, self._model_in_flight[key] - 1)
+                if self._model_in_flight[key] == 0:
+                    self._model_in_flight.pop(key, None)
+        async with db.session() as session:
+            stmt = update(AIModelQuotaRecord).where(AIModelQuotaRecord.date_str == target_date).values(used_count=0)
+            result = await session.execute(stmt)
+            return result.rowcount or 0
 
     def is_quota_inquiry(self, text: str) -> bool:
         """Detects whether a user prompt is asking about remaining quota or reset time."""
@@ -589,7 +670,7 @@ class QuotaService:
             res = await session.execute(stmt)
             record = res.scalars().first()
             used = record.used_count if record else 0
-            limit = record.limit_override if record and record.limit_override else default_limit
+            limit = default_limit
 
         remaining = 999999 if is_dev else max(0, limit - used)
 
@@ -627,8 +708,10 @@ class QuotaService:
                 if r.user_id == user_id and not r.committed and not r.released and (now_ts - r.created_at > 300.0 or r.date_str != today_str)
             ]
             for sr in stale_model_res:
-                stale_key = (user_id, getattr(sr, "model_id", "default"))
+                stale_key = (sr.user_id, getattr(sr, "model_id", "default"))
                 self._model_in_flight[stale_key] = max(0, self._model_in_flight[stale_key] - 1)
+                if self._model_in_flight[stale_key] == 0:
+                    self._model_in_flight.pop(stale_key, None)
                 sr.released = True
                 self._active_model_reservations.pop(sr.reservation_id, None)
                 log.warning(f"Auto-reclaimed stale AI model quota reservation {sr.reservation_id} for user {user_id}.")
@@ -642,7 +725,7 @@ class QuotaService:
                 res = await session.execute(stmt)
                 record = res.scalars().first()
                 current_used = record.used_count if record else 0
-                effective_limit = record.limit_override if record and record.limit_override else default_limit
+                effective_limit = default_limit
 
             # 判定納入進行中計數：已用 + 進行中 >= 上限即拒絕
             in_flight = self._model_in_flight.get(flight_key, 0)
@@ -671,6 +754,13 @@ class QuotaService:
         flight_key: Tuple[int, str] = (reservation.user_id, model_id)
         async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
+                return
+            if reservation.date_str != self.get_today_str():
+                reservation.released = True
+                self._active_model_reservations.pop(reservation.reservation_id, None)
+                self._model_in_flight[flight_key] = max(0, self._model_in_flight[flight_key] - 1)
+                if self._model_in_flight[flight_key] == 0:
+                    self._model_in_flight.pop(flight_key, None)
                 return
 
             async with db.session() as session:
@@ -713,6 +803,29 @@ class QuotaService:
                 del self._model_in_flight[flight_key]
             reservation.released = True
             self._active_model_reservations.pop(reservation.reservation_id, None)
+
+    async def reset_user_model_quotas(self, user_id: int, date_str: Optional[str] = None) -> int:
+        """Invalidate in-flight model reservations and clear persisted model usage for a user/date."""
+        target_date = date_str or self.get_today_str()
+        async with self._get_user_lock(user_id):
+            for reservation in list(self._active_model_reservations.values()):
+                if reservation.user_id == user_id and reservation.date_str == target_date:
+                    reservation.released = True
+                    self._active_model_reservations.pop(reservation.reservation_id, None)
+                    model_id = getattr(reservation, "model_id", "default")
+                    flight_key = (user_id, model_id)
+                    self._model_in_flight[flight_key] = max(0, self._model_in_flight[flight_key] - 1)
+                    if self._model_in_flight[flight_key] == 0:
+                        self._model_in_flight.pop(flight_key, None)
+            async with db.session() as session:
+                stmt = select(AIModelQuotaRecord).where(
+                    AIModelQuotaRecord.user_id == user_id,
+                    AIModelQuotaRecord.date_str == target_date,
+                )
+                records = (await session.execute(stmt)).scalars().all()
+                for record in records:
+                    record.used_count = 0
+                return len(records)
 
     async def format_model_quota_desc(self, user_id: int, model_id: str, tag: str = "") -> str:
         """Formats a descriptive string for Discord Select Menu options (< 100 characters)."""
