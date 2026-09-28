@@ -95,6 +95,17 @@ class StatsTracker:
         self.commands: Dict[str, CommandMetric] = defaultdict(CommandMetric)
         self.ai_providers: Dict[str, AIMetric] = defaultdict(AIMetric)
         self.ai_tools: Dict[str, ToolMetric] = defaultdict(ToolMetric)
+        self.command_calls_total: int = 0
+        self.command_success_total: int = 0
+        self.command_failure_total: int = 0
+        self.ai_interactions_total: int = 0
+        self.ai_interactions_success: int = 0
+        self.ai_interactions_failure: int = 0
+        self.ai_interaction_latency_total_ms: float = 0.0
+        self.ai_fallback_total: int = 0
+        self.image_generations_total: int = 0
+        self.tool_invocations_total: int = 0
+        self._recorded_ai_interaction_ids: set[str] = set()
         self.module_calls: Dict[str, int] = defaultdict(int)
         self.external_api_calls: Dict[str, int] = defaultdict(int)
         self.total_errors: int = 0
@@ -147,6 +158,27 @@ class StatsTracker:
         else:
             m.failed_calls += 1
         m.total_latency_ms += latency_ms
+        self.command_calls_total += 1
+        if success:
+            self.command_success_total += 1
+        else:
+            self.command_failure_total += 1
+
+    def record_ai_interaction(self, interaction_id: Any, latency_ms: float, success: bool, fallback_count: int = 0) -> bool:
+        """Record one user-facing AI turn once, independent of provider retries/failovers."""
+        key = str(interaction_id) if interaction_id is not None else ""
+        if key and key in self._recorded_ai_interaction_ids:
+            return False
+        if key:
+            self._recorded_ai_interaction_ids.add(key)
+            if len(self._recorded_ai_interaction_ids) > 10_000:
+                self._recorded_ai_interaction_ids = set(list(self._recorded_ai_interaction_ids)[-5_000:])
+        self.ai_interactions_total += 1
+        self.ai_interactions_success += int(success)
+        self.ai_interactions_failure += int(not success)
+        self.ai_interaction_latency_total_ms += max(0.0, float(latency_ms))
+        self.ai_fallback_total += max(0, int(fallback_count))
+        return True
 
     def record_ai_request(
         self,
@@ -174,6 +206,7 @@ class StatsTracker:
         metric.failures += int(not success)
         metric.timeouts += int(timed_out)
         metric.total_latency_ms += max(0.0, latency_ms)
+        self.tool_invocations_total += 1
 
     def get_tool_execution_summary(self, limit: int = 100) -> List[Dict[str, Any]]:
         ranked = sorted(self.ai_tools.items(), key=lambda item: item[1].calls, reverse=True)
@@ -199,11 +232,13 @@ class StatsTracker:
     def increment(self, metric_name: str, count: int = 1) -> None:
         """動態遞增統計指標。"""
         if metric_name == "images_generated":
+            self.image_generations_total += count
             self.external_api_calls["image_gen"] += count
         elif metric_name == "tool_calls_count":
             self.external_api_calls["tools"] += count
         elif metric_name == "total_replies":
-            self.ai_providers["gemini"].total_requests += count
+            self.ai_interactions_total += count
+            self.ai_interactions_success += count
         else:
             self.external_api_calls[metric_name] += count
 
@@ -229,18 +264,15 @@ class StatsTracker:
 
     @property
     def total_replies(self) -> int:
-        ai_reqs = sum(p.total_requests for p in self.ai_providers.values())
-        cmd_reqs = sum(c.total_calls for c in self.commands.values())
-        return max(ai_reqs + cmd_reqs, 42)
+        return self.ai_interactions_total
 
     @property
     def images_generated(self) -> int:
-        return max(self.external_api_calls.get("image_gen", 0), self.commands.get("imagine", CommandMetric()).total_calls)
+        return self.image_generations_total
 
     @property
     def tool_calls_count(self) -> int:
-        tools_cnt = sum(cnt for name, cnt in self.external_api_calls.items() if name != "image_gen")
-        return max(tools_cnt, 18)
+        return self.tool_invocations_total
 
     def get(self, key: str, default: Any = 0) -> Any:
         """動態讀取系統計量指標，提供類似字典的彈性讀取介面。"""
@@ -323,6 +355,17 @@ class StatsTracker:
                 "avg_latency_ms": round((v.total_latency_ms / v.total_requests), 2) if v.total_requests > 0 else 0.0,
             } for k, v in self.ai_providers.items()},
             "ai_tools": self.get_tool_execution_summary(limit=100),
+            "usage": {
+                "commands_total": self.command_calls_total,
+                "commands_success": self.command_success_total,
+                "commands_failed": self.command_failure_total,
+                "ai_interactions_total": self.ai_interactions_total,
+                "ai_interactions_success": self.ai_interactions_success,
+                "ai_interactions_failed": self.ai_interactions_failure,
+                "ai_fallback_total": self.ai_fallback_total,
+                "tool_invocations_total": self.tool_invocations_total,
+                "images_generated": self.external_api_calls.get("image_gen", 0),
+            },
             "module_calls": dict(self.module_calls),
             "external_apis": dict(self.external_api_calls),
         }

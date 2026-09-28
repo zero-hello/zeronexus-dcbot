@@ -1450,8 +1450,24 @@ class ZeroNexusBot(commands.Bot):
         channel_override: Optional[discord.abc.Messageable] = None,
     ) -> None:
         """Entry point for AI channel processing with in-flight concurrency tracking."""
+        ai_turn_started = time.perf_counter()
+        ai_turn_recorded = False
+
+        def record_turn(success: bool, fallback_count: int = 0) -> None:
+            nonlocal ai_turn_recorded
+            if ai_turn_recorded:
+                return
+            ai_turn_recorded = True
+            stats.record_ai_interaction(
+                message.id,
+                latency_ms=(time.perf_counter() - ai_turn_started) * 1000.0,
+                success=success,
+                fallback_count=fallback_count,
+            )
+
         # 全域黑名單攔截守門員：若已遭到造物主封鎖，立即回傳封鎖紅牌警告卡片並終止所有運算
         if global_blacklist.is_banned(message.author.id):
+            record_turn(False)
             ban_info = global_blacklist.get_ban_info(message.author.id) or {}
             reason = ban_info.get("reason", "違反系統使用規範")
             ban_card = ZNCard(
@@ -1478,6 +1494,7 @@ class ZeroNexusBot(commands.Bot):
 
         self._in_flight_message_ids.add(message.id)
         self._in_flight_users.add(message.author.id)
+        turn_succeeded = False
 
         try:
             await self._execute_ai_channel_message(
@@ -1487,9 +1504,11 @@ class ZeroNexusBot(commands.Bot):
                 is_shared_ai_channel=is_shared_ai_channel,
                 channel_override=channel_override,
             )
+            turn_succeeded = True
         except asyncio.CancelledError:
             raise
         except Exception as pipeline_err:
+            record_turn(False)
             # 【P0-A 修復】AI 管線全域防護網：任何未預期例外（DB 鎖定/網路斷線等）
             # 不得讓協程無聲崩潰；必須經脫敏後給使用者明確的錯誤卡片回饋。
             from zeronexus.security.sanitizer import redact_secrets
@@ -1517,6 +1536,7 @@ class ZeroNexusBot(commands.Bot):
                 except Exception:
                     pass
         finally:
+            record_turn(turn_succeeded)
             self._in_flight_message_ids.discard(message.id)
             self._in_flight_users.discard(message.author.id)
 
@@ -2911,9 +2931,16 @@ class ZeroNexusBot(commands.Bot):
 
             pipeline_metrics.total_latency_ms = (time.perf_counter() - t0) * 1000.0
             stats.record_ai_pipeline(pipeline_metrics)
+            stats.record_ai_interaction(
+                message.id,
+                latency_ms=pipeline_metrics.total_latency_ms,
+                success=True,
+                fallback_count=int(bool(fallback)),
+            )
 
         except asyncio.CancelledError:
             log.info("AI response generation task cancelled gracefully.")
+            stats.record_ai_interaction(message.id, (time.perf_counter() - t0) * 1000.0, success=False)
             cancel_view.stop()
             if reservation:
                 try:
@@ -2943,6 +2970,7 @@ class ZeroNexusBot(commands.Bot):
             raise
         except (TimeoutError, asyncio.TimeoutError):
             log.warning("AI response generation timed out.")
+            stats.record_ai_interaction(message.id, (time.perf_counter() - t0) * 1000.0, success=False)
             if reservation:
                 await quota_service.release_quota(reservation)
             if model_reservation:
@@ -2961,6 +2989,7 @@ class ZeroNexusBot(commands.Bot):
             # 【P0-A 修復】錯誤卡全面脫敏：原始例外可能含帶金鑰的 URL，嚴防金鑰噴灑至公開聊天視窗
             from zeronexus.security.sanitizer import redact_secrets as _redact_pipeline_err
             clean_err = _redact_pipeline_err(str(e))
+            stats.record_ai_interaction(message.id, (time.perf_counter() - t0) * 1000.0, success=False)
             log.error(f"Error answering in AI channel: {clean_err}", exc_info=True)
             if reservation:
                 await quota_service.release_quota(reservation)

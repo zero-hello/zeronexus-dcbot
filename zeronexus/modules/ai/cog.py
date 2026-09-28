@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import re
+import time
 from typing import Any, List, Literal, Optional
 
 import discord
@@ -555,6 +556,7 @@ class AICog(commands.Cog):
                             verify_download=True,
                         )
                         if img_res.success and (img_res.image_url or img_res.image_bytes):
+                            stats.record_image_generation(True)
                             if img_resv:
                                 await quota_service.commit_image_quota(img_resv)
                             generated_image_url = img_res.image_url
@@ -678,6 +680,9 @@ class AICog(commands.Cog):
                 bot=self.bot,
             )
 
+        ai_turn_start = time.perf_counter()
+        fallback_notice = None
+        ai_turn_success = False
         try:
             ai_res, fallback_notice = await ai_gateway.generate_response(
                 system_instruction=system_instruction,
@@ -758,8 +763,10 @@ class AICog(commands.Cog):
                 await quota_service.commit_quota(reservation)
             if model_reservation:
                 await quota_service.commit_model_quota(model_reservation)
+            ai_turn_success = True
 
-        except Exception:
+        except Exception as ai_error:
+            log.warning(f"Slash AI turn failed (interaction={interaction.id}): {ai_error}")
             if reservation:
                 await quota_service.release_quota(reservation)
             if model_reservation:
@@ -777,6 +784,13 @@ class AICog(commands.Cog):
                 color=ZNColor.WARNING,
             )
             await InteractionResponder.safe_send(interaction, card=err_card)
+        finally:
+            stats.record_ai_interaction(
+                interaction.id,
+                latency_ms=(time.perf_counter() - ai_turn_start) * 1000.0,
+                success=ai_turn_success,
+                fallback_count=int(bool(fallback_notice)),
+            )
 
     @ai_group.command(name="生圖", description="運用 AI 生成高品質視覺影像或藝術插圖")
     @app_commands.describe(
@@ -846,6 +860,7 @@ class AICog(commands.Cog):
                 verify_download=True,
             )
             if res.success and (res.image_url or res.image_bytes):
+                stats.record_image_generation(True)
                 if reservation:
                     await quota_service.commit_image_quota(reservation)
 

@@ -21,8 +21,13 @@ async def test_status_card_is_useful_and_never_exposes_ai_key_pool(monkeypatch) 
     )
     monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.format_uptime", lambda: "2d 1h 3m")
     monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.summary", lambda: {
-        "ai_usage": {"gemini": {"total": 10, "success": 9, "failed": 1, "fallbacks": 2, "tokens": 1234, "avg_latency_ms": 345.0}}
+        "ai_usage": {"gemini": {"total": 4, "success": 4, "failed": 0, "fallbacks": 1, "tokens": 1234, "avg_latency_ms": 345.0}},
+        "usage": {"tool_invocations_total": 2},
     })
+    monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.ai_interactions_total", 4)
+    monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.ai_interactions_success", 3)
+    monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.ai_interactions_failure", 1)
+    monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.ai_fallback_total", 1)
     monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.get_ai_latency_percentiles", lambda: {"total_latency_ms": {"p95": 900.0}})
     monkeypatch.setattr("zeronexus.modules.standalone.cog.stats.ai_tools", {})
     monkeypatch.setattr("zeronexus.modules.standalone.cog.cache.stats", AsyncMock(return_value={"mode": "In-Memory", "hit_rate_pct": 80.0, "keys_count": 20, "max_items": 100}))
@@ -46,9 +51,11 @@ async def test_status_card_is_useful_and_never_exposes_ai_key_pool(monkeypatch) 
 
     assert "目前未就緒" not in content
     assert "伺服器" in content
-    assert "資料庫" in content and "快取" in content
-    assert "成功率" not in content or "成功 `9`" in content
+    assert "DB" in content and "Cache" in content
+    assert "✅ 成功 `3`" in content
+    assert "❌ 失敗 `1`" in content
     assert "Token" in content
+    assert "Function Calls `2`" in content
     assert "金鑰池" not in content
     assert "支金鑰" not in content
     assert "AIza" not in content and "sk-or" not in content
