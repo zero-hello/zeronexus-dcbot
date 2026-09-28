@@ -523,8 +523,9 @@ class StandaloneCog(commands.Cog):
         card = ZNCard(
             title="🤖 ZeroNexus 即時狀態",
             description=(
-                f"{'🟢 正常' if overall_ok else '🟡 需注意'}　　⏱️ `{uptime}`　　🏷️ `v{config.platform.version}`\n"
-                f"🌐 Discord `{gw_lat:.1f} ms`　　🏘️ 伺服器 `{guild_count}`　　⌨️ 指令 `{commands_total}`"
+                f"{'🟢 系統狀態：正常' if overall_ok else '🟡 系統狀態：需注意'}\n"
+                f"⏱️ 運行時間：`{uptime}`\n🏷️ 軟體版本：`v{config.platform.version}`\n"
+                f"🌐 Discord 延遲：`{gw_lat:.1f} 毫秒`\n🏘️ 已連線伺服器：`{guild_count} 個`\n⌨️ 可用指令：`{commands_total} 個`"
             ),
             status_pill=ZNStatusPill.SYSTEM,
             color=ZNColor.SUCCESS if overall_ok else ZNColor.WARNING,
@@ -534,15 +535,15 @@ class StandaloneCog(commands.Cog):
         mem_line = f"程序 RAM `{r['process_ram_mb']:.0f} MB`"
         if process_capacity_mb:
             mem_line += f" / `{process_capacity_mb} MB`"
-        card.add_section("🖥️ 主機資源", f"🐍 `{r['python_version']}`　　⚙️ CPU `{r['cpu_percent']}%`\n🧠 RAM `{r['process_ram_mb']:.0f} MB`　　💾 主機 `{r['system_ram_used_pct']}%` / `{r['system_ram_total_gb']} GB`　　🧵 執行緒 `{r['threads_count']}`", inline=True)
+        card.add_section("🖥️ 主機資源", f"🐍 Python 版本：`{r['python_version']}`\n⚙️ 處理器使用率：`{r['cpu_percent']}%`\n🧠 Bot 記憶體用量：`{r['process_ram_mb']:.0f} MB`\n💾 主機記憶體使用率：`{r['system_ram_used_pct']}%`（總計 `{r['system_ram_total_gb']} GB`）\n🧵 執行緒數量：`{r['threads_count']} 個`", inline=False)
 
         db_status = "🟢 正常" if db_res.get("healthy") else "🔴 異常"
         db_driver = db_res.get("driver", "未知")
         db_latency = db_res.get("latency_ms", -1)
         cache_status = "🟢 正常" if cache_health.get("healthy") else "🟡 降級/異常"
-        card.add_section("💾 資料服務", f"🗄️ DB `{db_status}` / `{db_latency} ms`\n⚡ Cache `{cache_status}`　　命中 `{cache_s.get('hit_rate_pct', 0)}%`　　項目 `{cache_s.get('keys_count', 0)}/{cache_s.get('max_items', 0)}`", inline=True)
+        card.add_section("💾 資料服務", f"🗄️ 資料庫狀態：{db_status}\n⏱️ 資料庫延遲：`{db_latency} 毫秒`\n⚡ 快取狀態：{cache_status}\n🎯 快取命中率：`{cache_s.get('hit_rate_pct', 0)}%`\n📦 快取項目數：`{cache_s.get('keys_count', 0)} / {cache_s.get('max_items', 0)}`", inline=False)
 
-        card.add_section("🧩 模組健康", f"🟢 正常 `{running_mods}`　　🟡 需注意 `{len(degraded)}`　　📦 總數 `{total_mods}`", inline=True)
+        card.add_section("🧩 模組健康", f"🟢 正常模組：`{running_mods} 個`\n🟡 需注意模組：`{len(degraded)} 個`\n📦 模組總數：`{total_mods} 個`", inline=False)
 
         ai_metrics = stats.summary().get("ai_usage", {})
         tokens = sum(int(item.get("tokens", 0)) for item in ai_metrics.values())
@@ -551,16 +552,16 @@ class StandaloneCog(commands.Cog):
         p95 = recent_latency.get("total_latency_ms", {}).get("p95", 0.0)
         usage = stats.summary().get("usage", {})
         tool_count = int(usage.get("tool_invocations_total", 0))
-        card.add_section("🤖 AI 使用量", f"🧭 路由 {'🟢' if ai_route_ready else '🟡'}　　🧠 模型 `{available_model_count}`　　💬 對話 `{stats.ai_interactions_total}`\n✅ 成功 `{stats.ai_interactions_success}`　　❌ 失敗 `{stats.ai_interactions_failure}`　　🔁 備援 `{stats.ai_fallback_total}`\n⚡ 平均 `{avg_latency} ms` / P95 `{p95} ms`　　🪙 Tokens `{tokens:,}`　　🛠️ Function Calls `{tool_count}`", inline=False)
+        card.add_section("🤖 AI 使用量", f"🧭 AI 路由狀態：{'🟢 可用' if ai_route_ready else '🟡 不可用'}\n🧠 可用 AI 模型：`{available_model_count} 個`\n💬 AI 對話次數：`{stats.ai_interactions_total} 次`\n✅ 成功對話：`{stats.ai_interactions_success} 次`\n❌ 失敗對話：`{stats.ai_interactions_failure} 次`\n🔁 備援切換次數：`{stats.ai_fallback_total} 次`\n⚡ 平均回覆時間：`{avg_latency} 毫秒`\n📈 P95 回覆時間：`{p95} 毫秒`\n🪙 AI Token 使用量：`{tokens:,} 個`\n🛠️ 工具呼叫次數：`{tool_count} 次`", inline=False)
         if stats.ai_tools:
             top_tools = stats.get_tool_execution_summary(limit=5)
             tool_lines = [f"- `{t['tool']}`：{t['calls']} 次｜成功率 {t['success_rate_pct']}%｜平均 {t['avg_latency_ms']} ms" for t in top_tools]
-            card.add_section("🧰 工具使用量", "　　".join(f"`{t['tool']}` {t['calls']}次 / {t['success_rate_pct']}%" for t in top_tools), inline=False)
+            card.add_section("🧰 工具使用量", "\n".join(f"🔧 {t['tool']}：`{t['calls']} 次`（成功率 `{t['success_rate_pct']}%`）" for t in top_tools), inline=False)
 
         if degraded:
-            card.add_section("⚠️ 需注意", f"異常模組 `{len(degraded)}` 個　　使用 `/系統 模組狀態` 查看細節。", inline=True)
+            card.add_section("⚠️ 需注意", f"異常模組數量：`{len(degraded)} 個`\n📋 查看詳情：`/系統 模組狀態`", inline=False)
         else:
-            card.add_section("✅ 服務檢查", "模組、資料服務與 AI 路由正常。", inline=True)
+            card.add_section("✅ 服務檢查", "模組、資料服務與 AI 路由均正常。", inline=False)
 
         return card
 

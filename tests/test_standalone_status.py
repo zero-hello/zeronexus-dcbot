@@ -51,11 +51,14 @@ async def test_status_card_is_useful_and_never_exposes_ai_key_pool(monkeypatch) 
 
     assert "目前未就緒" not in content
     assert "伺服器" in content
-    assert "DB" in content and "Cache" in content
-    assert "✅ 成功 `3`" in content
-    assert "❌ 失敗 `1`" in content
-    assert "Token" in content
-    assert "Function Calls `2`" in content
+    assert "資料庫狀態" in content and "快取狀態" in content
+    assert "✅ 成功對話：`3 次`" in content
+    assert "❌ 失敗對話：`1 次`" in content
+    assert "AI Token 使用量" in content
+    assert "工具呼叫次數：`2 次`" in content
+    assert "AI 對話次數：`4 次`" in content
+    assert "模型 `2`" not in content and "Function Calls" not in content
+    assert "　　" not in content
     assert "金鑰池" not in content
     assert "支金鑰" not in content
     assert "AIza" not in content and "sk-or" not in content
