@@ -996,12 +996,19 @@ class Game2048View(discord.ui.View):
         elif self.status == "lost":
             title = "🧩 2048 結束 — 棋盤已滿"
             pill, color = ZNStatusPill.INFO, ZNColor.WARNING
+        elif self.status == "ended":
+            title = "🏁 2048 已結算"
+            pill, color = ZNStatusPill.INFO, ZNColor.WARNING
         else:
             title = "🧩 2048 挑戰"
             pill, color = ZNStatusPill.FUN, ZNColor.PRIMARY
         card = ZNCard(
             title=title,
-            description=f"{self.render_board()}\n\n🎯 **分數：** `{self.score:,}`　🏆 **最高方塊：** `{best_tile}`　👣 **步數：** `{self.moves}`\n🌟 **等級：** {level}\n💬 {encouragement}\n\n🔗 **方向鍵：** ⬆️ 上｜⬅️ 左｜⬇️ 下｜➡️ 右｜ℹ️ 四角黑方塊不可按",
+            description=(
+                f"{self.render_board()}\n\n"
+                f"🎯 **分數：** `{self.score:,}`　🏆 **最高方塊：** `{best_tile}`　👣 **步數：** `{self.moves}`\n"
+                f"🌟 **等級：** {level}\n💬 {encouragement}"
+            ),
             status_pill=pill,
             color=color,
             footer_text=f"玩家：{self.user_name}｜合併同值方塊，目標拼出 2048。",
@@ -1037,8 +1044,8 @@ class Game2048View(discord.ui.View):
 
     async def _move(self, interaction: discord.Interaction, direction: str) -> None:
         async with self._lock:
-            if self.status not in {"playing", "won"}:
-                await InteractionResponder.safe_send(interaction, "這局已經結束，請重新開始一局。", ephemeral=True)
+            if self.status != "playing":
+                await InteractionResponder.safe_send(interaction, "這局已結束並完成結算，請重新開始新的一局。", ephemeral=True)
                 return
             new_state, gained, changed = move_2048(self.board, direction)
             if not changed:
@@ -1083,6 +1090,10 @@ class Game2048View(discord.ui.View):
     async def move_left(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._move(interaction, "left")
 
+    @discord.ui.button(label="■", style=discord.ButtonStyle.secondary, disabled=True, row=1)
+    async def corner_center(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        pass
+
     @discord.ui.button(label="右", emoji="➡️", style=discord.ButtonStyle.primary, row=1)
     async def move_right(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._move(interaction, "right")
@@ -1115,8 +1126,24 @@ class Game2048View(discord.ui.View):
                 if isinstance(child, discord.ui.Button):
                     button_name = self._button_name(child)
                     child.disabled = button_name.startswith("corner_") or (
-                        self.status == "lost" and button_name != "restart"
+                        self.status in {"lost", "ended"} and button_name != "restart"
                     )
+            await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
+
+    @discord.ui.button(label="結束遊戲", emoji="🏁", style=discord.ButtonStyle.danger, row=3)
+    async def end_game(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        async with self._lock:
+            if self.status != "playing":
+                await InteractionResponder.safe_send(interaction, "這局已結束，成績已結算。", ephemeral=True)
+                return
+            self.status = "ended"
+            try:
+                await self._record_result_once()
+            except Exception as exc:
+                log.warning(f"2048 manual end score persistence failed: {exc}")
+            for child in self.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = self._button_name(child) != "restart"
             await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
 
     async def on_timeout(self) -> None:

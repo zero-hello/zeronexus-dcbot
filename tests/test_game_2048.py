@@ -58,13 +58,15 @@ def test_direction_pad_uses_four_disabled_corner_buttons_and_four_directions() -
     view = Game2048View(1, SimpleNamespace(id=2, name="tester", display_name="tester"))
     buttons = [item for item in view.children if isinstance(item, Button)]
     disabled_corners = [item for item in buttons if item.disabled]
-    assert len(buttons) == 9  # eight direction-pad cells plus restart
-    assert len(disabled_corners) == 4
+    assert len(buttons) == 11  # nine direction-pad cells plus restart/end controls
+    assert len(disabled_corners) == 5  # four corners and center
     assert sum(1 for item in buttons if item.label in {"上", "左", "下", "右"}) == 4
     positions = {(item.label, item.row) for item in buttons}
-    assert {("■", 0), ("■", 2)} <= positions
+    assert {("■", 0), ("■", 1), ("■", 2)} <= positions
     assert {("上", 0), ("左", 1), ("右", 1), ("下", 2)} <= positions
     assert ("重新開始", 3) in positions
+    assert ("結束遊戲", 3) in positions
+    assert "方向鍵" not in view.render_card().description
 
 
 def test_score_encouragement_levels_progress_with_score_and_tile() -> None:
@@ -99,3 +101,24 @@ async def test_other_players_cannot_operate_public_game_board() -> None:
             AsyncMock(),
         )
         assert not await view.interaction_check(interaction)
+
+
+@pytest.mark.asyncio
+async def test_manual_end_records_score_and_disables_controls_except_restart() -> None:
+    from discord.ui import Button
+
+    view = Game2048View(1, SimpleNamespace(id=2, name="owner", display_name="owner"))
+    view.board = [[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    view.moves = 1
+    interaction = SimpleNamespace(user=SimpleNamespace(id=2))
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        record = AsyncMock()
+        edit = AsyncMock()
+        monkeypatch.setattr(view, "_record_result_once", record)
+        monkeypatch.setattr("zeronexus.modules.entertainment.cog.InteractionResponder.safe_edit", edit)
+        await view.end_game.callback(interaction)
+
+    assert view.status == "ended"
+    record.assert_awaited_once()
+    buttons = [item for item in view.children if isinstance(item, Button)]
+    assert all(item.disabled or view._button_name(item) == "restart" for item in buttons)
