@@ -3,13 +3,15 @@
 4 Fully Implemented Top-Level Commands:
 - /幫助 (help): 互動式 Help Center (整合 11 大模組下拉選單、分頁導覽按鈕與首頁全景概覽)
 - /ping (ping): 即時三維延遲測量 (WebSocket Gateway、資料庫讀寫、REST API) 與重新測試按鈕
-- /當前狀態 (status): 滿載全域平台大盤 (運行時間、伺服器規模、11 大子模組運作狀況展示、資源與金鑰池)
+- /當前狀態 (status): 非敏感平台大盤 (運行時間、模組、資源、AI/工具成效與依賴健康)
 - /診斷 (diagnostics): 系統全域健全度深度診斷與子模組探測掃描
 """
 
 from __future__ import annotations
 
 import time
+import platform
+import asyncio
 from typing import Any, List, Optional
 
 import discord
@@ -17,6 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from zeronexus.core.cache import cache
+from zeronexus.core.config import config
 from zeronexus.core.database import db
 from zeronexus.core.diagnostics import diagnostics
 from zeronexus.core.stats import stats
@@ -491,68 +494,102 @@ class StandaloneCog(commands.Cog):
 
     @classmethod
     async def generate_status_card(cls, bot: commands.Bot) -> ZNCard:
-        """Constructs the complete platform health and submodules status overview."""
-        diag = await diagnostics.run_full_diagnostics(bot_instance=bot)
+        """Build a useful health dashboard without exposing API keys or key-pool details."""
         r = stats.get_system_resources()
-        cache_s = await cache.stats()
+        cache_s, db_res, cache_health = await asyncio.gather(cache.stats(), db.health_check(), cache.health_check())
 
         summary = module_manager.get_health_summary()
         total_mods = len(summary)
         running_mods = sum(1 for m in summary.values() if m.get("state") in ("RUNNING", "READY"))
-        degraded_mods = [m["display_name"] for m in summary.values() if m.get("state") not in ("RUNNING", "READY")]
+        degraded = [(name, m.get("display_name", name), m.get("state", "UNKNOWN")) for name, m in summary.items() if m.get("state") not in ("RUNNING", "READY")]
 
         guild_count = len(bot.guilds) if hasattr(bot, "guilds") else 0
-        user_count = len(bot.users) if hasattr(bot, "users") else 0
+        cached_user_count = len(bot.users) if hasattr(bot, "users") else 0
         gw_lat = round(bot.latency * 1000, 2) if hasattr(bot, "latency") else 0.0
+        uptime = stats.format_uptime()
+        commands_total = module_manager.command_registry.count()
+        try:
+            from zeronexus.ai_gateway.model_registry import model_registry
+
+            available_model_count = len(model_registry.list_active_models())
+        except Exception:
+            available_model_count = 0
+        ai_route_ready = available_model_count > 0
+        resource_warning = r["system_ram_used_pct"] >= 90 or r["process_ram_mb"] >= 1024 or r["cpu_percent"] >= 90
+        module_warning = bool(degraded)
+        dependency_ok = bool(db_res.get("healthy")) and bool(cache_health.get("healthy")) and ai_route_ready
+        overall_ok = dependency_ok and not module_warning and not resource_warning and getattr(bot, "is_ready", lambda: False)()
 
         card = ZNCard(
-            title="ZeroNexus 平台全景即時大盤",
+            title="ZeroNexus 即時服務狀態",
             description=(
-                f"**運作狀態**：`{stats.format_uptime()}` (線上穩定運作中)\n"
-                f"**服務規模**：`{guild_count}` 座伺服器 | `{user_count}` 位使用者成員\n"
-                f"**指令總數**：`{module_manager.command_registry.count()}` 條實體 Slash Commands\n"
-                f"**Gateway 延遲**：`{gw_lat} ms`"
+                f"**整體健康度**：{'🟢 正常' if overall_ok else '🟡 需要留意'}\n"
+                f"**運行時間**：`{uptime}`　｜　**版本**：`v{config.platform.version}`\n"
+                f"**Discord 連線**：{'🟢 已就緒' if getattr(bot, 'is_ready', lambda: False)() else '🔴 未就緒'}　｜　**Gateway 延遲**：`{gw_lat:.1f} ms`\n"
+                f"**服務規模**：`{guild_count}` 個伺服器　｜　快取成員 `約 {cached_user_count}` 位　｜　指令 `{commands_total}` 條"
             ),
             status_pill=ZNStatusPill.SYSTEM,
-            color=ZNColor.PRIMARY,
+            color=ZNColor.SUCCESS if overall_ok else ZNColor.WARNING,
         )
 
-        # 1. Host Resources
+        process_capacity_mb = getattr(config.resources, "memory_limit_mb", None) if hasattr(config, "resources") else None
+        mem_line = f"程序 RAM `{r['process_ram_mb']:.0f} MB`"
+        if process_capacity_mb:
+            mem_line += f" / `{process_capacity_mb} MB`"
         card.add_section(
-            "🖥️ 主機與環境資源",
-            f"Python `{r['python_version']}` | 程序 RAM: `{r['process_ram_mb']} MB` | 系統 RAM: `{r['system_ram_used_pct']}%` | CPU: `{r['cpu_percent']}%`",
+            "🖥️ 執行環境與資源",
+            f"Python `{r['python_version']}`　｜　OS `{r['os']}`　｜　執行緒 `{r['threads_count']}`\n"
+            f"{mem_line}　｜　主機 RAM 使用 `{r['system_ram_used_pct']}%`（總量 `{r['system_ram_total_gb']} GB`）　｜　CPU `{r['cpu_percent']}%`",
             inline=False,
         )
 
-        # 2. Database & Cache
-        db_details = diag.get("subsystems", {}).get("database", {}).get("details", "運作中")
+        db_status = "🟢 正常" if db_res.get("healthy") else "🔴 異常"
+        db_driver = db_res.get("driver", "未知")
+        db_latency = db_res.get("latency_ms", -1)
+        cache_status = "🟢 正常" if cache_health.get("healthy") else "🟡 降級/異常"
         card.add_section(
-            "💾 資料庫與快取引擎",
-            f"資料庫: `{db_details}` | 快取模式: `{cache_s.get('mode')}` (命中率: `{cache_s.get('hit_rate_pct')}%`，鍵數: `{cache_s.get('keys_count', 0)}`)",
+            "💾 資料服務",
+            f"資料庫 `{db_status}`　｜　驅動 `{db_driver}`　｜　查詢延遲 `{db_latency} ms`\n"
+            f"快取 `{cache_status}`　｜　模式 `{cache_s.get('mode', '未知')}`　｜　命中率 `{cache_s.get('hit_rate_pct', 0)}%`　｜　項目 `{cache_s.get('keys_count', 0)}/{cache_s.get('max_items', 0)}`",
             inline=False,
         )
 
-        # 3. Submodules Health
-        if not degraded_mods:
-            mod_status_desc = f"🟢 全部 **{running_mods} / {total_mods}** 個核心子模組運作正常 (RUNNING)"
+        mod_lines = [f"🟢 **{m.get('display_name', name)}** `{m.get('state', 'UNKNOWN')}`" for name, m in summary.items() if m.get("state") in ("RUNNING", "READY")]
+        if degraded:
+            mod_lines.extend(f"🟡 **{label}** `{state}`" for _, label, state in degraded)
+        card.add_section(
+            "🧩 模組健康",
+            f"正常 `{running_mods}/{total_mods}` 個模組" + ("\n" + "\n".join(mod_lines[:12]) if mod_lines else "\n目前尚無模組狀態資料。"),
+            inline=False,
+        )
+
+        ai_metrics = stats.summary().get("ai_usage", {})
+        requests = sum(int(item.get("total", 0)) for item in ai_metrics.values())
+        successes = sum(int(item.get("success", 0)) for item in ai_metrics.values())
+        failures = sum(int(item.get("failed", 0)) for item in ai_metrics.values())
+        fallbacks = sum(int(item.get("fallbacks", 0)) for item in ai_metrics.values())
+        tokens = sum(int(item.get("tokens", 0)) for item in ai_metrics.values())
+        avg_latency = round(sum(float(item.get("avg_latency_ms", 0)) * int(item.get("total", 0)) for item in ai_metrics.values()) / requests, 1) if requests else 0
+        recent_latency = stats.get_ai_latency_percentiles()
+        p95 = recent_latency.get("total_latency_ms", {}).get("p95")
+        tool_count = stats.tool_calls_count
+        card.add_section(
+            "🤖 AI 服務成效（不顯示金鑰資訊）",
+            f"路由可用 {'🟢' if ai_route_ready else '🟡'}　｜　可用模型 `{available_model_count}` 款\n"
+            f"請求 `{requests}` 次　｜　成功 `{successes}`　｜　失敗 `{failures}`　｜　自動備援 `{fallbacks}`\n"
+            f"平均模型延遲 `{avg_latency} ms`" + (f"　｜　近期 P95 `{p95} ms`" if p95 is not None else "") +
+            f"　｜　累計 Token `{tokens:,}`　｜　工具呼叫 `{tool_count}`",
+            inline=False,
+        )
+        if stats.ai_tools:
+            top_tools = stats.get_tool_execution_summary(limit=5)
+            tool_lines = [f"- `{t['tool']}`：{t['calls']} 次｜成功率 {t['success_rate_pct']}%｜平均 {t['avg_latency_ms']} ms" for t in top_tools]
+            card.add_section("🛠️ Function Calling 熱門工具", "\n".join(tool_lines), inline=False)
+
+        if degraded:
+            card.add_section("⚠️ 需要留意", "以下模組目前未處於正常狀態：" + "、".join(label for _, label, _ in degraded[:8]), inline=False)
         else:
-            mod_status_desc = f"🟡 運作中: `{running_mods}/{total_mods}` | 異常/隔離模組：`{', '.join(degraded_mods)}`"
-        card.add_section("🧩 系統子模組運行狀況", mod_status_desc, inline=False)
-
-        # 4. AI Key Pool
-        ai_info = diag.get("subsystems", {}).get("ai_gateway", {})
-        if "providers" in ai_info and isinstance(ai_info["providers"], dict):
-            ai_lines = []
-            for p_name, p_data in ai_info["providers"].items():
-                if isinstance(p_data, dict):
-                    active_str = "🟢" if p_data.get("active") else "🟡"
-                    ai_lines.append(f"{active_str} **{p_name.upper()}** (`{p_data.get('default_model')}`) — {p_data.get('total_keys')} 支金鑰")
-            if ai_lines:
-                card.add_section("🤖 AI Gateway 金鑰池", "\n".join(ai_lines), inline=False)
-
-        # 5. CWA Weather & Earthquake
-        cwa_sub = diag.get("subsystems", {}).get("cwa_weather", {})
-        card.add_section("⛅ 中央氣象署 (CWA)", f"{cwa_sub.get('icon', '⚪')} {cwa_sub.get('details', '未配置')}", inline=False)
+            card.add_section("✅ 服務檢查", "所有已載入模組皆為正常狀態。", inline=False)
 
         return card
 

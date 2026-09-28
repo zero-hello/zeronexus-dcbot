@@ -44,15 +44,6 @@ class ToolMetric:
     calls: int = 0
     successes: int = 0
     failures: int = 0
-    timeouts: int = 0
-    total_latency_ms: float = 0.0
-
-
-@dataclass
-class ToolMetric:
-    calls: int = 0
-    successes: int = 0
-    failures: int = 0
     total_latency_ms: float = 0.0
     timeouts: int = 0
 
@@ -103,7 +94,6 @@ class StatsTracker:
         self.start_time: float = time.time()
         self.commands: Dict[str, CommandMetric] = defaultdict(CommandMetric)
         self.ai_providers: Dict[str, AIMetric] = defaultdict(AIMetric)
-        self.ai_tools: Dict[str, ToolMetric] = defaultdict(ToolMetric)
         self.ai_tools: Dict[str, ToolMetric] = defaultdict(ToolMetric)
         self.module_calls: Dict[str, int] = defaultdict(int)
         self.external_api_calls: Dict[str, int] = defaultdict(int)
@@ -185,7 +175,7 @@ class StatsTracker:
         metric.timeouts += int(timed_out)
         metric.total_latency_ms += max(0.0, latency_ms)
 
-    def get_tool_execution_summary(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_tool_execution_summary(self, limit: int = 100) -> List[Dict[str, Any]]:
         ranked = sorted(self.ai_tools.items(), key=lambda item: item[1].calls, reverse=True)
         return [
             {
@@ -198,29 +188,6 @@ class StatsTracker:
                 "avg_latency_ms": round(metric.total_latency_ms / metric.calls, 2) if metric.calls else 0.0,
             }
             for name, metric in ranked[:max(1, min(int(limit), 200))]
-        ]
-
-    def record_tool_execution(self, tool_name: str, latency_ms: float, success: bool, timed_out: bool = False) -> None:
-        metric = self.ai_tools[tool_name]
-        metric.calls += 1
-        metric.successes += int(success)
-        metric.failures += int(not success)
-        metric.timeouts += int(timed_out)
-        metric.total_latency_ms += max(0.0, latency_ms)
-
-    def get_tool_execution_summary(self, limit: int = 20) -> List[Dict[str, Any]]:
-        ranked = sorted(self.ai_tools.items(), key=lambda item: item[1].calls, reverse=True)
-        return [
-            {
-                "tool": name,
-                "calls": metric.calls,
-                "successes": metric.successes,
-                "failures": metric.failures,
-                "timeouts": metric.timeouts,
-                "success_rate_pct": round(metric.successes / metric.calls * 100, 2) if metric.calls else 0.0,
-                "avg_latency_ms": round(metric.total_latency_ms / metric.calls, 2) if metric.calls else 0.0,
-            }
-            for name, metric in ranked[:max(1, min(limit, 100))]
         ]
 
     def record_module_call(self, module_name: str) -> None:
@@ -355,7 +322,6 @@ class StatsTracker:
                 "tokens": v.tokens_consumed,
                 "avg_latency_ms": round((v.total_latency_ms / v.total_requests), 2) if v.total_requests > 0 else 0.0,
             } for k, v in self.ai_providers.items()},
-            "ai_tools": self.get_tool_execution_summary(),
             "ai_tools": self.get_tool_execution_summary(limit=100),
             "module_calls": dict(self.module_calls),
             "external_apis": dict(self.external_api_calls),
