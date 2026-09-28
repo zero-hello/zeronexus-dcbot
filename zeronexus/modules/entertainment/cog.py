@@ -30,6 +30,8 @@ from sqlalchemy import desc, select, update
 
 from zeronexus.core.database import db
 from zeronexus.models.user import EconomyWallet
+from zeronexus.models.game import Game2048BestScore
+from zeronexus.engines.game_2048 import new_board as new_2048_board, move as move_2048, has_moves as has_2048_moves, max_tile as max_2048_tile, spawn_tile as spawn_2048_tile
 from zeronexus.modules.base import BaseModule, CommandMetadata
 from zeronexus.security.guard import command_guard
 from zeronexus.security.permissions import ZNPermissionLevel
@@ -52,6 +54,43 @@ async def _get_or_create_wallet(session: Any, user_id: int, default_points: int 
         session.add(wallet)
         await session.flush()
     return wallet
+
+
+async def _record_2048_result(guild_id: int, user_id: int, score: int, tile: int, moves: int) -> None:
+    """Atomically persist a game completion and best result for its player."""
+    async with db.session() as session:
+        stmt = select(Game2048BestScore).where(
+            Game2048BestScore.guild_id == guild_id,
+            Game2048BestScore.user_id == user_id,
+        )
+        result = await session.execute(stmt)
+        record = result.scalars().first()
+        if record is None:
+            record = Game2048BestScore(
+                guild_id=guild_id,
+                user_id=user_id,
+                best_score=score,
+                best_tile=tile,
+                best_moves=moves,
+                games_played=1,
+            )
+            session.add(record)
+        else:
+            record.games_played += 1
+            if (score, tile) > (record.best_score, record.best_tile):
+                record.best_score = score
+                record.best_tile = tile
+                record.best_moves = moves
+                record.updated_at = datetime.now(timezone.utc)
+
+
+async def _get_2048_best(guild_id: int, user_id: int) -> Optional[Game2048BestScore]:
+    async with db.session() as session:
+        result = await session.execute(select(Game2048BestScore).where(
+            Game2048BestScore.guild_id == guild_id,
+            Game2048BestScore.user_id == user_id,
+        ))
+        return result.scalars().first()
 
 
 # =============================================================================
@@ -913,17 +952,158 @@ class Connect4View(discord.ui.View):
             )
             await InteractionResponder.safe_edit(interaction, card=card, view=self)
 
+
+# =============================================================================
+# 7. 2048 single-player puzzle
+# =============================================================================
+
+class Game2048View(discord.ui.View):
+    """Discord button-driven 2048 game, private to the starting player."""
+
+    def __init__(self, guild_id: int, user: discord.abc.User, timeout: float = 600.0) -> None:
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.user_id = user.id
+        self.user_name = getattr(user, "display_name", user.name)
+        self.board = new_2048_board()
+        self.score = 0
+        self.moves = 0
+        self.status = "playing"
+        self.reached_2048 = False
+        self._result_recorded = False
+        self.message: Optional[discord.Message] = None
+        self._lock = asyncio.Lock()
+
+    def render_board(self) -> str:
+        rows = [" │ ".join(f"{value:>4}" if value else "   ·" for value in row) for row in self.board]
+        return "```text\n" + "\n".join(rows) + "\n```"
+
+    def render_card(self) -> ZNCard:
+        best_tile = max_2048_tile(self.board)
+        if self.status == "won":
+            title = "🎉 2048 達成！繼續挑戰更高分！"
+            pill, color = ZNStatusPill.SUCCESS, ZNColor.SUCCESS
+        elif self.status == "lost":
+            title = "🧩 2048 結束 — 棋盤已滿"
+            pill, color = ZNStatusPill.INFO, ZNColor.WARNING
+        else:
+            title = "🧩 2048 挑戰"
+            pill, color = ZNStatusPill.FUN, ZNColor.PRIMARY
+            card = ZNCard(
+                title=title,
+                description=f"{self.render_board()}\n\n🎯 **分數：** `{self.score:,}`　🏆 **最高方塊：** `{best_tile}`　👣 **步數：** `{self.moves}`\n🔗 **快捷操作：** 左上右下方向鍵移動",
+            status_pill=pill,
+            color=color,
+            footer_text=f"玩家：{self.user_name}｜合併同值方塊，目標拼出 2048。",
+        )
+        return card
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await InteractionResponder.safe_send(interaction, "這局 2048 是其他玩家的私人棋局。請使用 `/娛樂 2048` 開始自己的遊戲。", ephemeral=True)
+            return False
+        return True
+
+    async def _move(self, interaction: discord.Interaction, direction: str) -> None:
+        async with self._lock:
+            if self.status not in {"playing", "won"}:
+                await InteractionResponder.safe_send(interaction, "這局已經結束，請重新開始一局。", ephemeral=True)
+                return
+            new_state, gained, changed = move_2048(self.board, direction)
+            if not changed:
+                await InteractionResponder.safe_send(interaction, "這個方向無法移動，棋盤保持不變。", ephemeral=True)
+                return
+            self.board = new_state
+            self.score += gained
+            self.moves += 1
+            spawn_2048_tile(self.board)
+            if not self.reached_2048 and max_2048_tile(self.board) >= 2048:
+                self.reached_2048 = True
+                milestone = True
+            else:
+                milestone = False
+            if not has_2048_moves(self.board):
+                self.status = "lost"
+            if self.status in {"won", "lost"}:
+                for child in self.children:
+                    if isinstance(child, discord.ui.Button) and child.custom_id != "game2048_restart":
+                        child.disabled = True
+                if not self._result_recorded:
+                    try:
+                        await _record_2048_result(self.guild_id, self.user_id, self.score, max_2048_tile(self.board), self.moves)
+                        self._result_recorded = True
+                    except Exception as exc:
+                        log.warning(f"儲存 2048 最佳成績失敗：{exc}")
+            if milestone:
+                await InteractionResponder.safe_send(interaction, "🏆 你拼出 2048 了！可以繼續挑戰更高方塊，分數會在遊戲結束時記錄。", ephemeral=True)
+            await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
+
+    @discord.ui.button(label="往上", emoji="⬆️", style=discord.ButtonStyle.primary, row=0)
+    async def move_up(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "up")
+
+    @discord.ui.button(label="往左", emoji="⬅️", style=discord.ButtonStyle.primary, row=1)
+    async def move_left(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "left")
+
+    @discord.ui.button(label="往下", emoji="⬇️", style=discord.ButtonStyle.primary, row=1)
+    async def move_down(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "down")
+
+    @discord.ui.button(label="往右", emoji="➡️", style=discord.ButtonStyle.primary, row=1)
+    async def move_right(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "right")
+
+    @discord.ui.button(label="上", emoji="⬆️", style=discord.ButtonStyle.primary, row=0)
+    async def move_up(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "up")
+
+    @discord.ui.button(label="左", emoji="⬅️", style=discord.ButtonStyle.primary, row=1)
+    async def move_left(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "left")
+
+    @discord.ui.button(label="下", emoji="⬇️", style=discord.ButtonStyle.primary, row=1)
+    async def move_down(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "down")
+
+    @discord.ui.button(label="右", emoji="➡️", style=discord.ButtonStyle.primary, row=1)
+    async def move_right(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._move(interaction, "right")
+
+    @discord.ui.button(label="重新開始", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
+    async def restart(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        async with self._lock:
+            if self.moves and not self._result_recorded:
+                await _record_2048_result(self.guild_id, self.user_id, self.score, max_2048_tile(self.board), self.moves)
+            self.board = new_2048_board()
+            self.score = 0
+            self.moves = 0
+            self.status = "playing"
+            self.reached_2048 = False
+            self._result_recorded = False
+            for child in self.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = False
+            await InteractionResponder.safe_edit(interaction, card=self.render_card(), view=self)
+
     async def on_timeout(self) -> None:
-        for child in self.children:
-            if hasattr(child, "disabled"):
-                child.disabled = True
         self.stop()
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        if self.status == "playing":
+            self.status = "lost"
+        if self.moves and not self._result_recorded:
+            try:
+                await _record_2048_result(self.guild_id, self.user_id, self.score, max_2048_tile(self.board), self.moves)
+                self._result_recorded = True
+            except Exception:
+                pass
         if self.message:
             try:
-                await self.message.edit(view=self)
-            except (discord.NotFound, discord.HTTPException, Exception):
+                await self.message.edit(embed=self.render_card().to_embed(), view=self)
+            except Exception:
                 pass
-
 
 # =============================================================================
 # 7. 擲骰子 / 拋硬幣 / 幫我選 Re-roll Views
@@ -1070,7 +1250,7 @@ class EntertainmentModule(BaseModule):
         super().__init__(
             name="entertainment",
             display_name="娛樂模組",
-            description="互動棋盤小遊戲 (井字棋/四子棋)、21點、水果拉霸、猜拳、數字炸彈、運勢占卜與社群虛擬經濟",
+            description="互動棋盤小遊戲 (2048/井字棋/四子棋)、21點、水果拉霸、猜拳、數字炸彈、運勢占卜與社群虛擬經濟",
         )
 
     async def initialize(self, bot: Any) -> None:
@@ -1093,6 +1273,8 @@ class EntertainmentModule(BaseModule):
             ("轉帳", "將個人虛擬點數安全轉移給他人", ZNPermissionLevel.EVERYONE),
             ("財富排行榜", "伺服器富豪排行榜總覽 TOP 10", ZNPermissionLevel.EVERYONE),
             ("21點", "完整撲克 21 點要牌停牌對決", ZNPermissionLevel.EVERYONE),
+            ("2048", "單人 4x4 方塊合併益智遊戲", ZNPermissionLevel.EVERYONE),
+            ("2048排行榜", "目前伺服器 2048 個人最佳成績 TOP 10", ZNPermissionLevel.EVERYONE),
             ("井字棋", "3x3 Discord 按鈕雙人即時對弈", ZNPermissionLevel.EVERYONE),
             ("四子棋", "經典 6x7 四子棋連線棋盤對戰", ZNPermissionLevel.EVERYONE),
             ("俄羅斯輪盤", "刺激輪盤對抗，中彈者自動禁言 60 秒", ZNPermissionLevel.EVERYONE),
@@ -1114,6 +1296,22 @@ class EntertainmentModule(BaseModule):
                 module_name=self.name,
                 permission_level=perm,
             ))
+        self.register_command_meta(CommandMetadata(
+            name="2048",
+            full_name="娛樂 2048",
+            description="單人 4x4 方塊合併益智遊戲",
+            group_name="娛樂",
+            module_name=self.name,
+            permission_level=ZNPermissionLevel.EVERYONE,
+        ))
+        self.register_command_meta(CommandMetadata(
+            name="2048排行榜",
+            full_name="娛樂 2048排行榜",
+            description="目前伺服器 2048 個人最佳成績 TOP 10",
+            group_name="娛樂",
+            module_name=self.name,
+            permission_level=ZNPermissionLevel.EVERYONE,
+        ))
 
     async def shutdown(self) -> None:
         pass
@@ -1141,7 +1339,7 @@ _1A2B_SESSIONS: Dict[int, Guess1A2BSession] = {}
 class EntertainmentCog(commands.Cog):
     """Discord Slash Command Group for /娛樂."""
 
-    fun_group = app_commands.Group(name="娛樂", description="趣味小遊戲、占卜與虛擬經濟指令群組")
+    fun_group = app_commands.Group(name="娛樂", description="2048、棋盤小遊戲、占卜與虛擬經濟")
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -1595,6 +1793,47 @@ class EntertainmentCog(commands.Cog):
             color=ZNColor.PRIMARY,
         )
         await InteractionResponder.safe_send(interaction, card=card)
+
+    @fun_group.command(name="2048", description="開始單人 2048 方塊合併挑戰，按方向按鈕移動棋盤")
+    @command_guard("entertainment")
+    async def game_2048_command(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "2048 排行榜依伺服器分開計算，請在伺服器中開始遊戲。", ephemeral=True)
+            return
+        view = Game2048View(interaction.guild_id, interaction.user)
+        msg = await InteractionResponder.safe_send(interaction, card=view.render_card(), view=view, ephemeral=True)
+        if msg:
+            view.message = msg
+
+    @fun_group.command(name="2048排行榜", description="查看目前伺服器 2048 個人最佳分數 TOP 10")
+    @command_guard("entertainment")
+    async def game_2048_leaderboard_command(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "2048 排行榜只在伺服器中使用。", ephemeral=True)
+            return
+        async with db.session() as session:
+            result = await session.execute(
+                select(Game2048BestScore)
+                .where(Game2048BestScore.guild_id == interaction.guild_id)
+                .order_by(desc(Game2048BestScore.best_score), desc(Game2048BestScore.best_tile), Game2048BestScore.best_moves)
+                .limit(10)
+            )
+            rows = result.scalars().all()
+        if rows:
+            medals = {0: "🥇", 1: "🥈", 2: "🥉"}
+            description = "\n".join(
+                f"{medals.get(index, f'`#{index + 1}`')} <@{row.user_id}> — **{row.best_score:,} 分**｜最高方塊 `{row.best_tile}`｜{row.games_played} 局"
+                for index, row in enumerate(rows)
+            )
+        else:
+            description = "目前沒有 2048 成績，先開一局挑戰吧！"
+        await InteractionResponder.safe_send(interaction, card=ZNCard(
+            title="🏆 本伺服器 2048 排行榜 TOP 10",
+            description=description,
+            status_pill=ZNStatusPill.FUN,
+            color=ZNColor.PRIMARY,
+            footer_text="依個人最佳分數排序；成績只在此伺服器內比較。",
+        ))
 
     # =========================================================================
     # 11. 21點 (/娛樂 21點)

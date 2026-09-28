@@ -24,6 +24,7 @@ from zeronexus.models.master_features import (
     PersonalWorkLogModel,
     ModerationAppealTicket,
 )
+from zeronexus.models.game import Game2048BestScore
 
 __all__ = [
     "GuildSettings",
@@ -55,5 +56,5 @@ __all__ = [
     "HabitTrackerRecord",
     "PersonalWorkLogModel",
     "ModerationAppealTicket",
+    "Game2048BestScore",
 ]
-
