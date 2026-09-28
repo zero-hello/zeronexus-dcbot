@@ -22,7 +22,6 @@ import discord
 from zeronexus.agent.tools import agent_tools
 from zeronexus.ai_gateway.gateway import ai_gateway
 from zeronexus.core.logger import log
-from zeronexus.intelligence.dynamic_projector import DynamicToolProjector
 
 
 @dataclass
@@ -93,6 +92,10 @@ class AgentEngine:
         # Stage 1: Planner
         # -----------------------------------------------------------------
         await emit_update("PLANNER", "📋 正在解析目標並選取相關唯讀工具...")
+        # Import lazily: intelligence.dynamic_projector imports agent.tools, while
+        # agent.__init__ imports this engine. A module-level import forms a cycle
+        # during clean startup (notably under Python 3.11 containers).
+        from zeronexus.intelligence.dynamic_projector import DynamicToolProjector
         from zeronexus.intelligence.complexity_router import ComplexityLevel
 
         projected = DynamicToolProjector.project(task_goal, min_tools=1, max_tools=max_tool_calls)

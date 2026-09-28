@@ -39,7 +39,7 @@ async def test_agent_never_runs_unprojected_tools() -> None:
 
     engine._plan_task = fake_plan
     with (
-        patch("zeronexus.agent.engine.DynamicToolProjector.project") as project,
+        patch("zeronexus.intelligence.dynamic_projector.DynamicToolProjector.project") as project,
         patch("zeronexus.agent.engine.ai_gateway.generate_response", new=AsyncMock(return_value=(SimpleNamespace(text="report"), None))),
     ):
         project.return_value.tools = [type("Projected", (), {"name": "calculator"})()]
