@@ -115,14 +115,18 @@ class SlotMachineView(discord.ui.View):
     SYMBOLS = ["🍒", "🍋", "🍇", "🔔", "⭐", "💎", "7️⃣"]
     WEIGHTS = [30, 25, 20, 12, 8, 4, 1]
 
-    def __init__(self, author_id: int, bet: int, timeout: float = 60.0) -> None:
+    def __init__(self, author_id: int, bet: int, guild_id: Optional[int] = None, timeout: float = 60.0) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
+        self.guild_id = guild_id
         self.bet = bet
         self.message: Optional[discord.Message] = None
         self._lock = asyncio.Lock()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 此拉霸機只適用於開局伺服器。", ephemeral=True)
+            return False
         if interaction.user.id != self.author_id:
             await InteractionResponder.safe_send(interaction, "❌ 此拉霸機僅限啟動玩家操作喔！", ephemeral=True)
             return False
@@ -260,9 +264,10 @@ class RPSView(discord.ui.View):
 
     EMOJIS = {"剪刀": "✌️", "石頭": "✊", "布": "🖐️"}
 
-    def __init__(self, author_id: int, timeout: float = 45.0) -> None:
+    def __init__(self, author_id: int, guild_id: Optional[int] = None, timeout: float = 45.0) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
+        self.guild_id = guild_id
         self.streak = 0
         self.message: Optional[discord.Message] = None
         self._lock = asyncio.Lock()
@@ -274,6 +279,9 @@ class RPSView(discord.ui.View):
             self.add_item(RPSButton(name, emoji))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 此猜拳對局只適用於原伺服器。", ephemeral=True)
+            return False
         if interaction.user.id != self.author_id:
             await InteractionResponder.safe_send(interaction, "❌ 此猜拳對決僅限發起者操作。", ephemeral=True)
             return False
@@ -341,10 +349,11 @@ class PvPRPSView(discord.ui.View):
 
     EMOJIS = {"剪刀": "✌️", "石頭": "✊", "布": "🖐️"}
 
-    def __init__(self, p1: discord.Member, p2: discord.Member, timeout: float = 60.0) -> None:
+    def __init__(self, p1: discord.Member, p2: discord.Member, guild_id: Optional[int] = None, timeout: float = 60.0) -> None:
         super().__init__(timeout=timeout)
         self.p1 = p1
         self.p2 = p2
+        self.guild_id = guild_id or p1.guild.id
         self.choices: Dict[int, str] = {}
         self.message: Optional[discord.Message] = None
         self._lock = asyncio.Lock()
@@ -353,6 +362,9 @@ class PvPRPSView(discord.ui.View):
             self.add_item(PvPRPSButton(name, emoji))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 此猜拳對局只適用於原伺服器。", ephemeral=True)
+            return False
         if interaction.user.id not in (self.p1.id, self.p2.id):
             await InteractionResponder.safe_send(interaction, "❌ 此對決為雙人專屬對弈，觀戰成員請勿點擊。", ephemeral=True)
             return False
@@ -455,6 +467,12 @@ class NumberBombView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.session = session
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild_id != self.session.guild_id or interaction.channel_id != self.session.channel_id:
+            await InteractionResponder.safe_send(interaction, "❌ 請在原伺服器及原遊戲頻道操作此局。", ephemeral=True)
+            return False
+        return True
+
     @discord.ui.button(label="我要拆彈！", emoji="💥", style=discord.ButtonStyle.danger)
     async def guess_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not self.session.active:
@@ -486,8 +504,9 @@ class NumberBombView(discord.ui.View):
 class NumberBombSession:
     """Channel-level active session for Number Bomb (終極密碼)."""
 
-    def __init__(self, channel_id: int, min_val: int = 1, max_val: int = 100) -> None:
+    def __init__(self, channel_id: int, guild_id: Optional[int] = None, min_val: int = 1, max_val: int = 100) -> None:
         self.channel_id = channel_id
+        self.guild_id = guild_id
         self.min_val = min_val
         self.max_val = max_val
         self.bomb = secrets.randbelow(max_val - min_val - 1) + min_val + 1
@@ -589,9 +608,10 @@ class BlackjackView(discord.ui.View):
     SUITS = ["♠️", "♥️", "♦️", "♣️"]
     RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 
-    def __init__(self, author_id: int, bet: int = 0, timeout: float = 60.0) -> None:
+    def __init__(self, author_id: int, bet: int = 0, guild_id: Optional[int] = None, timeout: float = 60.0) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
+        self.guild_id = guild_id
         self.bet = bet
         self.deck = [(r, s) for r in self.RANKS for s in self.SUITS]
         random.shuffle(self.deck)
@@ -629,6 +649,9 @@ class BlackjackView(discord.ui.View):
         return " ".join(f"`[{s}{r}]`" for r, s in hand)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 此牌局只能在原伺服器操作。", ephemeral=True)
+            return False
         if interaction.user.id != self.author_id:
             await InteractionResponder.safe_send(interaction, "❌ 此 21 點對決為私人牌桌，其他人無法插手。", ephemeral=True)
             return False
@@ -1195,9 +1218,10 @@ class Game2048View(discord.ui.View):
 # =============================================================================
 
 class DiceReRollView(discord.ui.View):
-    def __init__(self, author_id: int, count: int, sides: int, timeout: float = 60.0) -> None:
+    def __init__(self, author_id: int, count: int, sides: int, guild_id: Optional[int] = None, timeout: float = 60.0) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
+        self.guild_id = guild_id
         self.count = count
         self.sides = sides
         self.message: Optional[discord.Message] = None
@@ -1206,6 +1230,9 @@ class DiceReRollView(discord.ui.View):
     @discord.ui.button(label="再擲一次", emoji="🎲", style=discord.ButtonStyle.primary)
     async def reroll(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         async with self._lock:
+            if self.guild_id is not None and interaction.guild_id != self.guild_id:
+                await InteractionResponder.safe_send(interaction, "❌ 此擲骰結果僅限原伺服器重擲。", ephemeral=True)
+                return
             if interaction.user.id != self.author_id:
                 await InteractionResponder.safe_send(interaction, "❌ 此按鈕僅限投擲者操作喔！", ephemeral=True)
                 return
@@ -1235,9 +1262,10 @@ class DiceReRollView(discord.ui.View):
 
 
 class CoinReFlipView(discord.ui.View):
-    def __init__(self, author_id: int, guess: Optional[str] = None, timeout: float = 60.0) -> None:
+    def __init__(self, author_id: int, guess: Optional[str] = None, guild_id: Optional[int] = None, timeout: float = 60.0) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
+        self.guild_id = guild_id
         self.guess = guess
         self.message: Optional[discord.Message] = None
         self._lock = asyncio.Lock()
@@ -1245,6 +1273,9 @@ class CoinReFlipView(discord.ui.View):
     @discord.ui.button(label="再丟一次", emoji="🪙", style=discord.ButtonStyle.primary)
     async def reflip(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         async with self._lock:
+            if self.guild_id is not None and interaction.guild_id != self.guild_id:
+                await InteractionResponder.safe_send(interaction, "❌ 此硬幣結果僅限原伺服器重擲。", ephemeral=True)
+                return
             if interaction.user.id != self.author_id:
                 await InteractionResponder.safe_send(interaction, "❌ 此按鈕僅限投擲者操作喔！", ephemeral=True)
                 return
@@ -1284,9 +1315,10 @@ class CoinReFlipView(discord.ui.View):
 
 
 class ChooseAgainView(discord.ui.View):
-    def __init__(self, author_id: int, options: List[str], timeout: float = 60.0) -> None:
+    def __init__(self, author_id: int, options: List[str], guild_id: Optional[int] = None, timeout: float = 60.0) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
+        self.guild_id = guild_id
         self.options = options
         self.message: Optional[discord.Message] = None
         self._lock = asyncio.Lock()
@@ -1294,6 +1326,9 @@ class ChooseAgainView(discord.ui.View):
     @discord.ui.button(label="命運重抽！", emoji="🔄", style=discord.ButtonStyle.primary)
     async def rechoose(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         async with self._lock:
+            if self.guild_id is not None and interaction.guild_id != self.guild_id:
+                await InteractionResponder.safe_send(interaction, "❌ 此選擇結果僅限原伺服器重新抽選。", ephemeral=True)
+                return
             if interaction.user.id != self.author_id:
                 await InteractionResponder.safe_send(interaction, "❌ 此按鈕僅限發起人操作喔！", ephemeral=True)
                 return
@@ -1525,7 +1560,7 @@ class EntertainmentCog(commands.Cog):
             status_pill=ZNStatusPill.FUN,
             color=win_color,
         )
-        view = SlotMachineView(author_id=interaction.user.id, bet=下注)
+        view = SlotMachineView(author_id=interaction.user.id, bet=下注, guild_id=interaction.guild_id)
         msg = await InteractionResponder.safe_send(interaction, card=card, view=view)
         if msg:
             view.message = msg
@@ -1545,7 +1580,7 @@ class EntertainmentCog(commands.Cog):
                 await InteractionResponder.safe_send(interaction, "❌ 若想挑戰機器人，請直接留空對象參數即可對戰 ZeroNexus！", ephemeral=True)
                 return
 
-            view = PvPRPSView(p1=interaction.user, p2=對象)
+            view = PvPRPSView(p1=interaction.user, p2=對象, guild_id=interaction.guild_id)
             card = ZNCard(
                 title="⚔️ 雙人猜拳挑戰展開！",
                 description=f"{interaction.user.mention} 向 {對象.mention} 發起了猜拳挑戰！\n請雙方點擊下方按鈕進行**秘密盲選出拳**：",
@@ -1556,7 +1591,7 @@ class EntertainmentCog(commands.Cog):
             if msg:
                 view.message = msg
         else:
-            view_bot = RPSView(author_id=interaction.user.id)
+            view_bot = RPSView(author_id=interaction.user.id, guild_id=interaction.guild_id)
             card = ZNCard(
                 title="✊✌️🖐️ 猜拳對決 (vs ZeroNexus)",
                 description="請點擊下方按鈕出拳：",
@@ -1587,7 +1622,7 @@ class EntertainmentCog(commands.Cog):
             session.view.stop()
 
         if session is None or not session.active:
-            session = NumberBombSession(channel_id=cid)
+            session = NumberBombSession(channel_id=cid, guild_id=interaction.guild_id)
             _BOMB_SESSIONS[cid] = session
 
         view = NumberBombView(session)
@@ -1633,7 +1668,7 @@ class EntertainmentCog(commands.Cog):
             status_pill=ZNStatusPill.FUN,
             color=color,
         )
-        view = CoinReFlipView(author_id=interaction.user.id, guess=猜測)
+        view = CoinReFlipView(author_id=interaction.user.id, guess=猜測, guild_id=interaction.guild_id)
         msg = await InteractionResponder.safe_send(interaction, card=card, view=view)
         if msg:
             view.message = msg
@@ -1658,7 +1693,7 @@ class EntertainmentCog(commands.Cog):
             status_pill=ZNStatusPill.FUN,
             color=ZNColor.SUCCESS,
         )
-        view = DiceReRollView(author_id=interaction.user.id, count=count, sides=sides)
+        view = DiceReRollView(author_id=interaction.user.id, count=count, sides=sides, guild_id=interaction.guild_id)
         msg = await InteractionResponder.safe_send(interaction, card=card, view=view)
         if msg:
             view.message = msg
@@ -1683,7 +1718,7 @@ class EntertainmentCog(commands.Cog):
             status_pill=ZNStatusPill.FUN,
             color=ZNColor.SUCCESS,
         )
-        view = ChooseAgainView(author_id=interaction.user.id, options=opts)
+        view = ChooseAgainView(author_id=interaction.user.id, options=opts, guild_id=interaction.guild_id)
         msg = await InteractionResponder.safe_send(interaction, card=card, view=view)
         if msg:
             view.message = msg
@@ -1896,7 +1931,7 @@ class EntertainmentCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "2048 排行榜依伺服器分開計算，請在伺服器中開始遊戲。", ephemeral=True)
             return
         view = Game2048View(interaction.guild_id, interaction.user)
-        msg = await InteractionResponder.safe_send(interaction, card=view.render_card(), view=view, ephemeral=True)
+        msg = await InteractionResponder.safe_send(interaction, card=view.render_card(), view=view, ephemeral=False)
         if msg:
             view.message = msg
 
@@ -1936,7 +1971,7 @@ class EntertainmentCog(commands.Cog):
     @fun_group.command(name="21點", description="與 ZeroNexus 進行經典撲克 21 點互動對決")
     @command_guard("entertainment")
     async def blackjack_command(self, interaction: discord.Interaction) -> None:
-        view = BlackjackView(author_id=interaction.user.id)
+        view = BlackjackView(author_id=interaction.user.id, guild_id=interaction.guild_id)
         p_score = view.calc_score(view.player_hand)
         d_first = view.dealer_hand[0]
 
@@ -2559,6 +2594,9 @@ class ACGGachaView(discord.ui.View):
         self._lock = asyncio.Lock()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.guild_id is not None and interaction.guild_id != self.guild_id:
+            await InteractionResponder.safe_send(interaction, "❌ 此牌局只能在開局伺服器操作。", ephemeral=True)
+            return False
         if interaction.user.id != self.author_id:
             await InteractionResponder.safe_send(interaction, "❌ 此抽卡機台僅限啟動玩家操作喔！", ephemeral=True)
             return False

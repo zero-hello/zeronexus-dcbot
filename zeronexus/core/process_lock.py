@@ -79,9 +79,10 @@ class SingleInstanceLock:
             self._file_obj = open(self.lock_file, "a+", encoding="utf-8")
         except Exception as e:
             print(f"[WARN] [ZeroNexus] 無法建立實例鎖定檔案 ({self.lock_file}): {e}")
-            self._is_locked = True
-            atexit.register(self.release)
-            return True
+            if self._sock:
+                self._sock.close()
+                self._sock = None
+            return False
 
         if HAS_FCNTL:
             try:

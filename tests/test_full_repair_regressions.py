@@ -89,3 +89,43 @@ async def test_music_dashboard_rejects_other_guild_and_other_voice_channel(monke
     wrong_voice = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=5, voice=SimpleNamespace(channel=SimpleNamespace(id=11))))
     assert not await view.interaction_check(wrong_voice)
     send.assert_awaited()
+
+
+def test_gateway_quota_model_identity_matches_openrouter_and_native_models() -> None:
+    from zeronexus.ai_gateway.gateway import AIGateway
+
+    assert AIGateway.resolve_route_model("openrouter", "google/gemma-4-26b-a4b-it:free") == "google/gemma-4-26b-a4b-it:free"
+    assert AIGateway.resolve_route_model("openrouter", "free-model") == "openrouter/free-model"
+    assert AIGateway.resolve_route_model("deepseek", "deepseek/deepseek-chat") == "deepseek-chat"
+
+
+@pytest.mark.asyncio
+async def test_model_quota_reservation_reassignment_moves_inflight_counter(monkeypatch) -> None:
+    import importlib
+    from zeronexus.core import database
+
+    quota_module = importlib.import_module("zeronexus.ai_gateway.quota_service")
+    service = QuotaService()
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, statement):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
+
+    monkeypatch.setattr(database.db, "session", lambda: FakeSession())
+    monkeypatch.setattr(quota_module.config.discord, "is_dev", lambda _: False)
+    monkeypatch.setattr(service, "get_today_str", lambda: "2026-01-01")
+    monkeypatch.setattr(service, "get_model_default_limit", lambda model: 3)
+
+    allowed, reservation, _, _ = await service.reserve_model_quota(123, "model-a")
+    assert allowed and reservation
+    moved, _, _ = await service.reassign_model_reservation(reservation, "model-b")
+
+    assert moved
+    assert service._model_in_flight.get((123, "model-a"), 0) == 0
+    assert service._model_in_flight[(123, "model-b")] == 1

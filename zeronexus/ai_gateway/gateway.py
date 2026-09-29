@@ -84,8 +84,10 @@ class AIGateway:
         tool_executor: Optional[Callable[[str, Dict[str, Any]], Coroutine[Any, Any, Any]]] = None,
         max_tool_rounds: int = 3,
         thinking_budget: Optional[int] = None,
+        return_route: bool = False,
+        quota_user_id: Optional[int] = None,
         **kwargs: Any,
-    ) -> Tuple[AIResult, Optional[str]]:
+    ) -> Any:
         """Executes inference through fallback chain: Gemini -> DeepSeek -> OpenRouter.
         When images are provided, reorders to prioritize vision models: Gemini -> OpenRouter -> DeepSeek.
 
@@ -93,8 +95,10 @@ class AIGateway:
         """
         # Clean and normalize override_model (strip whitespace, resolve empty strings)
         clean_override: Optional[str] = None
+        requested_model: Optional[str] = None
         if override_model and isinstance(override_model, str) and override_model.strip():
             clean_override = override_model.strip()
+            requested_model = clean_override
 
         # 萃取動態推理參數，優先採用外部傳入的覆寫值，並排除顯式傳遞之具名引數以防衝突
         dispatch_kwargs = dict(kwargs)
@@ -115,6 +119,8 @@ class AIGateway:
             "max_tool_rounds",
             "free_only",
             "thinking_budget",
+            "return_route",
+            "quota_user_id",
         ):
             dispatch_kwargs.pop(explicit_key, None)
 
@@ -287,6 +293,17 @@ class AIGateway:
             else:
                 model = self._get_default_model(provider_name, has_images=bool(images))
 
+            quota_reservation = None
+            charged_quota_model = None
+            if quota_user_id is not None:
+                from zeronexus.ai_gateway.quota_service import quota_service
+                quota_model = self.resolve_route_model(provider_name, model, clean_override)
+                quota_allowed, quota_reservation, used, limit = await quota_service.reserve_model_quota(quota_user_id, quota_model)
+                if not quota_allowed:
+                    attempted_providers.append(f"{provider_name} ({quota_model} 模型額度已用罄 {used}/{limit})")
+                    continue
+                charged_quota_model = quota_model
+
             # Check if this provider call requires paid quota
             requires_paid = False
             if provider_name == "openrouter":
@@ -321,15 +338,40 @@ class AIGateway:
                         )
                         model = chosen_free
                         requires_paid = False
+                        if quota_reservation is not None and quota_user_id is not None:
+                            from zeronexus.ai_gateway.quota_service import quota_service
+                            await quota_service.release_model_quota(quota_reservation)
+                            quota_reservation = None
+                            charged_quota_model = self.resolve_route_model(provider_name, model, clean_override)
+                            quota_allowed, quota_reservation, used, limit = await quota_service.reserve_model_quota(quota_user_id, charged_quota_model)
+                            if not quota_allowed:
+                                attempted_providers.append(f"{provider_name} ({charged_quota_model} 模型額度已用罄 {used}/{limit})")
+                                continue
                 except Exception as ex:
                     log.warning(f"[AI Gateway Fallback] Error resolving free key for OpenRouter: {ex}")
 
             if not key_obj:
+                if quota_user_id is not None and quota_reservation is not None:
+                    from zeronexus.ai_gateway.quota_service import quota_service
+                    await quota_service.release_model_quota(quota_reservation)
+                    quota_reservation = None
                 if requires_paid:
                     attempted_providers.append(f"{provider_name} (無可用付費額度金鑰)")
                 else:
                     attempted_providers.append(f"{provider_name} (無可用金鑰/冷卻中)")
                 continue
+
+            if quota_user_id is not None and quota_reservation is not None:
+                reserved_model = getattr(quota_reservation, "model_id", None)
+                selected_model = self.resolve_route_model(provider_name, model, clean_override)
+                if reserved_model != selected_model:
+                    from zeronexus.ai_gateway.quota_service import quota_service
+                    await quota_service.release_model_quota(quota_reservation)
+                    quota_reservation = None
+                    quota_allowed, quota_reservation, used, limit = await quota_service.reserve_model_quota(quota_user_id, selected_model)
+                    if not quota_allowed:
+                        attempted_providers.append(f"{provider_name} ({selected_model} 模型額度已用罄 {used}/{limit})")
+                        continue
 
             # Strict free filtering if OpenRouter key is fallback key or free_only
             is_fallback_key = False
@@ -344,6 +386,14 @@ class AIGateway:
                             f"Strictly switching to zero-cost free model '{chosen_free}'."
                         )
                         model = chosen_free
+                        if quota_reservation is not None and quota_user_id is not None:
+                            from zeronexus.ai_gateway.quota_service import quota_service
+                            await quota_service.release_model_quota(quota_reservation)
+                            charged_quota_model = self.resolve_route_model(provider_name, model, clean_override)
+                            quota_allowed, quota_reservation, used, limit = await quota_service.reserve_model_quota(quota_user_id, charged_quota_model)
+                            if not quota_allowed:
+                                attempted_providers.append(f"{provider_name} ({charged_quota_model} 模型額度已用罄 {used}/{limit})")
+                                continue
 
             # Prepare provider-specific tool schemas
             provider_tools = None
@@ -387,6 +437,19 @@ class AIGateway:
                     log.warning(f"AI Gateway request completed via fallback ({result.fallback_reason}). Key {key_obj.masked}.")
 
                 is_fallback = (idx > 0) or result.is_fallback
+                actual_quota_reservation = quota_reservation
+                if quota_user_id is not None and quota_reservation is not None:
+                    actual_model = self.resolve_route_model(result.provider or provider_name, result.quota_model_id or model, clean_override)
+                    reserved_model = getattr(quota_reservation, "model_id", None)
+                    if actual_model != reserved_model:
+                        from zeronexus.ai_gateway.quota_service import quota_service
+                        moved, actual_used, actual_limit = await quota_service.reassign_model_reservation(quota_reservation, actual_model)
+                        if not moved:
+                            raise RuntimeError(f"實際回覆模型 {actual_model} 額度已用罄（{actual_used}/{actual_limit}）。")
+                    actual_quota_reservation = quota_reservation
+                if actual_quota_reservation is not None:
+                    from zeronexus.ai_gateway.quota_service import quota_service
+                    await quota_service.commit_model_quota(actual_quota_reservation)
                 stats.record_ai_request(
                     provider=provider_name,
                     latency_ms=latency,
@@ -428,9 +491,14 @@ class AIGateway:
                 if result.text:
                     result.text = await asyncio.to_thread(identity_anchor.sanitize_perspective, result.text)
 
+                if return_route:
+                    return result, fallback_notice, (result.provider or provider_name), (result.model_name or model)
                 return result, fallback_notice
 
             except Exception as e:
+                if quota_user_id is not None and quota_reservation is not None:
+                    from zeronexus.ai_gateway.quota_service import quota_service
+                    await quota_service.release_model_quota(quota_reservation)
                 latency = (time.perf_counter() - start_ts) * 1000
                 err_str = str(e)
                 log.warning(f"Provider {provider_name} failed with {key_obj.masked}: {redact_secrets(err_str)}")
@@ -481,6 +549,13 @@ class AIGateway:
                             fb_latency = (time.perf_counter() - fb_start) * 1000
                             free_key.mark_success(fb_latency)
                             fb_result.is_fallback = True
+                            if quota_user_id is not None:
+                                from zeronexus.ai_gateway.quota_service import quota_service
+                                free_model_id = self.resolve_route_model(provider_name, chosen_free, clean_override)
+                                allowed, free_reservation, used, limit = await quota_service.reserve_model_quota(quota_user_id, free_model_id)
+                                if not allowed:
+                                    raise RuntimeError(f"實際回覆模型 {free_model_id} 額度已用罄（{used}/{limit}）。")
+                                await quota_service.commit_model_quota(free_reservation)
                             stats.record_ai_request(
                                 provider=provider_name,
                                 latency_ms=fb_latency,
@@ -515,6 +590,17 @@ class AIGateway:
         raise RuntimeError(
             f"所有 AI 提供者皆無法回應 ({', '.join(attempted_providers)})。請稍後再試或檢查 API 金鑰與額度。"
         )
+
+    @staticmethod
+    def resolve_route_model(provider: str, model: str, requested_model: Optional[str] = None) -> str:
+        """Return canonical quota identity for the provider/model that handled a request."""
+        clean_provider = (provider or "").strip().lower()
+        clean_model = (model or "").strip()
+        if clean_provider == "openrouter" and clean_model and "/" not in clean_model:
+            return f"openrouter/{clean_model}"
+        if clean_provider == "deepseek" and clean_model.startswith("deepseek/"):
+            return clean_model.removeprefix("deepseek/")
+        return clean_model or requested_model or "unknown"
 
     def _get_default_model(self, provider: str, has_images: bool = False) -> str:
         if provider == "gemini":

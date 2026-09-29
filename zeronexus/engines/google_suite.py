@@ -192,7 +192,7 @@ class GoogleSafeBrowsingClient:
             return results
 
         payload = {
-            "client": {"clientId": "ZeroNexusBot", "clientVersion": "3.0.0"},
+            "client": {"clientId": "ZeroNexusBot", "clientVersion": "3.0.1"},
             "threatInfo": {
                 "threatTypes": [
                     "MALWARE",

@@ -104,6 +104,7 @@ class DeepSeekAdapter(BaseAIAdapter):
                 text=text_result,
                 model_name=real_model,
                 provider="deepseek",
+                quota_model_id=real_model,
                 latency_ms=round(latency_ms, 2),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,

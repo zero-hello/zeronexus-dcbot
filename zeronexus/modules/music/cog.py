@@ -276,10 +276,12 @@ class MusicCog(commands.Cog):
                     pass
                 player = None
             elif player.channel != user_voice.channel:
-                try:
-                    await player.move_to(user_voice.channel)
-                except Exception:
-                    pass
+                await InteractionResponder.safe_send(
+                    interaction,
+                    "❌ Bot 正在另一個語音頻道播放。請先使用 `/音樂 停止`，或請目前語音房成員／管理員處理後再播放。",
+                    ephemeral=True,
+                )
+                return None
 
         best_node = self.node_manager.get_best_node()
         if best_node is None:

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import io
+import asyncio
 import re
 import time
 from typing import Any, List, Literal, Optional
@@ -80,9 +81,9 @@ class AIModule(BaseModule):
             ("記憶清空", "一鍵清空在 ZeroNexus 中的全部長期記憶", ZNPermissionLevel.EVERYONE),
             ("對話額度", "檢視個人今日 AI 免費對話額度與刷新時間", ZNPermissionLevel.EVERYONE),
             ("額度查詢", "查詢個人今日 AI 免費對話額度 (相容別名)", ZNPermissionLevel.EVERYONE),
-            ("重設額度", "管理員重設特定成員今日配額", ZNPermissionLevel.ADMINISTRATOR),
+            ("重設額度", "開發者重設特定成員今日配額", ZNPermissionLevel.DEVELOPER),
             ("模型狀態", "檢視當前 Provider 模型指標", ZNPermissionLevel.EVERYONE),
-            ("金鑰狀態", "檢視金鑰池健康輪詢狀態 (遮蔽展示)", ZNPermissionLevel.EVERYONE),
+            ("金鑰狀態", "開發者檢視金鑰池健康輪詢狀態 (遮蔽展示)", ZNPermissionLevel.DEVELOPER),
             ("對話重置", "清空當前對話上下文快取", ZNPermissionLevel.EVERYONE),
             ("思考模式設定", "切換是否在對話中展示思考歷程", ZNPermissionLevel.EVERYONE),
             ("翻譯助理", "多語系上下文高精確度翻譯", ZNPermissionLevel.EVERYONE),
@@ -330,6 +331,10 @@ class AICog(commands.Cog):
             )
             if reservation:
                 await quota_service.commit_quota(reservation)
+        except asyncio.CancelledError:
+            if reservation:
+                await asyncio.shield(quota_service.release_quota(reservation))
+            raise
         except Exception as exc:
             if reservation:
                 await quota_service.release_quota(reservation)
@@ -339,7 +344,6 @@ class AICog(commands.Cog):
                 "摘要目前無法生成，請稍後再試。",
                 ephemeral=True,
             )
-
     @ai_group.command(name="對話", description="與 ZeroNexus AI 進行深度智能諮詢與圖片視覺辨識")
     @app_commands.describe(問題="想詢問或探討的問題", 圖片="可選，上傳欲由 AI 視覺辨識分析之圖片 (支援 PNG/JPG/WEBP/GIF)")
     @command_guard("ai")
@@ -349,6 +353,8 @@ class AICog(commands.Cog):
         問題: str,
         圖片: Optional[discord.Attachment] = None,
     ) -> None:
+        image_quota_blocked = False
+        image_quota_reservation = None
         問題 = 問題.strip()
         if not 問題:
             await InteractionResponder.safe_send(
@@ -401,14 +407,14 @@ class AICog(commands.Cog):
                     persona_key = profile.preferred_persona
                 if profile.preferred_model:
                     user_model = profile.preferred_model
-            elif interaction.guild_id:
+            if interaction.guild_id and (persona_key == "normal_persona" or user_model is None):
                 g_stmt = select(GuildSettings).where(GuildSettings.guild_id == interaction.guild_id)
                 g_res = await session.execute(g_stmt)
                 g_settings = g_res.scalars().first()
                 if g_settings:
-                    if g_settings.ai_persona:
+                    if persona_key == "normal_persona" and g_settings.ai_persona:
                         persona_key = g_settings.ai_persona
-                    if g_settings.ai_model:
+                    if user_model is None and g_settings.ai_model:
                         user_model = g_settings.ai_model
 
             from zeronexus.brain import bio_brain
@@ -525,6 +531,7 @@ class AICog(commands.Cog):
             if draw_intent:
                 img_allowed, img_resv, img_used, img_limit = await quota_service.reserve_image_quota(interaction.user.id)
                 if not img_allowed:
+                    image_quota_blocked = True
                     tool_name = "ai_image_generation"
                     grounding_text = (
                         f"\n\n【系統提示：AI 繪圖額度已達上限】：\n"
@@ -535,6 +542,7 @@ class AICog(commands.Cog):
                     tool_results[tool_name] = grounding_text
                     system_instruction += grounding_text
                 else:
+                    image_quota_reservation = img_resv
                     try:
                         await InteractionResponder.safe_edit(
                             interaction,
@@ -559,6 +567,7 @@ class AICog(commands.Cog):
                             stats.record_image_generation(True)
                             if img_resv:
                                 await quota_service.commit_image_quota(img_resv)
+                                image_quota_reservation = None
                             generated_image_url = img_res.image_url
                             generated_image_bytes = img_res.image_bytes
                             tool_name = "ai_image_generation"
@@ -576,9 +585,11 @@ class AICog(commands.Cog):
                         else:
                             if img_resv:
                                 await quota_service.release_image_quota(img_resv)
+                                image_quota_reservation = None
                     except Exception as ige:
                         if img_resv:
                             await quota_service.release_image_quota(img_resv)
+                            image_quota_reservation = None
                         log.warning(f"Image generation auto-router error in ask_command: {ige}")
 
             # Deterministic Live Web Search Auto-Router
@@ -642,34 +653,53 @@ class AICog(commands.Cog):
                 ),
             })
 
-        model_reservation = None
-        effective_model = user_model or (getattr(config.ai, "normal_vision_model", "gemini-2.5-flash") if images else getattr(config.ai, "normal_text_model", "gemini-3.1-flash-lite"))
-        m_allowed, model_reservation, m_used, m_limit = await quota_service.reserve_model_quota(
-            interaction.user.id, effective_model
-        )
-        if not m_allowed:
-            if reservation:
-                await quota_service.release_quota(reservation)
-            from zeronexus.ai_gateway.model_registry import model_registry
-            disp = model_registry.get_display_name(effective_model)
-            await InteractionResponder.safe_send(
-                interaction,
-                card=ZNCard(
-                    title=f"❌ 模型額度已用罄 ➔ {interaction.user.display_name}",
-                    description=(
-                        f"您今日的 **{disp}** 額度已達上限 (`{m_used}/{m_limit}` 句)。\n"
-                        f"此模型每日限定 {m_limit} 句，用完即止，將於每日 00:00 (Asia/Taipei) 自動重設。\n\n"
-                        f"💡 您可以使用 `/人工智慧 切換模型` 切換為其他模型（如系統預設 Gemini）繼續暢聊！"
-                    ),
-                    status_pill=ZNStatusPill.ERROR,
-                    color=ZNColor.ERROR,
-                ),
-                ephemeral=True,
-            )
-            return
-
         async def slash_tool_executor(tool_name: str, tool_args: Dict[str, Any]) -> Any:
             from zeronexus.agent.tools import execute_tool
+
+            if image_quota_blocked and tool_name in {"generate_ai_image", "ai_image_generation"}:
+                return {"error": "本日圖片生成額度已用完，禁止本輪透過其他工具路徑再次生圖。"}
+
+            if tool_name in {"generate_ai_image", "ai_image_generation"} and image_quota_reservation is None:
+                allowed, tool_reservation, used, limit = await quota_service.reserve_image_quota(interaction.user.id)
+                if not allowed:
+                    return {"error": f"今日生圖額度已用完（{used}/{limit}）。"}
+                try:
+                    result = await execute_tool(
+                        tool_name,
+                        tool_args,
+                        channel=interaction.channel,
+                        guild=interaction.guild,
+                        user=interaction.user,
+                        bot=self.bot,
+                        _quota_reservation=tool_reservation,
+                    )
+                    if isinstance(result, dict) and result.get("success"):
+                        await quota_service.commit_image_quota(tool_reservation)
+                    else:
+                        await quota_service.release_image_quota(tool_reservation)
+                    return result
+                except BaseException:
+                    await asyncio.shield(quota_service.release_image_quota(tool_reservation))
+                    raise
+
+            if tool_name in {"generate_ai_image", "ai_image_generation"} and image_quota_reservation is not None:
+                tool_args = dict(tool_args)
+                tool_args["_quota_reservation"] = image_quota_reservation
+                result = await execute_tool(
+                    tool_name,
+                    tool_args,
+                    channel=interaction.channel,
+                    guild=interaction.guild,
+                    user=interaction.user,
+                    bot=self.bot,
+                )
+                if isinstance(result, dict) and result.get("success"):
+                    await quota_service.commit_image_quota(image_quota_reservation)
+                    image_quota_reservation = None
+                else:
+                    await quota_service.release_image_quota(image_quota_reservation)
+                    image_quota_reservation = None
+                return result
 
             return await execute_tool(
                 tool_name,
@@ -693,6 +723,7 @@ class AICog(commands.Cog):
                 allow_tools=True,
                 tool_executor=slash_tool_executor,
                 max_tool_rounds=2,
+                quota_user_id=interaction.user.id,
             )
 
             # Auto persist memories
@@ -761,16 +792,12 @@ class AICog(commands.Cog):
             # Commit quota upon successful response
             if reservation:
                 await quota_service.commit_quota(reservation)
-            if model_reservation:
-                await quota_service.commit_model_quota(model_reservation)
             ai_turn_success = True
 
         except Exception as ai_error:
             log.warning(f"Slash AI turn failed (interaction={interaction.id}): {ai_error}")
             if reservation:
                 await quota_service.release_quota(reservation)
-            if model_reservation:
-                await quota_service.release_model_quota(model_reservation)
             err_card = ZNCard(
                 title="AI 思考服務暫時忙碌中",
                 description=(
@@ -784,7 +811,19 @@ class AICog(commands.Cog):
                 color=ZNColor.WARNING,
             )
             await InteractionResponder.safe_send(interaction, card=err_card)
+        except asyncio.CancelledError:
+            if reservation:
+                release_task = asyncio.create_task(quota_service.release_quota(reservation))
+                await asyncio.shield(release_task)
+            if image_quota_reservation:
+                image_release_task = asyncio.create_task(quota_service.release_image_quota(image_quota_reservation))
+                await asyncio.shield(image_release_task)
+                image_quota_reservation = None
+            raise
         finally:
+            if image_quota_reservation:
+                await quota_service.release_image_quota(image_quota_reservation)
+                image_quota_reservation = None
             stats.record_ai_interaction(
                 interaction.id,
                 latency_ms=(time.perf_counter() - ai_turn_start) * 1000.0,
@@ -1594,19 +1633,19 @@ class AICog(commands.Cog):
     async def quota_command(self, interaction: discord.Interaction) -> None:
         await self._show_user_quota(interaction)
 
-    @ai_group.command(name="重設額度", description="重設特定成員今日的 AI 配額 (需要管理員權限)")
+    @ai_group.command(name="重設額度", description="重設特定成員今日的 AI 配額 (僅系統開發者)")
     @app_commands.describe(成員="欲重設配額的伺服器成員")
-    @command_guard("ai")
+    @command_guard("ai", required_level=ZNPermissionLevel.DEVELOPER)
     async def quota_reset_command(self, interaction: discord.Interaction, 成員: discord.Member) -> None:
+        if interaction.guild_id is None:
+            await InteractionResponder.safe_send(interaction, "❌ 額度重設只能在伺服器中執行。", ephemeral=True)
+            return
         if not PermissionEngine.is_developer(interaction.user.id):
-            await InteractionResponder.safe_send(
-                interaction,
-                "🛡️ 此操作屬於核心系統級指令，僅限系統開發者與核心管理團隊執行。",
-                ephemeral=True,
-            )
+            await InteractionResponder.safe_send(interaction, "🛡️ 僅限系統開發者使用。", ephemeral=True)
             return
 
-        await InteractionResponder.safe_defer(interaction, ephemeral=True)
+        if not await InteractionResponder.safe_defer(interaction, ephemeral=True):
+            return
         today_str = quota_service.get_today_str()
         await quota_service.reset_user_quota(成員.id, today_str)
         await quota_service.reset_user_image_quota(成員.id, today_str)
@@ -1638,7 +1677,7 @@ class AICog(commands.Cog):
         await InteractionResponder.safe_send(interaction, card=card)
 
     @ai_group.command(name="金鑰狀態", description="查詢 AI 閘道金鑰池運行健康度")
-    @command_guard("ai")
+    @command_guard("ai", required_level=ZNPermissionLevel.DEVELOPER)
     async def key_status_command(self, interaction: discord.Interaction) -> None:
         if not PermissionEngine.is_developer(interaction.user.id):
             await InteractionResponder.safe_send(
@@ -1648,7 +1687,8 @@ class AICog(commands.Cog):
             )
             return
 
-        await InteractionResponder.safe_defer(interaction, ephemeral=True)
+        if not await InteractionResponder.safe_defer(interaction, ephemeral=True):
+            return
         diag = await ai_gateway.health_check()
         lines: List[str] = []
         for p_name, p_data in diag["providers"].items():

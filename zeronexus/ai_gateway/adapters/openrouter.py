@@ -261,18 +261,23 @@ class OpenRouterAdapter(BaseAIAdapter):
             try:
                 response = await client.post(endpoint, headers=headers, json=payload, timeout=timeout)
                 # If model does not support tools (HTTP 400), gracefully retry without tools
-                if response.status_code == 400 and formatted_tools and "tool" in response.text.lower():
-                    log.warning(f"Model {candidate} does not support tools. Retrying without tools parameter...")
-                    clean_payload = dict(payload)
-                    clean_payload.pop("tools", None)
-                    clean_payload.pop("tool_choice", None)
-                    response = await client.post(endpoint, headers=headers, json=clean_payload, timeout=timeout)
             except Exception as net_err:
                 sanitized_err = redact_secrets(str(net_err))
                 log.warning(f"OpenRouter network attempt failed for model {candidate}: {sanitized_err}")
                 last_error_text = sanitized_err
                 if not allow_fallback:
                     raise RuntimeError(f"OpenRouter network failure for requested model {candidate}: {sanitized_err}")
+                continue
+
+            if response.status_code == 400 and formatted_tools and "tool" in response.text.lower():
+                if not allow_fallback:
+                    raise RuntimeError(f"OpenRouter model {candidate} rejected required function-calling tools.")
+                if is_fallback_key:
+                    candidate_models = [m for m in OPENROUTER_STRICT_FREE_MODELS if m != candidate] or list(OPENROUTER_STRICT_FREE_MODELS)
+                elif candidate == candidate_models[-1]:
+                    raise RuntimeError(f"No remaining OpenRouter candidate supports the required function-calling tools: {redact_secrets(response.text[:200])}")
+                last_status = response.status_code
+                last_error_text = redact_secrets(response.text[:300])
                 continue
 
             if response.status_code == 200:
@@ -442,6 +447,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                         is_fallback=is_fb,
                         fallback_reason=f"原要求模型 {primary_model} 故障，由 OpenRouter 候選池 {real_model} 接手" if is_fb else None,
                         requested_model=primary_model,
+                        quota_model_id=real_model,
                         tool_calls=executed_tool_calls or None,
                         thinking_process=str(native_thinking).strip() if native_thinking else None,
                     )
@@ -525,6 +531,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                             is_fallback=True,
                             fallback_reason=f"原要求模型 {primary_model} 額度或連線耗盡，緊急降級至 google/gemini-2.5-flash",
                             requested_model=primary_model,
+                            quota_model_id="google/gemini-2.5-flash",
                             tool_calls=executed_tool_calls or None,
                             thinking_process=str(em_thinking).strip() if em_thinking else None,
                         )
@@ -572,6 +579,7 @@ class OpenRouterAdapter(BaseAIAdapter):
                             is_fallback=True,
                             fallback_reason=f"付費配額已耗盡 (HTTP {last_status})，已自動切換至零成本免費模型 {free_model}",
                             requested_model=primary_model,
+                            quota_model_id=free_model,
                             tool_calls=executed_tool_calls or None,
                             thinking_process=str(free_thinking).strip() if free_thinking else None,
                         )
@@ -579,4 +587,3 @@ class OpenRouterAdapter(BaseAIAdapter):
                 log.error(f"Free-tier fallback {free_model} failed: {redact_secrets(str(free_err))}")
 
         raise RuntimeError(f"OpenRouter API Error (HTTP {last_status}): {last_error_text[:300]}")
-

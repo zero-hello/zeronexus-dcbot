@@ -89,6 +89,8 @@ class DiagnosticsManager:
                 "latency_ms": gw_latency,
                 "details": f"Guilds: {len(bot_instance.guilds)}",
             }
+            if not gw_healthy:
+                results["all_healthy"] = False
         else:
             results["subsystems"]["discord_gateway"] = {
                 "name": "Discord Gateway",
@@ -96,30 +98,37 @@ class DiagnosticsManager:
                 "latency_ms": -1,
                 "details": "Bot not fully attached or offline",
             }
+            results["all_healthy"] = False
 
         # 4. AI Gateway check
         try:
             from zeronexus.ai_gateway.gateway import ai_gateway
             ai_res = await ai_gateway.health_check()
             results["subsystems"]["ai_gateway"] = ai_res
+            if ai_res.get("icon") not in (DiagnosticStatus.HEALTHY, "🟢"):
+                results["all_healthy"] = False
         except Exception as e:
             results["subsystems"]["ai_gateway"] = {
                 "name": "AI 閘道 (AI Gateway)",
                 "icon": DiagnosticStatus.DEGRADED,
                 "details": str(e),
             }
+            results["all_healthy"] = False
 
         # 5. CWA Weather API check
         try:
             from zeronexus.engines.cwa_client import cwa_client
             cwa_res = await cwa_client.health_check()
             results["subsystems"]["cwa_weather"] = cwa_res
+            if cwa_res.get("status") not in ("GREEN", "DISABLED"):
+                results["all_healthy"] = False
         except Exception as e:
             results["subsystems"]["cwa_weather"] = {
                 "name": "中央氣象署 API (CWA)",
                 "icon": DiagnosticStatus.DEGRADED,
                 "details": str(e),
             }
+            results["all_healthy"] = False
 
         # 6. Scheduler check
         try:
@@ -140,14 +149,18 @@ class DiagnosticsManager:
                 "icon": DiagnosticStatus.DEGRADED,
                 "details": str(e),
             }
+            results["all_healthy"] = False
 
         # 7. Module Manager check
         try:
             from zeronexus.modules.manager import module_manager
             mod_res = module_manager.get_health_summary()
             results["modules"] = mod_res
+            if any(item.get("state") not in ("RUNNING", "READY") for item in mod_res.values()):
+                results["all_healthy"] = False
         except Exception:
             results["modules"] = {}
+            results["all_healthy"] = False
 
         # Global secret redaction pass over all diagnostic fields
         from zeronexus.security.sanitizer import redact_secrets

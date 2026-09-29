@@ -3014,14 +3014,18 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         aspect_ratio: str = "1:1",
         model: str = "flux",
         user: Optional[Any] = None,
+        _quota_reservation: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         if user is None:
             return {"success": False, "error": "生圖工具需要已驗證的 Discord 使用者上下文。"}
         from zeronexus.security.ratelimit import quota_service
-        allowed, reservation, used, limit = await quota_service.reserve_image_quota(user.id)
-        if not allowed:
-            return {"success": False, "error": f"每日生圖額度已用完 ({used}/{limit})。"}
+        reservation = _quota_reservation
+        owns_reservation = reservation is None
+        if reservation is None:
+            allowed, reservation, used, limit = await quota_service.reserve_image_quota(user.id)
+            if not allowed:
+                return {"success": False, "error": f"每日生圖額度已用完 ({used}/{limit})。"}
         from zeronexus.engines.image_gen import image_gen_engine
         try:
             res = await image_gen_engine.generate_image(
@@ -3032,12 +3036,12 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
                 verify_download=True,
             )
             if res.success:
-                if reservation:
+                if reservation and owns_reservation:
                     await quota_service.commit_image_quota(reservation)
-            elif reservation:
+            elif reservation and owns_reservation:
                 await quota_service.release_image_quota(reservation)
         except Exception:
-            if reservation:
+            if reservation and owns_reservation:
                 await quota_service.release_image_quota(reservation)
             raise
         return {

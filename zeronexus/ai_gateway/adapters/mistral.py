@@ -138,6 +138,7 @@ class MistralAdapter(BaseAIAdapter):
             text=text_result,
             model_name=real_model,
             provider="mistral",
+            quota_model_id=real_model,
             latency_ms=latency_ms,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,

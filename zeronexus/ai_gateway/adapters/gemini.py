@@ -421,6 +421,7 @@ class GeminiAdapter(BaseAIAdapter):
                     is_fallback=is_fb,
                     fallback_reason=f"Primary model '{primary_model}' failed, auto-switched to '{cur_model}'" if is_fb else None,
                     requested_model=primary_model,
+                    quota_model_id=cur_model,
                     thinking_process=native_thinking,
                 )
             except Exception as exc:
@@ -431,6 +432,8 @@ class GeminiAdapter(BaseAIAdapter):
                         log.warning(f"Model '{cur_model}' does not support thinkingConfig, retrying without it...")
                         del cur_payload["generationConfig"]["thinkingConfig"]
                         continue
+                if tools and any(marker in err_text for marker in ("tool", "function declaration", "function calling")):
+                    raise RuntimeError(f"Gemini model '{cur_model}' rejected the required tool schema: {exc}") from exc
                 is_recoverable = (
                     "429" in err_text
                     or "503" in err_text
