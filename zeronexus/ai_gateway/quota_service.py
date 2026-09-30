@@ -182,6 +182,7 @@ class QuotaService:
             projected = current_used + today_in_flight + 1
 
             if not is_dev and (current_used + today_in_flight >= effective_limit):
+                log.info("AI daily quota reached for user %s (%s/%s)", user_id, current_used + today_in_flight, effective_limit)
                 return False, None, current_used + today_in_flight, effective_limit
 
             self._in_flight[user_id] += 1
@@ -303,6 +304,8 @@ class QuotaService:
             "used": total_used,
             "limit": limit,
             "remaining": remaining,
+            "persisted_used": used,
+            "in_flight": in_flight,
             "is_dev": is_dev,
             "reset_time": "每日凌晨 00:00 (台灣時間 / UTC+8)",
         }
@@ -609,12 +612,6 @@ class QuotaService:
     # =========================================================================
 
     MODEL_DEFAULT_QUOTAS: Dict[str, int] = {
-        # 本地自主運算 GGUF 模型 (無額度限制)
-        "qwen2.5-0.5b-instruct-q8_0": 999999,
-        "local/qwen2.5-0.5b-instruct": 999999,
-        "qwen2.5-0.5b-instruct-q4_k_m": 999999,
-        "local/qwen2.5-0.5b-instruct-q4_k_m": 999999,
-
         # 極速輕量旗艦 (50 次/天)
         "gemini-3.1-flash-lite": 50,
         "gemini-2.5-flash": 50,
@@ -693,13 +690,17 @@ class QuotaService:
             used = record.used_count if record else 0
             limit = default_limit
 
-        remaining = 999999 if is_dev else max(0, limit - used)
+        in_flight = self._model_in_flight.get((user_id, model_id), 0)
+        total_used = used + in_flight
+        remaining = 999999 if is_dev else max(0, limit - total_used)
 
         return {
             "user_id": user_id,
             "model_id": model_id,
             "today_date": today_str,
-            "used": used,
+            "used": total_used,
+            "persisted_used": used,
+            "in_flight": in_flight,
             "limit": limit,
             "remaining": remaining,
             "is_dev": is_dev,
@@ -895,9 +896,7 @@ class QuotaService:
     async def format_model_quota_desc(self, user_id: int, model_id: str, tag: str = "") -> str:
         """Formats a descriptive string for Discord Select Menu options (< 100 characters)."""
         info = await self.get_user_model_quota(user_id, model_id)
-        if "qwen2.5-0.5b" in model_id.lower() or "local" in model_id.lower():
-            prefix = "今日剩餘：無上限 (本地運算)"
-        elif info["is_dev"]:
+        if info["is_dev"]:
             prefix = "今日剩餘：無上限"
         else:
             prefix = f"今日剩餘：{info['remaining']}/{info['limit']} 次"

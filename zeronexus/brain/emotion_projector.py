@@ -203,9 +203,13 @@ class HighDimensionalEmotionProjector:
         self.dynamics = dynamics or NeurotransmitterDynamics()
         self._init_lexical_anchors()
         self.neural_array = None
+        self._neural_array_initialization_attempted = False
 
     def initialize_neural_array(self) -> None:
-        """Load optional ONNX models after the Discord gateway is online."""
+        """Initialize the lightweight neural-array facade; ONNX models load on demand."""
+        if self._neural_array_initialization_attempted:
+            return
+        self._neural_array_initialization_attempted = True
         try:
             from .neural_models import HierarchicalNeuralArray
             self.neural_array = HierarchicalNeuralArray()

@@ -1,6 +1,6 @@
-"""ZeroNexus 本地六核離線神經模型矩陣 (Hexa-Model Neural Sensory Array)
+"""ZeroNexus 本地離線 Embedding／分類神經模型矩陣 (Neural Sensory Array)
 
-六大協同離線神經模型陣列架構：
+六個協同離線 Embedding／分類模型架構：
 1. 模型 1 (中文語意共鳴): BGE-Small-ZH-v1.5 (~23MB)
    - 專精繁體中文生活語境、細膩情緒語意與同理心空間。
 2. 模型 2 (通用概念幾何): all-MiniLM-L6-v2 (~22MB)
@@ -19,6 +19,8 @@
 
 import os
 import logging
+import threading
+import gc
 import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -151,7 +153,7 @@ def calibrate_prototype_projections(
 
 @dataclass
 class FusedSensoryOutput:
-    """六核模型矩陣集成感知輸出"""
+    """離線模型矩陣集成感知輸出"""
     valence: float  # 愉悅度 (-1.0 ~ 1.0)
     arousal: float  # 喚醒激動度 (0.0 ~ 1.0)
     dominant_emotion: str  # 主導情緒
@@ -168,7 +170,7 @@ class FusedSensoryOutput:
 
 
 class HierarchicalNeuralArray:
-    """六核協同離線神經模型矩陣"""
+    """六個協同離線 Embedding／分類模型矩陣"""
 
     def __init__(self, models_dir: Optional[str] = None) -> None:
         if models_dir is None:
@@ -176,6 +178,13 @@ class HierarchicalNeuralArray:
             self.models_dir = os.path.join(base_dir, "data", "brain", "models")
         else:
             self.models_dir = models_dir
+        self._model_lock = threading.RLock()
+        self._loaded_model: Optional[str] = None
+        try:
+            configured_threads = int(os.getenv("ZERONEXUS_ONNX_THREADS", "1"))
+        except (TypeError, ValueError):
+            configured_threads = 1
+        self._onnx_threads = max(1, min(configured_threads, 2))
 
         # 模型 1: 中文 BGE
         self.bge_session = None
@@ -205,7 +214,7 @@ class HierarchicalNeuralArray:
         self.sentinel_session = None
         self.sentinel_tokenizer = None
 
-        self._init_neural_engines()
+        # ONNX sessions are deliberately lazy-loaded on first inference.
 
     def _load_model(self, folder: str, opts) -> Tuple[Optional[any], Optional[any]]:
         m_path = os.path.join(self.models_dir, folder, "onnx", "model_quantized.onnx")
@@ -221,52 +230,59 @@ class HierarchicalNeuralArray:
                 log.warning(f"載入模型 {folder} 失敗: {e}")
         return None, None
 
-    def _init_neural_engines(self) -> None:
+    def _ensure_model_loaded(self, model_name: str) -> bool:
+        """Load only the requested ONNX model; release the previous session first."""
         if not HAS_ONNX:
-            return
+            return False
+        if self._loaded_model == model_name:
+            return True
+        with self._model_lock:
+            if self._loaded_model == model_name:
+                return True
+            self.release_models()
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = self._onnx_threads
+            opts.inter_op_num_threads = 1
+            opts.enable_cpu_mem_arena = False
+            opts.enable_mem_pattern = False
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+            attr_map = {
+                "bge_small_zh": ("bge_session", "bge_tokenizer", "_bge_protos"),
+                "semantic_extractor": ("l6_session", "l6_tokenizer", "_l6_protos"),
+                "minilm_l12": ("l12_session", "l12_tokenizer", "_l12_protos"),
+                "multilingual_l12": ("multi_session", "multi_tokenizer", "_multi_protos"),
+                "sentiment_sst2": ("sst2_session", "sst2_tokenizer", None),
+                "hostility_sentinel": ("sentinel_session", "sentinel_tokenizer", None),
+            }
+            session_attr, tokenizer_attr, proto_attr = attr_map[model_name]
+            session, tokenizer = self._load_model(model_name, opts)
+            setattr(self, session_attr, session)
+            setattr(self, tokenizer_attr, tokenizer)
+            if session is None or tokenizer is None:
+                return False
+            self._loaded_model = model_name
+            if model_name == "bge_small_zh" and not self._bge_protos:
+                self._precompute_bge_prototypes()
+                self._bge_protos = orthogonalize_prototypes(self._bge_protos)
+            elif model_name == "semantic_extractor" and not self._l6_protos:
+                self._precompute_l6_prototypes()
+                self._l6_protos = orthogonalize_prototypes(self._l6_protos)
+            elif model_name == "minilm_l12" and not self._l12_protos:
+                self._precompute_l12_prototypes()
+                self._l12_protos = orthogonalize_prototypes(self._l12_protos)
+            elif model_name == "multilingual_l12" and not self._multi_protos:
+                self._precompute_multi_prototypes()
+                self._multi_protos = orthogonalize_prototypes(self._multi_protos)
+            return True
 
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 2
-        opts.inter_op_num_threads = 1
-        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-        # 1. BGE-Small-ZH
-        self.bge_session, self.bge_tokenizer = self._load_model("bge_small_zh", opts)
-        if self.bge_session:
-            log.info("✓ [1/6] 中文 BGE 語意引擎載入成功")
-            self._precompute_bge_prototypes()
-            self._bge_protos = orthogonalize_prototypes(self._bge_protos)
-
-        # 2. MiniLM-L6
-        self.l6_session, self.l6_tokenizer = self._load_model("semantic_extractor", opts)
-        if self.l6_session:
-            log.info("✓ [2/6] 通用概念 MiniLM-L6 載入成功")
-            self._precompute_l6_prototypes()
-            self._l6_protos = orthogonalize_prototypes(self._l6_protos)
-
-        # 3. MiniLM-L12
-        self.l12_session, self.l12_tokenizer = self._load_model("minilm_l12", opts)
-        if self.l12_session:
-            log.info("✓ [3/6] 深層平滑 MiniLM-L12 載入成功")
-            self._precompute_l12_prototypes()
-            self._l12_protos = orthogonalize_prototypes(self._l12_protos)
-
-        # 4. Multilingual-L12
-        self.multi_session, self.multi_tokenizer = self._load_model("multilingual_l12", opts)
-        if self.multi_session:
-            log.info("✓ [4/6] 多語言 Multilingual-L12 載入成功")
-            self._precompute_multi_prototypes()
-            self._multi_protos = orthogonalize_prototypes(self._multi_protos)
-
-        # 5. DistilBERT-SST-2
-        self.sst2_session, self.sst2_tokenizer = self._load_model("sentiment_sst2", opts)
-        if self.sst2_session:
-            log.info("✓ [5/6] 情感極性 DistilBERT-SST-2 載入成功")
-
-        # 6. Toxic-BERT 哨兵
-        self.sentinel_session, self.sentinel_tokenizer = self._load_model("hostility_sentinel", opts)
-        if self.sentinel_session:
-            log.info("✓ [6/6] 防衛哨兵 Toxic-BERT 載入成功")
+    def release_models(self) -> None:
+        """Drop all ONNX session/tokenizer references to return model memory."""
+        with getattr(self, "_model_lock", threading.RLock()):
+            for attr in ("bge_session", "l6_session", "l12_session", "multi_session", "sst2_session", "sentinel_session",
+                         "bge_tokenizer", "l6_tokenizer", "l12_tokenizer", "multi_tokenizer", "sst2_tokenizer", "sentinel_tokenizer"):
+                setattr(self, attr, None)
+            self._loaded_model = None
+        gc.collect()
 
     def _extract_embedding(self, session, tokenizer, text: str) -> Optional[np.ndarray]:
         if not session or not tokenizer:
@@ -295,15 +311,21 @@ class HierarchicalNeuralArray:
 
     def encode_text(self, text: str) -> Optional[np.ndarray]:
         """公開通用文字向量編碼介面（優先中文 BGE，備援 MiniLM-L6）"""
+        with self._model_lock:
+            result = self._encode_text_locked(text)
+            self.release_models()
+            return result
+
+    def _encode_text_locked(self, text: str) -> Optional[np.ndarray]:
         if not text or not text.strip():
             return None
         # 1. 優先中文 BGE 模型
-        if self.bge_session and self.bge_tokenizer:
+        if self._ensure_model_loaded("bge_small_zh") and self.bge_session and self.bge_tokenizer:
             emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, text)
             if emb is not None:
                 return emb
         # 2. 備援通用概念 MiniLM-L6
-        if self.l6_session and self.l6_tokenizer:
+        if self._ensure_model_loaded("semantic_extractor") and self.l6_session and self.l6_tokenizer:
             emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, text)
             if emb is not None:
                 return emb
@@ -408,7 +430,13 @@ class HierarchicalNeuralArray:
             return 0.0, {}
 
     def perceive(self, text: str, reflex_output) -> FusedSensoryOutput:
-        """六核離線神經模型矩陣全維度集成融合感知"""
+        """離線神經模型矩陣全維度集成融合感知"""
+        with self._model_lock:
+            result = self._perceive_locked(text, reflex_output)
+            self.release_models()
+            return result
+
+    def _perceive_locked(self, text: str, reflex_output) -> FusedSensoryOutput:
         active_layers = ["L1_GeometricReflex"]
         cleaned = text.strip()
 
@@ -425,7 +453,7 @@ class HierarchicalNeuralArray:
         delta_oxy = reflex_output.delta_oxytocin
 
         # 1. 執行模型 1 (中文 BGE-ZH 共情)
-        if self.bge_session and self._bge_protos:
+        if self._ensure_model_loaded("bge_small_zh") and self._bge_protos:
             active_layers.append("M1_BGE_ZH")
             b_emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, cleaned)
             if b_emb is not None:
@@ -440,7 +468,7 @@ class HierarchicalNeuralArray:
                         dom_emo = top_b[0]
 
         # 2. 執行模型 2 (通用概念 MiniLM-L6)
-        if self.l6_session and self._l6_protos:
+        if self._ensure_model_loaded("semantic_extractor") and self._l6_protos:
             active_layers.append("M2_MiniLM_L6")
             l6_emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, cleaned)
             if l6_emb is not None:
@@ -451,45 +479,41 @@ class HierarchicalNeuralArray:
                 if raw_top_l6[1] > 0.40:
                     delta = 0.20 * raw_top_l6[1]
                     val = val * 0.80 + (delta if top_l6[0] in ("喜悅", "期待", "信任") else -delta)
+        self.release_models()
 
-        # 3. 執行模型 3 (深層平滑 MiniLM-L12)
-        if self.l12_session and self._l12_protos:
+        # Specialist models remain available but are loaded strictly one at a time.
+        if self._ensure_model_loaded("minilm_l12") and self._l12_protos:
             active_layers.append("M3_MiniLM_L12")
             l12_emb = self._extract_embedding(self.l12_session, self.l12_tokenizer, cleaned)
             if l12_emb is not None:
                 raw_l12_scores = {e: float(np.dot(l12_emb, p)) for e, p in self._l12_protos.items()}
-                calibrated_l12 = calibrate_prototype_projections(raw_l12_scores, temperature=0.07, threshold=0.15)
-                top_l12 = max(calibrated_l12.items(), key=lambda x: x[1])
-                raw_top_l12 = max(raw_l12_scores.items(), key=lambda x: x[1])
-                if raw_top_l12[1] > 0.40:
-                    intensity = max(intensity, float(raw_top_l12[1]))
+                top_l12 = max(raw_l12_scores.items(), key=lambda x: x[1])
+                if top_l12[1] > 0.40:
+                    intensity = max(intensity, float(top_l12[1]))
+        self.release_models()
 
-        # 4. 執行模型 4 (多語言 Multilingual-L12)
-        if self.multi_session and self._multi_protos:
+        if self._ensure_model_loaded("multilingual_l12") and self._multi_protos:
             active_layers.append("M4_Multi_L12")
-            m_emb = self._extract_embedding(self.multi_session, self.multi_tokenizer, cleaned)
-            if m_emb is not None:
-                raw_m_scores = {e: float(np.dot(m_emb, p)) for e, p in self._multi_protos.items()}
-                calibrated_m = calibrate_prototype_projections(raw_m_scores, temperature=0.07, threshold=0.15)
-                top_m = max(calibrated_m.items(), key=lambda x: x[1])
-                raw_top_m = max(raw_m_scores.items(), key=lambda x: x[1])
-                if raw_top_m[1] > 0.45 and top_m[0] == "信任":
+            multi_emb = self._extract_embedding(self.multi_session, self.multi_tokenizer, cleaned)
+            if multi_emb is not None:
+                raw_multi_scores = {e: float(np.dot(multi_emb, p)) for e, p in self._multi_protos.items()}
+                top_multi = max(raw_multi_scores.items(), key=lambda x: x[1])
+                if top_multi[1] > 0.45 and top_multi[0] == "信任":
                     delta_oxy += 3.0
                     delta_ser += 2.0
+        self.release_models()
 
-        # 5. 執行模型 5 (情感極性 DistilBERT-SST-2)
-        if self.sst2_session:
+        if self._ensure_model_loaded("sentiment_sst2") and self.sst2_session:
             active_layers.append("M5_DistilBERT_SST2")
             neg_p, pos_p = self._predict_sst2_polarity(cleaned)
-            # 若正向機率壓倒性 (> 0.85) 或負向壓倒性 (> 0.85)，微調 Valence
             if pos_p > 0.85:
                 val = max(val, 0.4)
             elif neg_p > 0.85:
                 val = min(val, -0.4)
+        self.release_models()
 
-        # 6. 執行模型 6 (Toxic-BERT 哨兵)
         threat_level = 0.0
-        if self.sentinel_session:
+        if self._ensure_model_loaded("hostility_sentinel") and self.sentinel_session:
             active_layers.append("M6_ToxicSentinel")
             threat_level, _ = self._predict_sentinel_threat(cleaned)
             if threat_level > 0.3:
@@ -501,12 +525,13 @@ class HierarchicalNeuralArray:
                 comp_sent = "防備警惕與受創抗拒"
                 dom_emo = "憤怒"
                 sec_emo = "厭惡"
+        self.release_models()
 
         val = max(-1.0, min(1.0, round(val, 3)))
         aro = max(0.1, min(1.0, round(aro, 3)))
 
         summary = (
-            f"六核神經模型矩陣集成【{comp_sent}】(愉悅: {val:+0.2f}, 激動: {aro:0.2f}, "
+            f"離線模型矩陣集成【{comp_sent}】(愉悅: {val:+0.2f}, 激動: {aro:0.2f}, "
             f"威脅: {threat_level:0.2f} | 啟動層: {','.join(active_layers)})"
         )
 
@@ -528,18 +553,25 @@ class HierarchicalNeuralArray:
 
     def get_embedding(self, text: str) -> np.ndarray:
         """獲取文字之 L2 歸一化語意特徵向量 (384 維)，優先使用 BGE 或 MiniLM，無權重時降級為確定性偽向量。"""
+        with self._model_lock:
+            result = self._get_embedding_locked(text)
+            self.release_models()
+            return result
+
+    def _get_embedding_locked(self, text: str) -> np.ndarray:
         if not text or not isinstance(text, str):
             text = ""
         # 1. 優先嘗試中文 BGE
-        if self.bge_session and self.bge_tokenizer:
+        if self._ensure_model_loaded("bge_small_zh") and self.bge_session and self.bge_tokenizer:
             emb = self._extract_embedding(self.bge_session, self.bge_tokenizer, text)
             if emb is not None:
                 return emb
         # 2. 次要嘗試通用 MiniLM-L6
-        if self.l6_session and self.l6_tokenizer:
+        if self._ensure_model_loaded("semantic_extractor") and self.l6_session and self.l6_tokenizer:
             emb = self._extract_embedding(self.l6_session, self.l6_tokenizer, text)
             if emb is not None:
                 return emb
+        self.release_models()
         # 3. 降級確定性幾何偽特徵向量 (384 維，支援無 ONNX 或單元測試環境)
         return self._fallback_pseudo_embedding(text)
 
@@ -566,4 +598,3 @@ class HierarchicalNeuralArray:
             return (vec / norm).astype(np.float32)
         vec[0] = 1.0
         return vec
-

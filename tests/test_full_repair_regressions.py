@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -91,12 +92,65 @@ async def test_music_dashboard_rejects_other_guild_and_other_voice_channel(monke
     send.assert_awaited()
 
 
+@pytest.mark.asyncio
+async def test_ai_cancel_callback_releases_reservations_without_blocking_button() -> None:
+    from zeronexus.ui.views import AICancelView
+
+    cancelled = asyncio.Event()
+
+    async def callback():
+        cancelled.set()
+
+    view = AICancelView(author_id=10, author_name="tester", on_cancelled=callback)
+    interaction = SimpleNamespace(
+        user=SimpleNamespace(id=10),
+        response=SimpleNamespace(is_done=lambda: False, edit_message=AsyncMock()),
+        message=None,
+    )
+    await view._on_cancel_click(interaction)
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert view.is_cancelled
+
+
+def test_ai_opt_out_memory_flag_is_available_and_explicit() -> None:
+    from zeronexus.modules.ai.cog import AICog
+
+    command = AICog.ai_group.get_command("對話")
+    assert command is not None
+    option = next(parameter for parameter in command.parameters if parameter.name == "不使用記憶")
+    assert option.required is False
+
+
+def test_standalone_faq_and_search_commands_are_registered() -> None:
+    from zeronexus.modules.standalone.cog import StandaloneCog
+
+    command_names = {command.name for command in StandaloneCog.__cog_app_commands__}
+    assert {"常見問題", "搜尋指令", "幫助"}.issubset(command_names)
+
+
+def test_music_queue_management_commands_are_registered() -> None:
+    from zeronexus.modules.music.cog import MusicCog
+
+    names = {command.name for command in MusicCog.music_group.commands}
+    assert {"隊列", "移除隊列", "清空隊列"}.issubset(names)
+
+
 def test_gateway_quota_model_identity_matches_openrouter_and_native_models() -> None:
     from zeronexus.ai_gateway.gateway import AIGateway
 
     assert AIGateway.resolve_route_model("openrouter", "google/gemma-4-26b-a4b-it:free") == "google/gemma-4-26b-a4b-it:free"
     assert AIGateway.resolve_route_model("openrouter", "free-model") == "openrouter/free-model"
     assert AIGateway.resolve_route_model("deepseek", "deepseek/deepseek-chat") == "deepseek-chat"
+
+
+def test_model_catalog_capability_and_cost_labels_are_user_facing() -> None:
+    from zeronexus.ui.model_select_view import format_model_user_labels
+
+    labels = format_model_user_labels({"text", "vision", "tools"}, is_free=False)
+    assert "文字" in labels
+    assert "圖片理解" in labels
+    assert "即時工具" in labels
+    assert "可能依供應商計費" in labels
 
 
 @pytest.mark.asyncio

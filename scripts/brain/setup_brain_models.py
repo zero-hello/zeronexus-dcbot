@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ZeroNexus 本地六核離線神經模型矩陣自動部署腳本 (Hexa-Model Array)
+"""ZeroNexus 六個 Embedding／分類模型自動部署腳本
 
 部署完整六大離線神經模型（總體積 ~362MB，遠低於 1GB 上限）：
 1. 中文專屬語意共情: Xenova/bge-small-zh-v1.5 (~23MB)
@@ -12,7 +12,6 @@
 """
 
 import os
-import sys
 from huggingface_hub import hf_hub_download
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,14 +29,17 @@ MODEL_SPECS = [
 
 def setup_models():
     print("=" * 70)
-    print("開始部署 ZeroNexus 本地生物大腦【六核離線神經模型矩陣】...")
+    print("開始部署 ZeroNexus 六個 Embedding／分類模型...")
     print("=" * 70)
 
     total_size = 0
+    missing_before = []
     for idx, (folder, repo, desc) in enumerate(MODEL_SPECS, 1):
         target_dir = os.path.join(MODELS_DIR, folder)
         os.makedirs(target_dir, exist_ok=True)
         print(f"\n[{idx}/6] 檢查/下載 {desc} ({repo})...")
+        if not (os.path.exists(os.path.join(target_dir, "onnx", "model_quantized.onnx")) and os.path.exists(os.path.join(target_dir, "tokenizer.json"))):
+            missing_before.append(desc)
         m_path = hf_hub_download(repo_id=repo, filename="onnx/model_quantized.onnx", local_dir=target_dir)
         t_path = hf_hub_download(repo_id=repo, filename="tokenizer.json", local_dir=target_dir)
         m_size = os.path.getsize(m_path)
@@ -47,8 +49,9 @@ def setup_models():
         print(f"  ✓ 分詞器檔案: {t_path} ({t_size / 1024:.2f} KB)")
 
     print("\n" + "=" * 70)
-    print(f"✅ 六大離線神經模型矩陣全數部署就緒！")
-    print(f"📦 陣列總佔用空間: {total_size / 1024 / 1024:.2f} MB（遠低於 1GB 上限）")
+    print("✅ 六個 Embedding／分類模型檢查完成。")
+    print(f"本次新增下載模型數：{len(missing_before)}；下載前請確認可用磁碟空間與網路。")
+    print(f"📦 本次檢查檔案總量: {total_size / 1024 / 1024:.2f} MB")
     print("=" * 70)
 
 

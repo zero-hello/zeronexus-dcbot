@@ -75,6 +75,18 @@ class RequestContext:
     user_prompt: str
 
 
+def _format_pipeline_failure_help(error_text: str) -> str:
+    """Present actionable, non-sensitive hints for common AI pipeline failures."""
+    lowered = (error_text or "").lower()
+    if any(word in lowered for word in ("quota", "額度已用罄", "429", "rate limit")):
+        return "AI 使用額度或服務頻率暫時受限。請使用 `/人工智慧 對話額度` 查看額度，或稍後再試／切換可用模型。"
+    if any(word in lowered for word in ("permission", "權限不足", "forbidden", "403")):
+        return "目前帳號或伺服器設定不允許這項操作。請確認功能權限；若仍無法使用，請聯絡伺服器管理員。"
+    if any(word in lowered for word in ("timeout", "timed out", "逾時")):
+        return "AI 服務回應逾時。請稍後重試，或縮短問題並減少附件後再送出。"
+    return "AI 服務目前無法完成這次請求。請稍後重試、切換其他模型，或通知伺服器管理員。"
+
+
 EXTENSION_MODULES = [
     "zeronexus.modules.moderation.cog",
     "zeronexus.modules.server.cog",
@@ -570,19 +582,19 @@ class ZeroNexusBot(commands.Bot):
             clean_err = redact_secrets(str(error))
             log.error(f"Global App Command Error in '{interaction.command}': {clean_err}", exc_info=error)
             title = "指令執行失敗"
-            desc = f"執行時遭遇錯誤：`{clean_err[:150]}`"
+            desc = "指令目前無法完成。請查看下方建議；若問題持續，請提供錯誤時間給伺服器管理員。"
             if isinstance(error, app_commands.CommandOnCooldown):
                 title = "操作過於頻繁"
                 desc = f"此指令正在冷卻中，請在 **{error.retry_after:.1f} 秒** 後重試。"
             elif isinstance(error, app_commands.MissingPermissions):
                 title = "權限不足"
-                desc = f"您缺乏 Discord 原生權限：`{', '.join(error.missing_permissions)}`"
+                desc = f"您的帳號缺少此操作所需的 Discord 權限：`{', '.join(error.missing_permissions)}`。請聯絡伺服器管理員調整角色權限。"
             elif isinstance(error, app_commands.BotMissingPermissions):
                 title = "機器人權限不足"
-                desc = f"ZeroNexus 缺少伺服器權限：`{', '.join(error.missing_permissions)}`"
+                desc = f"ZeroNexus 缺少必要權限：`{', '.join(error.missing_permissions)}`。請管理員到伺服器角色／頻道權限中授予後重試。"
             elif isinstance(error, app_commands.CheckFailure):
                 title = "權限驗證未通過"
-                desc = "您未達到執行此指令的授權或安全條件。"
+                desc = "目前帳號不符合此指令的使用條件。請檢查指令說明；若認為有誤，請聯絡管理員確認功能權限。"
 
             card = ZNCard(
                 title=title,
@@ -1804,10 +1816,10 @@ class ZeroNexusBot(commands.Bot):
             persona = user_persona or (settings.ai_persona if settings else None) or "normal_persona"
             active_model = user_model or (settings.ai_model if settings else None) or config.ai.normal_text_model or model_registry.get_active_default_model()
 
-            # 【P0-A 修復】額度系統降級時強制使用零成本本地模型，確保降級路徑真正零成本
+            # 額度系統降級時改用免費雲端路由；本地語言模型已移除。
             if degrade_to_zero_cost:
-                active_model = "qwen2.5-0.5b-instruct-q8_0"
-                log.info("[AI Pipeline] 額度系統降級中：本次對話已切換至本地零成本模型。")
+                active_model = "openrouter/free"
+                log.info("[AI Pipeline] 額度系統降級中：本次對話已切換至免費雲端模型路由。")
 
             # Process attachments (multimodal: images, docs, code/text, audio, general)
             images, image_thumbnail, attachment_tool_results, attachment_notes = await self._ingest_attachments(message.attachments)
@@ -2700,12 +2712,7 @@ class ZeroNexusBot(commands.Bot):
             # 專屬模型獨立額度檢核 (例如 Manus 每日限定 30 句，用完即止)
             # Generate response from AI Gateway with autonomous function calling enabled & strict timeout defense
             t_prov0 = time.perf_counter()
-            is_local_model = any(k in active_model.lower() for k in ("local", "qwen2.5-0.5b", "gguf"))
-            if is_local_model:
-                # 本地 CPU 推論（尤其無 AVX2 賽揚環境）給予更寬裕之超時保護 (240s)，杜絕外層中斷
-                call_timeout = 240.0
-            else:
-                call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
+            call_timeout = float(getattr(config.ai, "request_timeout_seconds", 60) + 10.0)
             brain_model_params = bio_brain.get_model_params(str(message.author.id))
             ai_res, fallback = await asyncio.wait_for(
                 ai_gateway.generate_response(
@@ -2966,7 +2973,7 @@ class ZeroNexusBot(commands.Bot):
                 await quota_service.release_quota(reservation)
             err_card = ZNCard(
                 title=f"❌ AI 回應異常 ➔ {req_ctx.author_name}",
-                description=f"執行過程中遭遇錯誤：`{clean_err[:150]}`",
+                description=_format_pipeline_failure_help(clean_err),
                 status_pill=ZNStatusPill.ERROR,
                 color=ZNColor.ERROR,
             )
@@ -3051,6 +3058,14 @@ class ZeroNexusBot(commands.Bot):
             log.info("ZeroNexus is already in the process of shutting down, skipping duplicate close invocation.")
             return
         self._is_closing = True
+
+        try:
+            from zeronexus.brain.core import bio_brain
+            neural_array = getattr(bio_brain.emotion_projector, "neural_array", None)
+            if neural_array and hasattr(neural_array, "release_models"):
+                neural_array.release_models()
+        except Exception as exc:
+            log.debug("Embedding model release skipped during shutdown: %s", type(exc).__name__)
 
         log.info("ZeroNexus shutting down...")
         self.presence_loop.cancel()

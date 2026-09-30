@@ -221,10 +221,16 @@ class SystemCog(commands.Cog):
         diag = await diagnostics.run_full_diagnostics(bot_instance=bot)
         card = ZNCard(
             title="ZeroNexus 系統全域健全度診斷",
-            description="全子系統探針與領域模組掃描結果如下：",
+            description=diag.get("summary", {}).get("headline", "全子系統探針與領域模組掃描結果如下："),
             status_pill=ZNStatusPill.SYSTEM,
             color=ZNColor.SUCCESS if diag.get("all_healthy") else ZNColor.WARNING,
         )
+
+        suggestions = diag.get("summary", {}).get("suggestions", [])
+        if suggestions:
+            card.add_section("🧭 建議處理方式", "\n".join(f"• {line}" for line in suggestions[:5]), inline=False)
+        elif diag.get("summary", {}).get("priority_action"):
+            card.add_section("✅ 下一步", diag["summary"]["priority_action"], inline=False)
 
         for key, info in diag.get("subsystems", {}).items():
             if isinstance(info, dict) and "name" in info:

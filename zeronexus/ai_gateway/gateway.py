@@ -24,7 +24,6 @@ from zeronexus.ai_gateway.adapters.manus import ManusAdapter
 from zeronexus.ai_gateway.adapters.cohere import CohereAdapter
 from zeronexus.ai_gateway.adapters.mistral import MistralAdapter
 from zeronexus.ai_gateway.adapters.groq import GroqAdapter
-from zeronexus.ai_gateway.adapters.local_gguf import LocalGGUFAdapter
 from zeronexus.ai_gateway.adapters.openrouter import (
     OPENROUTER_STRICT_FREE_MODELS,
     OpenRouterAdapter,
@@ -51,7 +50,6 @@ class AIGateway:
             "cohere": CohereAdapter(),
             "mistral": MistralAdapter(),
             "groq": GroqAdapter(),
-            "local": LocalGGUFAdapter(),
         }
 
         hf_keys = getattr(config.ai, "huggingface_keys", None) or ([config.ai.huggingface_token] if config.ai.huggingface_token else [])
@@ -68,8 +66,8 @@ class AIGateway:
             "cohere": ProviderKeyPool("cohere", cohere_keys),
             "mistral": ProviderKeyPool("mistral", mistral_keys),
             "groq": ProviderKeyPool("groq", groq_keys),
-            "local": ProviderKeyPool("local", ["local-autonomous-gguf"]),
         }
+        self._last_route_by_user: Dict[int, Dict[str, str]] = {}
 
     async def generate_response(
         self,
@@ -192,8 +190,8 @@ class AIGateway:
                 primary = "mistral"
             elif any(k in clean_override.lower() for k in ("groq", "llama-3.3", "llama-3.1", "deepseek-r1-distill")):
                 primary = "groq"
-            elif any(k in clean_override.lower() for k in ("local", "qwen2.5-0.5b", "gguf")):
-                primary = "local"
+            elif clean_override.lower().startswith("local/") or "gguf" in clean_override.lower() or "qwen2.5-0.5b" in clean_override.lower():
+                raise RuntimeError("本地語言模型已移除，請改選雲端模型。")
             else:
                 primary = "openrouter"
 
@@ -433,6 +431,14 @@ class AIGateway:
 
                 latency = (time.perf_counter() - start_ts) * 1000
                 key_obj.mark_success(latency)
+                if quota_user_id is not None:
+                    self._last_route_by_user[quota_user_id] = {
+                        "provider": result.provider or provider_name,
+                        "model": result.model_name or model,
+                        "requested_model": clean_override or "default",
+                    }
+                    if len(self._last_route_by_user) > 2048:
+                        self._last_route_by_user.pop(next(iter(self._last_route_by_user)))
                 if result.is_fallback:
                     log.warning(f"AI Gateway request completed via fallback ({result.fallback_reason}). Key {key_obj.masked}.")
 
@@ -601,6 +607,11 @@ class AIGateway:
         if clean_provider == "deepseek" and clean_model.startswith("deepseek/"):
             return clean_model.removeprefix("deepseek/")
         return clean_model or requested_model or "unknown"
+
+    def get_last_route(self, user_id: int) -> Optional[Dict[str, str]]:
+        """Return only the requesting user's last actual model route, if recorded."""
+        route = self._last_route_by_user.get(user_id)
+        return dict(route) if route else None
 
     def _get_default_model(self, provider: str, has_images: bool = False) -> str:
         if provider == "gemini":

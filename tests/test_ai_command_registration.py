@@ -5,7 +5,6 @@ from zeronexus.modules.ai.cog import AICog
 
 def test_ai_command_group_respects_discord_child_command_limit() -> None:
     assert len(AICog.ai_group.commands) <= 25
-    assert len(AICog.ai_group.commands) == 25
 
 
 def test_conversation_summary_is_registered_as_a_top_level_command() -> None:
@@ -14,3 +13,9 @@ def test_conversation_summary_is_registered_as_a_top_level_command() -> None:
     assert "對話摘要" in cog_commands
     assert isinstance(cog_commands["對話摘要"], app_commands.Command)
     assert "對話摘要" not in {command.name for command in AICog.ai_group.commands}
+
+
+def test_ai_memory_privacy_controls_are_registered() -> None:
+    names = {command.name for command in AICog.ai_group.commands}
+    assert "記憶清空" in names
+    assert "模型目錄" in names

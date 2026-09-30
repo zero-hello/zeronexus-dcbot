@@ -16,7 +16,7 @@ class CapabilityDomain(str, Enum):
     """能力所屬領域分類。"""
     CYBER_COURT = "賽博法庭與爭端裁決公道伯"
     AI_GATEWAY = "三階 AI 模型智慧閘道與動態切換"
-    BIO_BRAIN = "本地六核離線神經感官矩陣與生物大腦"
+    BIO_BRAIN = "本地離線 Embedding 感官矩陣與生物大腦"
     TAIWAN_LIFE = "臺灣民生與交通即時情資"
     FINANCE_NETWORK = "金融市場與網路安全診斷"
     METEOROLOGY_EARTHQUAKE = "中央氣象署全景氣象與地震速報"
@@ -71,10 +71,10 @@ class CapabilityRegistry:
             tool_names=[]
         ))
 
-        # 3. 本地六核離線神經感官矩陣與生物大腦
+        # 3. 本地離線神經感官矩陣與生物大腦
         self.register(SystemCapability(
             capability_id="bio_neural_brain",
-            name="本地六核離線神經感官矩陣與情緒大腦",
+            name="本地離線神經感官矩陣與情緒大腦",
             domain=CapabilityDomain.BIO_BRAIN,
             description="內建本地離線六核多層神經感官矩陣與邊緣心智狀態機：即時運算多巴胺（好奇興奮）、血清素（滿足穩定）、皮質醇（自尊防衛）、催產素（親密羈絆）與精力值；Asia/Taipei 臺灣標準時間五大時段晝夜生物鐘；海馬迴深夜夢境編織；個人專屬親密稱號與生活忌口偏好雷達；AES-256 加密記憶保險庫。",
             trigger_keywords=["心情", "大腦", "生物鐘", "感覺怎樣", "親密感", "做夢"],

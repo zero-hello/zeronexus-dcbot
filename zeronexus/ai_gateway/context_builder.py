@@ -634,6 +634,7 @@ class ContextBuilder:
         assistant_content: str,
         is_shared_ai_channel: bool = False,
         save_short_term: bool = True,
+        save_long_term: bool = True,
     ) -> None:
         """Persists short-term chat logs and automatically extracts worthy long-term memories."""
         channel_id = getattr(channel, "id", 0)
@@ -707,6 +708,9 @@ class ContextBuilder:
                     speaker_name="ZeroNexus",
                     content=clean_assistant_text,
                 ))
+
+            if not save_long_term:
+                return
 
             # 3. Automatic Long-Term Memory Extraction
             # Detects tags like [REMEMBER: key = value], [REMEMBER: key: value], or [MEMORIZE: fact] output by AI
@@ -897,6 +901,7 @@ class ContextBuilder:
         max_history_turns: Optional[int] = None,
         max_history_tokens: int = 4000,
         include_short_term_history: bool = True,
+        include_long_term_memory: bool = True,
         custom_persona_instructions: Optional[str] = None,
     ) -> List[Dict[str, str]]:
         """Constructs unified multi-turn conversation payload for AI Gateway with token budgeting & user identity."""
@@ -955,7 +960,7 @@ class ContextBuilder:
                 return await self.fetch_user_short_term_context(user.id, limit=fetch_limit)
 
         long_term_facts, history_msgs = await asyncio.gather(
-            self.fetch_user_long_term_facts(user.id, query=user_prompt),
+            self.fetch_user_long_term_facts(user.id, query=user_prompt) if include_long_term_memory else asyncio.sleep(0, result=[]),
             _fetch_history(),
         )
 

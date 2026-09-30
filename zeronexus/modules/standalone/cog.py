@@ -13,6 +13,7 @@ import time
 import asyncio
 import platform
 from typing import Any, List, Optional
+import re
 
 import discord
 from discord import app_commands
@@ -31,6 +32,7 @@ from zeronexus.ui.card import ZNCard, strip_markdown_headings
 from zeronexus.ui.components import DebounceGuard
 from zeronexus.ui.responder import InteractionResponder
 from zeronexus.ui.theme import ZNColor, ZNStatusPill, ZNTheme
+from zeronexus.modules.standalone.faq import FAQ_ENTRIES, search_faq
 
 
 MODULE_METADATA_ORDER = [
@@ -61,6 +63,8 @@ class StandaloneModule(BaseModule):
     async def initialize(self, bot: Any) -> None:
         commands_list = [
             ("幫助", "ZeroNexus 互動式全功能 Help Center 導覽中心", ZNPermissionLevel.EVERYONE),
+            ("搜尋指令", "依關鍵字搜尋功能指令與說明", ZNPermissionLevel.EVERYONE),
+            ("常見問題", "查看 AI、記憶、音樂與權限常見問題", ZNPermissionLevel.EVERYONE),
             ("ping", "測量 Discord WebSocket 心跳、資料庫讀寫與 API 延遲", ZNPermissionLevel.EVERYONE),
             ("當前狀態", "檢視 ZeroNexus 全域平台即時運行大盤與子模組健康度", ZNPermissionLevel.EVERYONE),
             ("診斷", "執行 ZeroNexus 全系統全景健全狀態掃描", ZNPermissionLevel.EVERYONE),
@@ -186,6 +190,8 @@ class ZNHelpView(discord.ui.LayoutView):
             "- `/設定 總覽` — 檢視並自訂本伺服器自動化營運配置",
             inline=False,
         )
+        faq_text = "\n".join(f"• **{question}**：{answer}" for question, answer in FAQ_ENTRIES[:5])
+        home_card.add_section("❓ 常見問題速查", faq_text + "\n更多問題可使用 `/搜尋指令 關鍵字`。", inline=False)
         pages.append(home_card)
 
         # 2. Pages 1..11: Modules
@@ -573,6 +579,57 @@ class StandaloneCog(commands.Cog):
         if msg:
             view.message = msg
 
+    @app_commands.command(name="常見問題", description="查看 AI、記憶、音樂與權限等常見問題")
+    @command_guard("standalone")
+    async def faq_command(self, interaction: discord.Interaction) -> None:
+        card = ZNCard(
+            title="ZeroNexus 常見問題",
+            description="\n\n".join(f"**{question}**\n{answer}" for question, answer in FAQ_ENTRIES),
+            status_pill=ZNStatusPill.INFO,
+            color=ZNColor.PRIMARY,
+            footer_text="找不到需要的功能？使用 /搜尋指令 或 /幫助。",
+        )
+        await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
+
+    @app_commands.command(name="搜尋指令", description="依功能或關鍵字搜尋可用指令與使用說明")
+    @app_commands.describe(關鍵字="例如：音樂隊列、AI 記憶、天氣或權限")
+    @command_guard("standalone")
+    async def search_commands_command(self, interaction: discord.Interaction, 關鍵字: str) -> None:
+        query = re.sub(r"\s+", " ", (關鍵字 or "").strip())
+        if not query:
+            await InteractionResponder.safe_send(interaction, "請輸入要搜尋的功能，例如：`音樂 隊列`、`AI 記憶`、`天氣`。", ephemeral=True)
+            return
+        commands_list = module_manager.command_registry.list_all()
+        tokens = [token.lower() for token in query.split() if token]
+        scored = []
+        for item in commands_list:
+            haystack = f"{item.full_name} {item.description} {item.module_name}".lower()
+            score = sum(2 if token in item.full_name.lower() else 1 for token in tokens if token in haystack)
+            if score:
+                scored.append((score, item))
+        faq_matches = search_faq(query, limit=3)
+        scored.sort(key=lambda pair: (-pair[0], pair[1].full_name))
+        if not scored and not faq_matches:
+            await InteractionResponder.safe_send(
+                interaction,
+                f"找不到與「{query[:80]}」相符的指令。可使用 `/幫助` 瀏覽分類，或改用較短的關鍵字。",
+                ephemeral=True,
+            )
+            return
+        lines = [f"• `/{item.full_name}` — {item.description}" for _, item in scored[:10]]
+        if not lines and faq_matches:
+            lines = ["沒有完全符合的指令；以下列出相關常見問題："]
+        card = ZNCard(
+            title=f"🔎 指令搜尋：{query[:80]}",
+            description="\n".join(lines) or "這裡有幾篇相關說明：",
+            status_pill=ZNStatusPill.INFO,
+            color=ZNColor.PRIMARY,
+            footer_text=f"顯示 {min(len(scored), 10)} / {len(scored)} 項結果；使用 /幫助瀏覽分類與管理權限。",
+        )
+        if faq_matches:
+            card.add_section("❓ 相關常見問題", "\n\n".join(f"**{question}**\n{answer}" for question, answer in faq_matches), inline=False)
+        await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)
+
     @app_commands.command(name="ping", description="測量 Discord WebSocket 心跳、資料庫讀寫與 API 延遲")
     @command_guard("standalone")
     async def ping_command(self, interaction: discord.Interaction) -> None:
@@ -626,10 +683,16 @@ class StandaloneCog(commands.Cog):
         diag = await diagnostics.run_full_diagnostics(bot_instance=self.bot)
         card = ZNCard(
             title="ZeroNexus 系統全域健全度診斷報告",
-            description="全子系統與業務領域模組探針掃描結果如下：",
+            description=diag.get("summary", {}).get("headline", "全子系統與業務領域模組探針掃描結果如下："),
             status_pill=ZNStatusPill.SYSTEM,
             color=ZNColor.SUCCESS if diag.get("all_healthy") else ZNColor.WARNING,
         )
+
+        suggestions = diag.get("summary", {}).get("suggestions", [])
+        if suggestions:
+            card.add_section("🧭 建議處理方式", "\n".join(f"• {line}" for line in suggestions[:5]), inline=False)
+        if not suggestions:
+            card.add_section("✅ 下一步", diag.get("summary", {}).get("priority_action", "目前沒有需要立即處理的項目。"), inline=False)
 
         for key, info in diag.get("subsystems", {}).items():
             if isinstance(info, dict) and "name" in info:

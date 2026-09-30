@@ -41,6 +41,7 @@ class DiagnosticsManager:
             "timestamp": time.time(),
             "subsystems": {},
             "all_healthy": True,
+            "summary": {"healthy": [], "attention": [], "offline": [], "suggestions": []},
         }
 
         import asyncio
@@ -156,8 +157,16 @@ class DiagnosticsManager:
             from zeronexus.modules.manager import module_manager
             mod_res = module_manager.get_health_summary()
             results["modules"] = mod_res
-            if any(item.get("state") not in ("RUNNING", "READY") for item in mod_res.values()):
+            unhealthy_modules = [
+                item.get("display_name", key)
+                for key, item in mod_res.items()
+                if item.get("state") not in ("RUNNING", "READY")
+            ]
+            if unhealthy_modules:
                 results["all_healthy"] = False
+                results["summary"]["suggestions"].append(
+                    "檢查異常模組：" + "、".join(unhealthy_modules[:5]) + "；可在管理介面查看模組狀態與錯誤原因。"
+                )
         except Exception:
             results["modules"] = {}
             results["all_healthy"] = False
@@ -175,6 +184,34 @@ class DiagnosticsManager:
             return obj
 
         results = _sanitize_dict(results)
+        subsystem_summary = results.get("summary", {})
+        for key, info in results.get("subsystems", {}).items():
+            if not isinstance(info, dict):
+                continue
+            icon = info.get("icon")
+            name = info.get("name", key)
+            if icon == DiagnosticStatus.HEALTHY:
+                subsystem_summary["healthy"].append(name)
+            elif icon == DiagnosticStatus.OFFLINE:
+                subsystem_summary["offline"].append(name)
+                subsystem_summary["suggestions"].append(f"檢查 {name} 服務是否可連線，並確認設定與憑證已有效載入。")
+            elif icon == DiagnosticStatus.DEGRADED:
+                subsystem_summary["attention"].append(name)
+                subsystem_summary["suggestions"].append(f"查看 {name} 的狀態細節；必要時重試或檢查相關權限。")
+        if results.get("all_healthy") and not subsystem_summary["attention"] and not subsystem_summary["offline"]:
+            subsystem_summary["headline"] = "所有已檢查子系統目前正常。"
+        else:
+            subsystem_summary["headline"] = (
+                f"{len(subsystem_summary['offline'])} 項離線、"
+                f"{len(subsystem_summary['attention'])} 項需注意、"
+                f"{len(subsystem_summary['healthy'])} 項正常。"
+            )
+        subsystem_summary["priority_action"] = (
+            subsystem_summary["suggestions"][0]
+            if subsystem_summary["suggestions"]
+            else "目前沒有需要立即處理的項目。"
+        )
+        subsystem_summary["next_steps"] = subsystem_summary["suggestions"][:5]
         self._last_scan = results
         return results
 

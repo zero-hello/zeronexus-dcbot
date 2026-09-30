@@ -558,7 +558,7 @@ class AICancelView(discord.ui.View):
         from zeronexus.ui.card import ZNCard
         cancel_card = ZNCard(
             title=f"🛑 已取消回應 ➔ {self.author_name}",
-            description="已成功中斷本次 AI 推論與思考程序，未扣除額度。",
+            description="已中斷本次 AI 工作；未完成的對話額度預約會釋放。若已完成的圖片生成等獨立工作，該項使用額度依完成結果計算。",
             status_pill=ZNStatusPill.WARNING,
             color=ZNColor.ERROR,
             footer_text="🛑 本次對話已手動取消",
@@ -581,17 +581,18 @@ class AICancelView(discord.ui.View):
         # 取消執行中的協程任務
         if self.task and not self.task.done():
             self.task.cancel()
-
         if self.on_cancelled:
-            try:
-                cb_res = self.on_cancelled()
-                if asyncio.iscoroutine(cb_res):
-                    await cb_res
-            except Exception as cb_err:
-                log.warning(f"Error executing on_cancelled callback: {cb_err}")
+            async def run_cancel_callback() -> None:
+                try:
+                    cb_res = self.on_cancelled()
+                    if asyncio.iscoroutine(cb_res):
+                        await cb_res
+                except Exception as cb_err:
+                    log.warning(f"Error executing on_cancelled callback: {cb_err}")
+
+            asyncio.create_task(run_cancel_callback())
 
     async def on_timeout(self) -> None:
         """超時後自動停用取消按鈕。"""
         self.cancel_button.disabled = True
         self.stop()
-

@@ -102,7 +102,8 @@ async def test_ai_cancel_view_execution_and_task_cancellation():
     card: ZNCard = rendered_view.card
     assert "🛑 已取消回應" in card.title
     assert "Zero" in card.title
-    assert "已成功中斷本次 AI 推論與思考程序" in card.description
+    assert "已中斷本次 AI 工作" in card.description
+    assert "額度預約會釋放" in card.description
 
     # 驗證 on_cancelled 回呼有被執行
     on_cancelled_mock.assert_awaited_once()

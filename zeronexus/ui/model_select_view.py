@@ -6,7 +6,7 @@ the user's reference design with emojis, rich tags, and real-time per-model bala
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import discord
 
 from zeronexus.ai_gateway.quota_service import quota_service
@@ -22,18 +22,6 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
         "label": "Google Gemini 3.1 Flash Lite (系統預設・極速智慧)",
         "emoji": "💎",
         "tag": "系統預設・超低延遲・極致輕快聰敏",
-    },
-    {
-        "id": "qwen2.5-0.5b-instruct-q8_0",
-        "label": "Qwen 2.5 0.5B GGUF [8-bit/Q8_0 高精度] (本地自主運算)",
-        "emoji": "⚡",
-        "tag": "本地離線推論 [8-bit 高精度]・自適應 CPU・零雲端依賴",
-    },
-    {
-        "id": "qwen2.5-0.5b-instruct-q4_k_m",
-        "label": "Qwen 2.5 0.5B GGUF [4-bit/Q4_K_M 極速推薦] (本地低負載)",
-        "emoji": "🚀",
-        "tag": "本地離線推論 [4-bit 極速版]・賽揚/奔騰 CPU 推薦・推論速度倍增",
     },
     {
         "id": "deepseek/deepseek-v4-flash-vision-exp",
@@ -174,6 +162,18 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
 ]
 
 
+def format_model_user_labels(capabilities: Any, is_free: bool) -> str:
+    """Compact, user-facing capability/cost label for the model catalogue."""
+    caps = set(capabilities or {"text"})
+    labels = [label for key, label in (
+        ("text", "文字"),
+        ("vision", "圖片理解"),
+        ("reasoning", "推理"),
+        ("tools", "即時工具"),
+    ) if key in caps]
+    return f"{'、'.join(labels) or '一般文字'}｜{'免費' if is_free else '可能依供應商計費'}"
+
+
 class ModelSelectDropdown(discord.ui.Select):
     """Dropdown component populated with rich model options and dynamic quota descriptions."""
 
@@ -213,7 +213,11 @@ class ModelSelectDropdown(discord.ui.Select):
         if quota_info["is_dev"]:
             q_desc = "今日額度：無上限 (開發者特權)"
         else:
-            q_desc = f"今日該模型額度剩餘：`{quota_info['remaining']}/{quota_info['limit']}` 次"
+            q_desc = (
+                f"今日該模型已用 `{quota_info['used']}/{quota_info['limit']}` 次，"
+                f"剩餘 `{quota_info['remaining']}` 次"
+                + (f"（進行中 {quota_info['in_flight']} 次）" if quota_info.get("in_flight") else "")
+            )
         card.add_section("📊 模型額度資訊", q_desc)
 
         await InteractionResponder.safe_send(interaction, card=card, ephemeral=True)

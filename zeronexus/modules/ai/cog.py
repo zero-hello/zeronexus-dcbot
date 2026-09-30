@@ -43,6 +43,7 @@ from zeronexus.security.ratelimit import quota_service
 from zeronexus.ui.card import ZNCard, ZNResponse
 from zeronexus.ui.responder import InteractionResponder
 from zeronexus.ui.theme import ZNColor, ZNStatusPill
+from zeronexus.ui.model_select_view import format_model_user_labels
 
 if not hasattr(discord, "InteractionContextType"):
     class InteractionContextType:
@@ -64,7 +65,7 @@ class AIModule(BaseModule):
 
     async def initialize(self, bot: Any) -> None:
         commands_list = [
-            ("對話", "發起單次 AI 自然語言對話", ZNPermissionLevel.EVERYONE),
+            ("對話", "發起 AI 對話；可選擇本次不使用或保存記憶", ZNPermissionLevel.EVERYONE),
             ("對話摘要", "將近期 AI 對話整理成重點摘要", ZNPermissionLevel.EVERYONE),
             ("生圖", "運用 AI 生成高品質視覺影像或藝術插圖", ZNPermissionLevel.EVERYONE),
             ("切換模型", "切換個人或伺服器 AI 模型 (支援 DeepSeek、GPT、Claude、Gemini 等)", ZNPermissionLevel.EVERYONE),
@@ -250,6 +251,39 @@ async def switch_model_autocomplete(
     return choices[:25]
 
 
+def _format_ai_failure_help(error_text: str) -> str:
+    """Map common AI failures to user actions without exposing provider internals."""
+    lowered = (error_text or "").lower()
+    if any(token in lowered for token in ("額度已用罄", "quota", "rate limit", "429")):
+        return (
+            "本次 AI 請求受到使用額度或服務頻率限制，尚未完成回覆。\n\n"
+            "💡 **可以試試**：\n"
+            "• 使用 `/人工智慧 對話額度` 查看個人額度與每日重設時間\n"
+            "• 稍後再試，或切換到仍可使用的模型"
+        )
+    if any(token in lowered for token in ("權限", "permission", "forbidden", "403")):
+        return (
+            "目前帳號或伺服器設定不允許執行這項 AI 操作。\n\n"
+            "💡 **可以試試**：\n"
+            "• 確認自己有使用該功能的伺服器權限\n"
+            "• 若是管理功能，請聯絡伺服器管理員確認設定"
+        )
+    if any(token in lowered for token in ("timeout", "timed out", "逾時")):
+        return (
+            "AI 服務回應逾時，本次沒有取得完整答案。\n\n"
+            "💡 **可以試試**：\n"
+            "• 稍候片刻後重新送出\n"
+            "• 縮短問題或減少附件，再試一次"
+        )
+    return (
+        "AI 服務目前無法完成這次請求。\n\n"
+        "💡 **可以試試**：\n"
+        "• 稍候片刻後重新送出問題\n"
+        "• 使用 `/人工智慧 切換模型` 選擇其他可用模型\n"
+        "• 若問題持續，請通知伺服器管理員"
+    )
+
+
 class AICog(commands.Cog):
     """Discord Slash Command Group for /人工智慧."""
 
@@ -345,13 +379,18 @@ class AICog(commands.Cog):
                 ephemeral=True,
             )
     @ai_group.command(name="對話", description="與 ZeroNexus AI 進行深度智能諮詢與圖片視覺辨識")
-    @app_commands.describe(問題="想詢問或探討的問題", 圖片="可選，上傳欲由 AI 視覺辨識分析之圖片 (支援 PNG/JPG/WEBP/GIF)")
+    @app_commands.describe(
+        問題="想詢問或探討的問題",
+        圖片="可選，上傳欲由 AI 視覺辨識分析之圖片 (支援 PNG/JPG/WEBP/GIF)",
+        不使用記憶="本次不讀取或保存個人對話記憶",
+    )
     @command_guard("ai")
     async def ask_command(
         self,
         interaction: discord.Interaction,
         問題: str,
         圖片: Optional[discord.Attachment] = None,
+        不使用記憶: bool = False,
     ) -> None:
         image_quota_blocked = False
         image_quota_reservation = None
@@ -376,12 +415,37 @@ class AICog(commands.Cog):
         if not allowed:
             await InteractionResponder.safe_send(
                 interaction,
-                f"⏳ 您今日的 AI 免費對話額度已達到上限囉 (`{projected_used}/{effective_limit}` 次)。\n系統將於每日凌晨 00:00 (台灣時間 / UTC+8) 自動補充完畢，感謝您的支持與愛用！",
+                f"⏳ 您今日的 AI 對話額度已用完（`{projected_used}/{effective_limit}` 次，包含進行中的請求）。\n"
+                "對話與生圖額度分開計算；模型額度依實際回覆模型另行記錄。\n"
+                "請使用 `/人工智慧 對話額度` 查看明細；額度於每日凌晨 00:00（台灣時間）重設。",
                 ephemeral=True,
             )
             return
 
         await InteractionResponder.safe_defer(interaction)
+
+        from zeronexus.ui.views import AICancelView
+        active_task = asyncio.current_task()
+        cancel_view = AICancelView(
+            author_id=interaction.user.id,
+            author_name=interaction.user.display_name,
+            task=active_task,
+        )
+        async def on_cancelled() -> None:
+            if reservation:
+                await asyncio.shield(quota_service.release_quota(reservation))
+            if image_quota_reservation:
+                await asyncio.shield(quota_service.release_image_quota(image_quota_reservation))
+
+        cancel_view.on_cancelled = on_cancelled
+        try:
+            await interaction.followup.send(
+                "🧠 正在處理您的問題⋯⋯需要時可按下方按鈕取消。",
+                view=cancel_view,
+                ephemeral=True,
+            )
+        except Exception as status_error:
+            log.debug("AI cancel control unavailable for interaction %s: %s", interaction.id, type(status_error).__name__)
 
         # Process image attachment if provided
         images = None
@@ -534,13 +598,10 @@ class AICog(commands.Cog):
                     image_quota_blocked = True
                     tool_name = "ai_image_generation"
                     grounding_text = (
-                        f"\n\n【系統提示：AI 繪圖額度已達上限】：\n"
-                        f"使用者今日之 AI 生圖額度已達上限（每人每天最多生成 3 張，目前已使用 {img_used}/{img_limit} 張）。\n"
-                        f"請以您當前的人格語氣，親切、溫和且禮貌地告知使用者今日生圖額度已用完（每人每日 3 張限制），"
-                        f"並說明額度將於每日凌晨 00:00 (台灣時間 / UTC+8) 自動重設補充，歡迎使用者明日再來繪圖，或繼續與您進行文字暢聊！"
+                        f"生圖額度已用完（{img_used}/{img_limit} 張），本次不能生成圖片。"
+                        "額度每日凌晨 00:00（台灣時間）重設；一般文字對話仍可使用。"
                     )
                     tool_results[tool_name] = grounding_text
-                    system_instruction += grounding_text
                 else:
                     image_quota_reservation = img_resv
                     try:
@@ -641,6 +702,8 @@ class AICog(commands.Cog):
             tool_results=tool_results,
             is_shared_ai_channel=False,
             active_persona_key=persona_key,
+            include_short_term_history=not 不使用記憶,
+            include_long_term_memory=not 不使用記憶,
         )
 
         if tool_results:
@@ -734,6 +797,8 @@ class AICog(commands.Cog):
                 user_content=問題,
                 assistant_content=ai_res.text,
                 is_shared_ai_channel=False,
+                save_short_term=not 不使用記憶,
+                save_long_term=not 不使用記憶,
             )
 
             from zeronexus.ai_gateway.context_builder import (
@@ -795,18 +860,13 @@ class AICog(commands.Cog):
             ai_turn_success = True
 
         except Exception as ai_error:
-            log.warning(f"Slash AI turn failed (interaction={interaction.id}): {ai_error}")
+            error_text = str(ai_error)
+            log.warning(f"Slash AI turn failed (interaction={interaction.id}): {error_text}")
             if reservation:
                 await quota_service.release_quota(reservation)
             err_card = ZNCard(
                 title="AI 思考服務暫時忙碌中",
-                description=(
-                    "很抱歉，當前雲端 AI 推理模型節點反應較慢或正在進行線路維護，暫時未能順利生成回覆。\n\n"
-                    "💡 **您可以嘗試**：\n"
-                    "• 稍候約 10~30 秒後重新送出問題\n"
-                    "• 使用 `/人工智慧 切換模型` 切換至其他備援模型（如 DeepSeek 或 Gemini）\n"
-                    "• 簡化您的提問或縮減附加圖片大小後再次嘗試"
-                ),
+                description=_format_ai_failure_help(error_text),
                 status_pill=ZNStatusPill.WARNING,
                 color=ZNColor.WARNING,
             )
@@ -1018,7 +1078,7 @@ class AICog(commands.Cog):
             if quota_info["is_dev"]:
                 q_desc = "今日額度：無上限 (開發者特權)"
             else:
-                q_desc = f"今日該模型額度剩餘：`{quota_info['remaining']}/{quota_info['limit']}` 次"
+                q_desc = f"今日該模型已用 `{quota_info['used']}/{quota_info['limit']}` 次，剩餘 `{quota_info['remaining']}` 次"
             card.add_section("📊 模型額度資訊", q_desc)
         except Exception as q_err:
             log.warning(f"Failed to query per-model quota for {target_mid}: {q_err}")
@@ -1036,15 +1096,30 @@ class AICog(commands.Cog):
 
         card = ZNCard(
             title="ZeroNexus AI 支援模型目錄",
-            description="ZeroNexus 動態整合各大頂級旗艦與開源推理模型，您可透過自然語言、下方選單或 `/人工智慧 切換模型` 自由選擇：",
+            description="ZeroNexus 動態整合多家 AI 模型。以下標示常見能力與費用類型；實際可用性與收費依提供者、金鑰方案而異。可透過下方選單或 `/人工智慧 切換模型` 選擇：",
             status_pill=ZNStatusPill.AI,
             color=ZNColor.AI,
         )
         categories = model_catalog.list_categories()
+        from zeronexus.ai_gateway.model_registry import model_registry
+        listed_models = 0
         for cat_key, cat_name in categories.items():
             models = model_catalog.get_models_in_category(cat_key)
-            model_strs = [f"`{m['name']}`" for m in models[:4]]
-            card.add_section(f"💠 {cat_name}", "、".join(model_strs) if model_strs else "依供應商動態提供", inline=False)
+            model_lines = []
+            for item in models[:5]:
+                metadata = model_registry.get(item.get("id", ""))
+                caps = set(getattr(metadata, "capabilities", set()) or {"text"})
+                price = "免費" if item.get("is_free") or getattr(metadata, "is_free", False) else "可能依供應商計費"
+                purpose = format_model_user_labels(caps, price == "免費")
+                model_lines.append(f"• **{item.get('name', item.get('id'))}** — {purpose}")
+                listed_models += 1
+            card.add_section(f"💠 {cat_name}", "\n".join(model_lines) if model_lines else "依供應商動態提供", inline=False)
+        card.add_section(
+            "💡 如何選擇",
+            "一般問答可先選系統預設；附圖請選支援圖片理解的模型；需要即時查詢或工具操作時，請選支援即時工具的模型。模型額度按實際回覆模型記錄；供應商計費規則以其服務為準。",
+            inline=False,
+        )
+        card.add_section("📋 目錄範圍", f"依供應商目錄與本地註冊資料整理，這裡列出 {listed_models} 個代表模型；可用性會隨供應商狀態變動。", inline=False)
 
         await InteractionResponder.safe_defer(interaction)
         menu_view = await ModelSelectView.create(
@@ -1505,7 +1580,8 @@ class AICog(commands.Cog):
                 description=(
                     "ZeroNexus 目前尚未在個人空間為您記錄任何長期的個人事實記憶。\n\n"
                     "💡 **小秘訣**：\n"
-                    "在日常對話中，只要向 AI 提及您的偏好、暱稱或習慣（例如「請記住我喜歡用繁體中文回覆」），AI 就會為您自動記住喔！"
+                    "可在 `/人工智慧 對話` 勾選「不使用記憶」，讓本次對話不讀取或保存個人記憶。\n"
+                    "完整說明可使用 `/常見問題` 搜尋「記憶與隱私」。"
                 ),
                 status_pill=ZNStatusPill.INFO,
                 color=ZNColor.INFO,
@@ -1516,7 +1592,7 @@ class AICog(commands.Cog):
         lines = [f"`#{m.id}` **{m.fact_key or '備忘'}**：{m.content}" for m in memories[:15]]
         card = ZNCard(
             title=f"個人長期記憶庫 (共 {len(memories)} 筆)",
-            description="\n".join(lines),
+            description="\n".join(lines) + "\n\n單次停用記憶：`/人工智慧 對話` → 勾選「不使用記憶」。",
             status_pill=ZNStatusPill.AI,
             color=ZNColor.AI,
         )
@@ -1593,26 +1669,59 @@ class AICog(commands.Cog):
 
     async def _show_user_quota(self, interaction: discord.Interaction) -> None:
         """Shared implementation for /人工智慧 對話額度 and /人工智慧 額度查詢."""
-        await InteractionResponder.safe_defer(interaction, ephemeral=True)
+        if not await InteractionResponder.safe_defer(interaction, ephemeral=True):
+            return
         # Strictly uses quota_service (Asia/Taipei UTC+8 and handles in-flight)
-        q_info = await quota_service.get_user_quota_info(interaction.user.id, guild_id=interaction.guild_id)
+        try:
+            q_info = await quota_service.get_user_quota_info(interaction.user.id, guild_id=interaction.guild_id)
+        except Exception as exc:
+            log.warning("Unable to read AI quota information: %s", type(exc).__name__)
+            await InteractionResponder.safe_send(
+                interaction,
+                "目前無法讀取 AI 額度資料，為避免顯示錯誤資訊，請稍後再查詢。",
+                ephemeral=True,
+            )
+            return
+
         used = q_info["used"]
         limit = q_info["limit"]
         is_dev = q_info["is_dev"]
         remaining_str = "無限 (開發者)" if is_dev else f"{q_info['remaining']} 次"
         reset_time_str = q_info.get("reset_time", "每日凌晨 00:00 (台灣時間 / UTC+8)")
+        from zeronexus.ai_gateway.gateway import ai_gateway
+        route = ai_gateway.get_last_route(interaction.user.id)
+        route_note = (
+            f"🔀 **上次實際路由**：`{route['provider']} / {route['model']}`（原選擇：`{route['requested_model']}`）\n"
+            if route else ""
+        )
 
         # Query image generation quota (Max 3 / day)
-        img_q_info = await quota_service.get_user_image_quota_info(interaction.user.id)
+        try:
+            img_q_info = await quota_service.get_user_image_quota_info(interaction.user.id)
+        except Exception as exc:
+            log.warning("Unable to read AI image quota information: %s", type(exc).__name__)
+            await InteractionResponder.safe_send(
+                interaction,
+                "目前無法讀取生圖額度資料，請稍後再查詢。",
+                ephemeral=True,
+            )
+            return
         img_used = img_q_info["used"]
         img_limit = img_q_info["limit"]
         img_rem_str = "無限 (開發者)" if is_dev else f"{img_q_info['remaining']} 張"
 
+        flight_note = (
+            f"（已完成 {q_info.get('persisted_used', used)} 次；進行中 {q_info.get('in_flight', 0)} 次）\n"
+            if q_info.get("in_flight") else ""
+        )
         desc = (
             f"👤 **查詢使用者**：{interaction.user.mention}\n"
             f"📊 **今日已使用次數**：`{used} / {limit}` 次\n"
+            f"{flight_note}"
             f"✨ **剩餘可用額度**：`{remaining_str}`\n"
-            f"🎨 **今日生圖次數**：`{img_used} / {img_limit}` 張（剩餘 {img_rem_str}）\n"
+            f"🎨 **今日生圖次數**：`{img_used} / {img_limit}` 張（剩餘 {img_rem_str}；成功生成才計次）\n"
+            f"{route_note}"
+            f"ℹ️ 對話與生圖額度分開計算；模型切換時依實際回覆模型記錄模型額度。\n"
             f"🕒 **重設時間**：{reset_time_str}"
         )
         card = ZNCard(

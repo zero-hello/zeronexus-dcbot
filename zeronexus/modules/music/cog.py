@@ -58,6 +58,8 @@ class MusicModule(BaseModule):
             ("跳過", "跳過當前歌曲並播放下一首", ZNPermissionLevel.EVERYONE),
             ("上一首", "重頭播放當前曲目", ZNPermissionLevel.EVERYONE),
             ("隊列", "檢視當前待播音樂隊列清單", ZNPermissionLevel.EVERYONE),
+            ("移除隊列", "移除待播隊列中指定位置歌曲", ZNPermissionLevel.EVERYONE),
+            ("清空隊列", "清空待播歌曲但保留目前播放", ZNPermissionLevel.EVERYONE),
             ("音量", "調整音樂播放音量 (0% ~ 300%)", ZNPermissionLevel.EVERYONE),
             ("音高", "調整音樂音高濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
             ("重低音", "調整重低音強化濾鏡 (0% ~ 100%)", ZNPermissionLevel.EVERYONE),
@@ -322,6 +324,21 @@ class MusicCog(commands.Cog):
                 self._cancel_afk_timer(guild_id)
 
         return player
+
+    @staticmethod
+    async def _ensure_same_voice_channel(interaction: discord.Interaction, player: wavelink.Player) -> bool:
+        if interaction.guild is None or interaction.guild.voice_client is not player:
+            await InteractionResponder.safe_send(interaction, "此音樂播放器不屬於目前伺服器，請重新開啟音樂指令。", ephemeral=True)
+            return False
+        voice = getattr(interaction.user, "voice", None)
+        player_channel = getattr(player, "channel", None)
+        if not voice or not voice.channel:
+            await InteractionResponder.safe_send(interaction, "請先加入 Bot 正在播放的語音頻道，再操作音樂。", ephemeral=True)
+            return False
+        if not player_channel or voice.channel.id != player_channel.id:
+            await InteractionResponder.safe_send(interaction, "請加入 Bot 目前所在的語音頻道後再操作。", ephemeral=True)
+            return False
+        return True
 
     # --------------------------------------------------------------------------
     # 輔助函式：多節點容錯安全搜尋 (防禦 Cloudflare 524 與逾時)
@@ -667,6 +684,8 @@ class MusicCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "⚠️ 音樂已經處於暫停狀態囉！", ephemeral=True)
             return
 
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
         await player.pause(True)
         await InteractionResponder.safe_send(interaction, "⏸️ 音樂已暫停播放。")
 
@@ -681,6 +700,8 @@ class MusicCog(commands.Cog):
             await InteractionResponder.safe_send(interaction, "❌ 目前沒有被暫停的音樂。", ephemeral=True)
             return
 
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
         await player.pause(False)
         await InteractionResponder.safe_send(interaction, "▶️ 音樂已繼續播放。")
 
@@ -693,6 +714,8 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player:
             await InteractionResponder.safe_send(interaction, "❌ 機器人目前未在語音頻道內。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
             return
 
         guild_id = interaction.guild_id or 0
@@ -743,6 +766,8 @@ class MusicCog(commands.Cog):
         if not player or not player.playing:
             await InteractionResponder.safe_send(interaction, "❌ 目前沒有正在播放的音樂可跳過。", ephemeral=True)
             return
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
 
         await player.skip(force=True)
         await InteractionResponder.safe_send(interaction, "⏭️ 已跳過當前歌曲。")
@@ -757,6 +782,8 @@ class MusicCog(commands.Cog):
         if not player or not player.playing:
             await InteractionResponder.safe_send(interaction, "❌ 目前沒有正在播放的音樂。", ephemeral=True)
             return
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
 
         await player.seek(0)
         await InteractionResponder.safe_send(interaction, "⏮️ 已重頭開始播放當前曲目。")
@@ -770,6 +797,8 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player:
             await InteractionResponder.safe_send(interaction, "❌ 機器人目前未在語音頻道內。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
             return
 
         curr = player.current
@@ -802,6 +831,47 @@ class MusicCog(commands.Cog):
         )
         await InteractionResponder.safe_send(interaction, card=card)
 
+    @music_group.command(name="移除隊列", description="移除待播清單中指定位置的歌曲（不影響目前播放）")
+    @app_commands.describe(位置="隊列中的歌曲位置，從 1 開始；使用 /音樂 隊列查看")
+    @command_guard("music", required_level=ZNPermissionLevel.EVERYONE)
+    async def queue_remove_command(self, interaction: discord.Interaction, 位置: app_commands.Range[int, 1, 500]) -> None:
+        player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
+        if not player:
+            await InteractionResponder.safe_send(interaction, "Bot 目前不在語音頻道中。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
+        queue = player.queue
+        if 位置 > len(queue) or 位置 > 100:
+            await InteractionResponder.safe_send(interaction, f"隊列目前只有 {len(queue)} 首，請先使用 `/音樂 隊列` 查看位置。", ephemeral=True)
+            return
+        tracks = list(queue)
+        track = tracks[位置 - 1]
+        kept = tracks[:位置 - 1] + tracks[位置:]
+        queue.clear()
+        for kept_track in kept:
+            await queue.put_wait(kept_track)
+        await InteractionResponder.safe_send(interaction, f"已從待播隊列移除第 {位置} 首：**{track.title}**。", ephemeral=True)
+        dashboard = self._dashboards.get(interaction.guild_id or 0)
+        if dashboard:
+            await dashboard.refresh_dashboard()
+
+    @music_group.command(name="清空隊列", description="清除待播歌曲，不停止目前播放中的歌曲")
+    @command_guard("music", required_level=ZNPermissionLevel.EVERYONE)
+    async def queue_clear_command(self, interaction: discord.Interaction) -> None:
+        player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
+        if not player:
+            await InteractionResponder.safe_send(interaction, "Bot 目前不在語音頻道中。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
+        removed = len(player.queue)
+        player.queue.clear()
+        await InteractionResponder.safe_send(interaction, f"已清空 {removed} 首待播歌曲；目前歌曲會繼續播放。", ephemeral=True)
+        dashboard = self._dashboards.get(interaction.guild_id or 0)
+        if dashboard:
+            await dashboard.refresh_dashboard()
+
     # --------------------------------------------------------------------------
     # 8. 音量指令 /音樂 音量
     # --------------------------------------------------------------------------
@@ -815,13 +885,14 @@ class MusicCog(commands.Cog):
             return
 
         guild_id = interaction.guild_id or 0
-        self.node_manager.set_guild_volume(guild_id, 數值)
-
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if player:
+            if not await self._ensure_same_voice_channel(interaction, player):
+                return
             await player.set_volume(數值)
             if guild_id in self._dashboards:
                 await self._dashboards[guild_id].refresh_dashboard()
+        self.node_manager.set_guild_volume(guild_id, 數值)
 
         card = ZNCard(
             title="🔊 音量已調整",
@@ -845,6 +916,8 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player or not player.playing:
             await InteractionResponder.safe_send(interaction, "❌ 目前沒有正在播放的音樂可套用濾鏡。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
             return
 
         factor = await MusicFilters.apply_pitch(player, 數值)
@@ -871,6 +944,8 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player or not player.playing:
             await InteractionResponder.safe_send(interaction, "❌ 目前沒有正在播放的音樂可套用濾鏡。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
             return
 
         gain = await MusicFilters.apply_bassboost(player, 數值)
@@ -903,6 +978,8 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player or not player.connected:
             await InteractionResponder.safe_send(interaction, "❌ 目前播放器未連線至語音頻道。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
             return
 
         current_is_hifi = getattr(player, "_hifi_enabled", True)
@@ -950,6 +1027,8 @@ class MusicCog(commands.Cog):
         if not player or not player.connected:
             await InteractionResponder.safe_send(interaction, "❌ 目前播放器未連線至語音頻道。", ephemeral=True)
             return
+        if not await self._ensure_same_voice_channel(interaction, player):
+            return
 
         actual_speed = await MusicFilters.apply_speed(player, 倍率)
         speed_str = f"{actual_speed:.2f}".rstrip("0").rstrip(".") if actual_speed != int(actual_speed) else f"{int(actual_speed)}"
@@ -986,6 +1065,8 @@ class MusicCog(commands.Cog):
         player: Optional[wavelink.Player] = getattr(interaction.guild, "voice_client", None)
         if not player or not player.connected:
             await InteractionResponder.safe_send(interaction, "❌ 目前播放器未連線至語音頻道。", ephemeral=True)
+            return
+        if not await self._ensure_same_voice_channel(interaction, player):
             return
 
         player.autoplay = wavelink.AutoPlayMode.partial
