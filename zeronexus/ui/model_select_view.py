@@ -12,6 +12,7 @@ import discord
 from zeronexus.ai_gateway.quota_service import quota_service
 from zeronexus.ai_gateway.model_switch_service import model_switch_service
 from zeronexus.core.config import config
+from zeronexus.security.permissions import PermissionEngine, ZNPermissionLevel
 from zeronexus.ui.responder import InteractionResponder
 
 
@@ -213,6 +214,18 @@ class ModelSelectDropdown(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         """Handles selection of a model and applies the switch."""
+        if interaction.user.id != self.user_id:
+            await InteractionResponder.safe_send(interaction, "這份模型選單只供原開啟者使用。", ephemeral=True)
+            return
+        if self.is_server:
+            if (
+                interaction.guild is None
+                or interaction.guild_id != self.guild_id
+                or PermissionEngine.resolve_level(interaction.user, interaction.guild).value
+                < ZNPermissionLevel.ADMINISTRATOR.value
+            ):
+                await InteractionResponder.safe_send(interaction, "變更伺服器模型需要目前的管理員權限。", ephemeral=True)
+                return
         selected_model_id = self.values[0]
         await InteractionResponder.safe_defer(interaction, ephemeral=True)
 

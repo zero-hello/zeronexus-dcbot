@@ -39,6 +39,8 @@ from zeronexus.models.guild import GuildSettings
 from zeronexus.models.user import AIQuotaRecord, EconomyWallet, UserProfile
 from zeronexus.security.ssrf import validate_safe_host
 
+_REGEX_EXEC_SLOTS = asyncio.Semaphore(4)
+
 
 def get_all_tool_specs() -> List[Dict[str, Any]]:
     """Returns the specifications and handlers for all 130+ tools across 12 domains."""
@@ -1992,18 +1994,51 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
         "handler": h_json_validator_formatter,
     })
 
-    async def h_regex_match_test(pattern: str, text: str, **kwargs: Any) -> Dict[str, Any]:
+    async def _bounded_regex(operation: str, pattern: str, text: str, replacement: str = "") -> Dict[str, Any]:
+        if any(not isinstance(value, str) for value in (pattern, text, replacement)):
+            return {"error": "正則參數必須為文字。"}
+        if len(pattern) > 512 or len(text) > 4096 or len(replacement) > 1024:
+            return {"error": "正則樣式或測試文字超過安全長度上限。"}
+        script = (
+            "import json,re,sys\n"
+            "p=json.load(sys.stdin); c=re.compile(p['pattern'])\n"
+            "if p['operation']=='match':\n"
+            " m=c.findall(p['text']); result={'pattern':p['pattern'],'is_matched':bool(m),'match_count':len(m),'matches':m[:20]}\n"
+            "else:\n"
+            " result={'original':p['text'],'replaced':c.sub(p['replacement'],p['text'])}\n"
+            "json.dump(result,sys.stdout,ensure_ascii=False)\n"
+        )
         try:
-            compiled = re.compile(pattern)
-            matches = compiled.findall(text)
-            return {
-                "pattern": pattern,
-                "is_matched": len(matches) > 0,
-                "match_count": len(matches),
-                "matches": matches[:20],
-            }
-        except Exception as e:
-            return {"error": f"正則表達式錯誤: {e}"}
+            await asyncio.wait_for(_REGEX_EXEC_SLOTS.acquire(), timeout=0.05)
+        except asyncio.TimeoutError:
+            return {"error": "正則測試服務目前忙碌，請稍後重試。"}
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-I", "-c", script,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            payload = json.dumps({"operation": operation, "pattern": pattern, "text": text, "replacement": replacement}).encode()
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(payload), timeout=1.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                return {"error": "正則表達式執行逾時。"}
+            except asyncio.CancelledError:
+                proc.kill()
+                await proc.communicate()
+                raise
+            if proc.returncode != 0:
+                return {"error": f"正則表達式錯誤: {err.decode(errors='replace')[-250:]}"}
+            return json.loads(out)
+        finally:
+            _REGEX_EXEC_SLOTS.release()
+
+    async def h_regex_match_test(pattern: str, text: str, **kwargs: Any) -> Dict[str, Any]:
+        return await _bounded_regex("match", pattern, text)
 
     specs.append({
         "name": "regex_match_test",
@@ -2022,12 +2057,7 @@ def get_all_tool_specs() -> List[Dict[str, Any]]:
     })
 
     async def h_regex_replace_test(pattern: str, replacement: str, text: str, **kwargs: Any) -> Dict[str, Any]:
-        try:
-            compiled = re.compile(pattern)
-            replaced = compiled.sub(replacement, text)
-            return {"original": text, "replaced": replaced}
-        except Exception as e:
-            return {"error": f"正則取代失敗: {e}"}
+        return await _bounded_regex("replace", pattern, text, replacement)
 
     specs.append({
         "name": "regex_replace_test",

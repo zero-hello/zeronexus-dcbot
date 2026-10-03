@@ -227,7 +227,10 @@ def get_discord_read_tool_specs() -> List[Dict[str, Any]]:
         access_error = channel_inspector.authorize_channel_access(target, user, guild)
         if access_error:
             return _error(access_error)
-        threads = list(getattr(target, "threads", []) or [])
+        threads = [
+            thread for thread in (getattr(target, "threads", []) or [])
+            if channel_inspector.authorize_channel_access(thread, user, guild) is None
+        ]
         return {"channel_name": target.name, "count": len(threads), "threads": [{"id": t.id, "name": t.name, "archived": bool(getattr(t, "archived", False)), "message_count": getattr(t, "message_count", None)} for t in threads[:50]]}
 
     async def h_list_emojis(guild: Any = None, user: Any = None, **_: Any) -> Dict[str, Any]:

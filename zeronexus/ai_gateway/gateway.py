@@ -258,6 +258,10 @@ class AIGateway:
                     log.info("AI tool intent routed from %s to tool-capable provider %s", primary, capable[0])
                     primary = capable[0]
                     clean_override = None
+                    if allow_fallback:
+                        fallback_chain = [primary] + [p for p in fallback_chain if p != primary]
+                    else:
+                        fallback_chain = [primary]
                 elif force_tool_intent:
                     raise RuntimeError("此問題需要即時工具，但目前沒有可用的 Gemini/OpenRouter/OpenAI Responses Function Calling 金鑰。")
                 else:

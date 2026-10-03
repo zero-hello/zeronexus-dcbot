@@ -86,7 +86,6 @@ class QuotaService:
         self._active_model_reservations: Dict[str, QuotaReservation] = {}
         # (user_id, date_str, threshold) -> bool
         self._reminded_thresholds: Dict[Tuple[int, str, int], bool] = {}
-        self._admin_reset_generation: Dict[int, int] = defaultdict(int)
 
     def _get_user_lock(self, user_id: int) -> asyncio.Lock:
         """取得使用者鎖，並在字典無界膨脹時回收無活躍預約之鎖（防長期運行記憶體洩漏）。"""
@@ -96,7 +95,10 @@ class QuotaService:
             active_user_ids.update(r.user_id for r in self._active_model_reservations.values())
             self._user_locks = defaultdict(
                 asyncio.Lock,
-                {uid: lk for uid, lk in self._user_locks.items() if uid in active_user_ids},
+                {
+                    uid: lk for uid, lk in self._user_locks.items()
+                    if uid in active_user_ids or lk.locked() or getattr(lk, "_waiters", None)
+                },
             )
         return self._user_locks[user_id]
 
@@ -195,7 +197,6 @@ class QuotaService:
                 is_dev=is_dev,
                 projected_used=projected,
             )
-            reservation.reset_generation = self._admin_reset_generation[user_id]
             self._active_reservations[res_id] = reservation
             return True, reservation, projected, effective_limit
 
@@ -203,11 +204,6 @@ class QuotaService:
         """Commits the reserved quota into the database upon successful response completion."""
         async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
-                return
-            if getattr(reservation, "reset_generation", 0) != self._admin_reset_generation[reservation.user_id]:
-                reservation.released = True
-                self._active_reservations.pop(reservation.reservation_id, None)
-                self._in_flight[reservation.user_id] = max(0, self._in_flight[reservation.user_id] - 1)
                 return
             if reservation.date_str != self.get_today_str():
                 reservation.released = True
@@ -314,7 +310,6 @@ class QuotaService:
         """Resets the quota usage for a specific user for today (or specified date)."""
         target_date = date_str or self.get_today_str()
         async with self._get_user_lock(user_id):
-            self._admin_reset_generation[user_id] += 1
             for reservation in list(self._active_reservations.values()):
                 if reservation.user_id == user_id and reservation.date_str == target_date:
                     reservation.released = True
@@ -430,7 +425,6 @@ class QuotaService:
                 is_dev=is_dev,
                 projected_used=projected,
             )
-            reservation.reset_generation = self._admin_reset_generation[user_id]
             self._active_image_reservations[res_id] = reservation
             return True, reservation, projected, effective_limit
 
@@ -438,11 +432,6 @@ class QuotaService:
         """Commits the reserved image quota into the database upon successful image generation."""
         async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
-                return
-            if getattr(reservation, "reset_generation", 0) != self._admin_reset_generation[reservation.user_id]:
-                reservation.released = True
-                self._active_image_reservations.pop(reservation.reservation_id, None)
-                self._image_in_flight[reservation.user_id] = max(0, self._image_in_flight[reservation.user_id] - 1)
                 return
             if reservation.date_str != self.get_today_str():
                 reservation.released = True
@@ -523,7 +512,6 @@ class QuotaService:
         """Resets the image quota usage for a specific user for today (or specified date)."""
         target_date = date_str or self.get_today_str()
         async with self._get_user_lock(user_id):
-            self._admin_reset_generation[user_id] += 1
             for reservation in list(self._active_image_reservations.values()):
                 if reservation.user_id == user_id and reservation.date_str == target_date:
                     reservation.released = True
@@ -769,7 +757,6 @@ class QuotaService:
             )
             # Store model_id on reservation
             reservation.model_id = model_id
-            reservation.reset_generation = self._admin_reset_generation[user_id]
             self._active_model_reservations[res_id] = reservation
             return True, reservation, projected, effective_limit
 
@@ -779,13 +766,6 @@ class QuotaService:
         flight_key: Tuple[int, str] = (reservation.user_id, model_id)
         async with self._get_user_lock(reservation.user_id):
             if reservation.committed or reservation.released:
-                return
-            if getattr(reservation, "reset_generation", 0) != self._admin_reset_generation[reservation.user_id]:
-                reservation.released = True
-                self._active_model_reservations.pop(reservation.reservation_id, None)
-                self._model_in_flight[flight_key] = max(0, self._model_in_flight[flight_key] - 1)
-                if self._model_in_flight[flight_key] == 0:
-                    self._model_in_flight.pop(flight_key, None)
                 return
             if reservation.date_str != self.get_today_str():
                 reservation.released = True
@@ -873,7 +853,6 @@ class QuotaService:
         """Invalidate in-flight model reservations and clear persisted model usage for a user/date."""
         target_date = date_str or self.get_today_str()
         async with self._get_user_lock(user_id):
-            self._admin_reset_generation[user_id] += 1
             for reservation in list(self._active_model_reservations.values()):
                 if reservation.user_id == user_id and reservation.date_str == target_date:
                     reservation.released = True

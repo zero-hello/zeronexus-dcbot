@@ -153,18 +153,26 @@ class DatabaseManager:
     async def close(self) -> None:
         """Disposes of the connection pool and resets state."""
         if self.engine:
+            cancelled = False
+            disp_task = asyncio.create_task(self.engine.dispose())
             try:
-                disp_task = asyncio.create_task(self.engine.dispose())
-                try:
-                    await asyncio.shield(disp_task)
-                except asyncio.CancelledError:
-                    await disp_task
+                # A cancelled shutdown must still drain disposal. Repeated cancellation
+                # must not propagate into the task that owns the pool cleanup.
+                while not disp_task.done():
+                    try:
+                        await asyncio.shield(disp_task)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                disp_task.result()
             except Exception as e:
                 log.warning(f"Error disposing database engine: {e}")
-            self.engine = None
-            self.session_factory = None
-            self._is_initialized = False
-            log.info("Database connection pool disposed.")
+            finally:
+                self.engine = None
+                self.session_factory = None
+                self._is_initialized = False
+                log.info("Database connection pool disposed.")
+            if cancelled:
+                raise asyncio.CancelledError
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:

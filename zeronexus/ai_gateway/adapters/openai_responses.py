@@ -80,11 +80,18 @@ class OpenAIResponsesAdapter(BaseAIAdapter):
             if not isinstance(item, dict) or item.get("type") != "message":
                 continue
             for part in item.get("content", []) or []:
-                if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
-                    text = part.get("text")
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") in ("output_text", "text", "refusal"):
+                    text = part.get("text") or part.get("refusal")
                     if isinstance(text, str):
                         chunks.append(text)
         return "\n".join(chunks)
+
+    @staticmethod
+    def _supports_temperature(model: str) -> bool:
+        normalized = model.removeprefix("openai/").lower()
+        return not normalized.startswith(("o1", "o3", "o4")) and "reasoning" not in normalized
 
     async def generate(
         self,
@@ -146,7 +153,7 @@ class OpenAIResponsesAdapter(BaseAIAdapter):
             if response_tools:
                 payload["tools"] = response_tools
                 payload["tool_choice"] = "auto"
-            if "temperature" in kwargs or temperature is not None:
+            if temperature is not None and self._supports_temperature(model):
                 payload["temperature"] = temperature
 
             response = await client.post(endpoint, headers=headers, json=payload, timeout=timeout)
@@ -154,10 +161,22 @@ class OpenAIResponsesAdapter(BaseAIAdapter):
                 detail = redact_secrets(response.text[:500])
                 raise RuntimeError(f"OpenAI Responses API HTTP {response.status_code}: {detail}")
             final_data = response.json()
-            usage = final_data.get("usage") or usage
+            status = final_data.get("status")
+            if status is not None and status != "completed":
+                details = final_data.get("incomplete_details") or final_data.get("error") or {}
+                raise RuntimeError(f"OpenAI Responses API 回應未完成 ({status}): {redact_secrets(str(details)[:300])}")
+            round_usage = final_data.get("usage") or {}
+            usage = {
+                "input_tokens": int(usage.get("input_tokens", 0) or 0) + int(round_usage.get("input_tokens", 0) or 0),
+                "output_tokens": int(usage.get("output_tokens", 0) or 0) + int(round_usage.get("output_tokens", 0) or 0),
+            }
             calls = [item for item in (final_data.get("output") or []) if isinstance(item, dict) and item.get("type") == "function_call"]
-            if not calls or not tool_executor or rounds >= max(0, max_tool_rounds):
+            if not calls:
                 break
+            if not tool_executor:
+                raise RuntimeError("Responses API 要求執行 Function Calling，但目前沒有安全的工具執行器。")
+            if rounds >= max(0, max_tool_rounds):
+                raise RuntimeError("Responses API Function Calling 已達最大工具回合數，未取得最終回答。")
 
             rounds += 1
             input_items.extend(final_data.get("output") or calls)

@@ -160,6 +160,15 @@ class ChannelInspectorEngine:
             return "您沒有查看此頻道的權限，無法讀取或分析其中內容。"
         if not getattr(requester_perms, "read_message_history", False):
             return "您缺少讀取此頻道訊息歷史的權限，無法讀取或分析其中內容。"
+        # Thread.permissions_for only computes parent-channel permissions; it
+        # does not account for membership in a private thread.
+        if getattr(channel, "type", None) == discord.ChannelType.private_thread:
+            if not getattr(requester_perms, "manage_threads", False):
+                requester_id = getattr(requester_member, "id", None)
+                get_member = getattr(channel, "get_member", None)
+                thread_member = get_member(requester_id) if callable(get_member) else None
+                if thread_member is None or getattr(thread_member, "id", None) != requester_id:
+                    return "無法確認您是此私密討論串的成員，已拒絕讀取。"
         return None
 
     async def fetch_channel_messages(
