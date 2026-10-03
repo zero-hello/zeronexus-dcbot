@@ -11,6 +11,7 @@ import discord
 
 from zeronexus.ai_gateway.quota_service import quota_service
 from zeronexus.ai_gateway.model_switch_service import model_switch_service
+from zeronexus.core.config import config
 from zeronexus.ui.responder import InteractionResponder
 
 
@@ -162,6 +163,21 @@ MODEL_SELECT_ENTRIES: List[Dict[str, str]] = [
 ]
 
 
+def get_model_select_entries() -> List[Dict[str, str]]:
+    """Return curated choices plus the configured OpenAI-compatible relay model."""
+    entries = [dict(entry) for entry in MODEL_SELECT_ENTRIES]
+    if config.ai.openai_keys:
+        model_id = f"openai/{config.ai.openai_model}"
+        if not any(entry["id"] == model_id for entry in entries):
+            entries.append({
+                "id": model_id,
+                "label": f"OpenAI 中轉站 · {config.ai.openai_model}",
+                "emoji": "🔌",
+                "tag": "Responses API・圖片理解・Function Calling",
+            })
+    return entries
+
+
 def format_model_user_labels(capabilities: Any, is_free: bool) -> str:
     """Compact, user-facing capability/cost label for the model catalogue."""
     caps = set(capabilities or {"text"})
@@ -241,7 +257,7 @@ class ModelSelectView(discord.ui.View):
         view = cls()
         options: List[discord.SelectOption] = []
 
-        for entry in MODEL_SELECT_ENTRIES:
+        for entry in get_model_select_entries():
             desc = await quota_service.format_model_quota_desc(
                 user_id=user_id,
                 model_id=entry["id"],

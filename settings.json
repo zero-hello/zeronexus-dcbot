@@ -1,7 +1,7 @@
 {
   "platform_name": "ZeroNexus",
   "codename": "ZN",
-  "version": "3.1.0",
+  "version": "3.1.2",
   "owner_id": "1514971711739789352",
   "default_prefix": "zn!",
   "default_locale": "zh-TW",
@@ -16,7 +16,8 @@
       "mistral",
       "cohere",
       "manus",
-      "huggingface"
+      "huggingface",
+      "openai"
     ],
     "fallback_providers": [
       "gemini",
@@ -26,7 +27,8 @@
       "openrouter",
       "cohere",
       "manus",
-      "huggingface"
+      "huggingface",
+      "openai"
     ],
     "daily_limit_per_user": 80,
     "short_term_memory_limit": 400,

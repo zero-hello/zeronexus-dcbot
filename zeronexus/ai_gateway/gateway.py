@@ -24,6 +24,7 @@ from zeronexus.ai_gateway.adapters.manus import ManusAdapter
 from zeronexus.ai_gateway.adapters.cohere import CohereAdapter
 from zeronexus.ai_gateway.adapters.mistral import MistralAdapter
 from zeronexus.ai_gateway.adapters.groq import GroqAdapter
+from zeronexus.ai_gateway.adapters.openai_responses import OpenAIResponsesAdapter
 from zeronexus.ai_gateway.adapters.openrouter import (
     OPENROUTER_STRICT_FREE_MODELS,
     OpenRouterAdapter,
@@ -50,6 +51,7 @@ class AIGateway:
             "cohere": CohereAdapter(),
             "mistral": MistralAdapter(),
             "groq": GroqAdapter(),
+            "openai": OpenAIResponsesAdapter(),
         }
 
         hf_keys = getattr(config.ai, "huggingface_keys", None) or ([config.ai.huggingface_token] if config.ai.huggingface_token else [])
@@ -66,7 +68,9 @@ class AIGateway:
             "cohere": ProviderKeyPool("cohere", cohere_keys),
             "mistral": ProviderKeyPool("mistral", mistral_keys),
             "groq": ProviderKeyPool("groq", groq_keys),
+            "openai": ProviderKeyPool("openai", config.ai.openai_keys),
         }
+        model_registry.register_configured_openai_model()
         self._last_route_by_user: Dict[int, Dict[str, str]] = {}
 
     async def generate_response(
@@ -176,6 +180,8 @@ class AIGateway:
                 clean_override = meta.model_id
             elif clean_override.lower().startswith("huggingface/"):
                 primary = "huggingface"
+            elif clean_override.lower().startswith("openai/"):
+                primary = "openai"
             elif "/" in clean_override:
                 primary = "openrouter"
             elif "gemini" in clean_override.lower():
@@ -215,7 +221,7 @@ class AIGateway:
                             clean_override = f"deepseek/{clean_override}"
 
             configured_fallbacks = getattr(config.ai, "fallback_providers", None) or [
-                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface", "openai"
             ]
             base_chain = [p for p in configured_fallbacks if p in self.key_pools and self.key_pools[p].has_active_keys]
             if not base_chain:
@@ -226,7 +232,7 @@ class AIGateway:
                 fallback_chain = [primary] + [p for p in base_chain if p != primary]
         elif images:
             configured_fallbacks = getattr(config.ai, "fallback_providers", None) or [
-                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface", "openai"
             ]
             base_chain = [p for p in configured_fallbacks if p in self.key_pools and self.key_pools[p].has_active_keys]
             if not base_chain:
@@ -235,25 +241,25 @@ class AIGateway:
             fallback_chain = [p for p in vision_chain if p in base_chain] + [p for p in base_chain if p not in vision_chain]
         else:
             configured_fallbacks = getattr(config.ai, "fallback_providers", None) or [
-                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+                "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface", "openai"
             ]
             fallback_chain = [p for p in configured_fallbacks if p in self.key_pools and self.key_pools[p].has_active_keys]
             if not fallback_chain:
                 fallback_chain = [p for p in configured_fallbacks if p in self.key_pools]
 
-        tool_capable_providers = {"gemini", "openrouter"}
+        tool_capable_providers = {"gemini", "openrouter", "openai"}
         if allow_tools and projected_tools:
-            # Function calling is currently implemented for Gemini and OpenRouter.
+            # Function calling is implemented for Gemini, OpenRouter, and OpenAI Responses.
             # Route tool-requiring prompts to a capable provider rather than silently
             # asking a text-only adapter to hallucinate live results.
             if primary and primary not in tool_capable_providers:
-                capable = [p for p in ("gemini", "openrouter") if self.key_pools[p].has_active_keys]
+                capable = [p for p in ("gemini", "openrouter", "openai") if self.key_pools[p].has_active_keys]
                 if capable:
                     log.info("AI tool intent routed from %s to tool-capable provider %s", primary, capable[0])
                     primary = capable[0]
                     clean_override = None
                 elif force_tool_intent:
-                    raise RuntimeError("此問題需要即時工具，但目前沒有可用的 Gemini/OpenRouter Function Calling 金鑰。")
+                    raise RuntimeError("此問題需要即時工具，但目前沒有可用的 Gemini/OpenRouter/OpenAI Responses Function Calling 金鑰。")
                 else:
                     projected_tools = []
             if not primary and fallback_chain:
@@ -628,6 +634,8 @@ class AIGateway:
             return config.ai.deepseek_model
         if provider == "openrouter":
             return config.ai.openrouter_model
+        if provider == "openai":
+            return getattr(config.ai, "openai_model", "gpt-4.1-mini")
         if provider == "huggingface":
             return config.ai.huggingface_model
         return getattr(config.ai, "normal_text_model", config.ai.gemini_model)

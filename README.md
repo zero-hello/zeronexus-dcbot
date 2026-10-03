@@ -6,12 +6,12 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%20%7C%203.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Discord.py 2.5+](https://img.shields.io/badge/Discord.py-2.5%2B-5865F2?logo=discord&logoColor=white)](https://discordpy.readthedocs.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Async%20Event--Driven-blueviolet)](#-系統架構)
-[![AI Gateway](https://img.shields.io/badge/AI%20Gateway-Gemini%20%7C%20DeepSeek%20%7C%20Qwen-FF6F00)](#-三階模型智慧閘道)
-[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](CHANGELOG.md)
+[![AI Gateway](https://img.shields.io/badge/AI%20Gateway-Gemini%20%7C%20DeepSeek%20%7C%20OpenAI%20Responses-FF6F00)](#-三階模型智慧閘道)
+[![Version](https://img.shields.io/badge/version-3.1.2-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Terms of Service](https://img.shields.io/badge/Terms%20of%20Service-TOS-blue)](TERMS_OF_SERVICE.md)
 [![Privacy Policy](https://img.shields.io/badge/Privacy%20Policy-Policy-green)](PRIVACY_POLICY.md)
-[![Changelog](https://img.shields.io/badge/Changelog-v3.1.0-orange)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v3.1.2-orange)](CHANGELOG.md)
 
 ---
 
@@ -114,7 +114,7 @@ ZeroNexus/
 │   └── prompts/            # Prompt 生成工具
 ├── tests/                  # 大腦生理神經與核心系統單元測試集
 ├── update.py               # 安全單向自動更新器（Pull-Only）
-├── version.txt             # 當前發布版本標記 (v3.1.0)
+├── version.txt             # 當前發布版本標記 (v3.1.2)
 ├── main.py                 # 核心主程式入口點
 └── run.py                  # 統一快捷啟動入口點
 ```
@@ -181,6 +181,7 @@ python3 update.py
 | `GEMINI_API_KEYS` | 否 | Google Gemini API 金鑰（逗號分隔支援多金鑰池） |
 | `DEEPSEEK_API_KEYS` | 否 | DeepSeek API 金鑰 |
 | `OPENROUTER_API_KEYS` | 否 | OpenRouter API 金鑰（調用 Qwen 等開源模型） |
+| `OPENAI_API_KEY` | 否 | OpenAI Responses API 或相容中轉站金鑰；可搭配 `OPENAI_BASE_URL` 與 `OPENAI_MODEL` |
 | `CWA_API_KEY` | 否 | 交通部中央氣象署 OpenData 金鑰（未填自動降級） |
 | `TZ` | 否 | 系統時區（預設 `Asia/Taipei`） |
 

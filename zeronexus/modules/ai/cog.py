@@ -144,7 +144,7 @@ async def switch_model_autocomplete(
     current: str,
 ) -> List[app_commands.Choice[str]]:
     """為 /人工智慧 切換模型 提供極速、高質感之旗艦模型與註冊表動態自動補全。"""
-    from zeronexus.ui.model_select_view import MODEL_SELECT_ENTRIES
+    from zeronexus.ui.model_select_view import get_model_select_entries
 
     choices: List[app_commands.Choice[str]] = []
     q = current.lower().strip()
@@ -152,7 +152,7 @@ async def switch_model_autocomplete(
 
     try:
         # 1. First priority: Pre-curated, highly aesthetic, emoji-rich flagship catalog
-        for entry in MODEL_SELECT_ENTRIES:
+        for entry in get_model_select_entries():
             m_id = entry["id"]
             m_label = entry["label"]
             m_emoji = entry.get("emoji", "🤖")
@@ -185,7 +185,7 @@ async def switch_model_autocomplete(
                 matched = True
 
             if matched and m_id not in added_ids:
-                display_name = f"{m_emoji} {m_label}"
+                display_name = f"{m_emoji} {m_label} · {m_tag}"
                 choices.append(app_commands.Choice(name=display_name[:100], value=m_id))
                 added_ids.add(m_id)
                 if len(choices) >= 25:
@@ -1008,7 +1008,7 @@ class AICog(commands.Cog):
             )
             await InteractionResponder.safe_send(interaction, card=err_card)
 
-    @ai_group.command(name="切換模型", description="切換個人或伺服器 AI 模型 (支援 Qwen、DeepSeek、Gemini)")
+    @ai_group.command(name="切換模型", description="切換個人或伺服器 AI 模型 (含 OpenAI 相容中轉站)")
     @app_commands.describe(模型="輸入或選擇欲使用的 AI 模型 (可留空以開啟互動式選單)", 套用範圍="套用至個人偏好或伺服器全域預設")
     @app_commands.autocomplete(模型=switch_model_autocomplete)
     @command_guard("ai")
@@ -1048,10 +1048,16 @@ class AICog(commands.Cog):
                 guild_id=interaction.guild_id,
                 is_server=is_server,
             )
+            menu_description = "ZeroNexus 全面支援 **Google Gemini、DeepSeek、阿里通義 Qwen** 及各大頂尖旗艦。\n選擇後將即刻套用至您的設定！"
+            if config.ai.openai_keys:
+                menu_description += (
+                    f"\n\n🔌 已啟用 OpenAI Responses 中轉模型：**{config.ai.openai_model}**"
+                    "（支援圖片理解與 Function Calling）。"
+                )
             card = ZNCard(
                 title="✨ AI 核心推論模型切換選單",
                 subtitle="請從下方選單挑選欲使用的模型（包含各模型今日專屬獨立餘額）",
-                description="ZeroNexus 全面支援 **Google Gemini、DeepSeek、阿里通義 Qwen** 及各大頂尖旗艦。\n選擇後將即刻套用至您的設定！",
+                description=menu_description,
                 status_pill=ZNStatusPill.AI,
                 color=ZNColor.AI,
             )
@@ -1114,6 +1120,14 @@ class AICog(commands.Cog):
                 model_lines.append(f"• **{item.get('name', item.get('id'))}** — {purpose}")
                 listed_models += 1
             card.add_section(f"💠 {cat_name}", "\n".join(model_lines) if model_lines else "依供應商動態提供", inline=False)
+        if config.ai.openai_keys:
+            relay_description = format_model_user_labels({"text", "vision", "tools", "reasoning"}, False)
+            card.add_section(
+                "🔌 OpenAI 相容中轉模型",
+                f"**{config.ai.openai_model}** — {relay_description}\nResponses API・圖片理解・Function Calling",
+                inline=False,
+            )
+            listed_models += 1
         card.add_section(
             "💡 如何選擇",
             "一般問答可先選系統預設；附圖請選支援圖片理解的模型；需要即時查詢或工具操作時，請選支援即時工具的模型。模型額度按實際回覆模型記錄；供應商計費規則以其服務為準。",

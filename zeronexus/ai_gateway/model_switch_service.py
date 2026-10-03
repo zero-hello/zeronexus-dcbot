@@ -125,6 +125,11 @@ class ModelSwitchResult:
                 family_emoji = "⚡"
                 highlight = "即時真實視野・敏捷幽默與深度思辨"
                 color = ZNColor.WARNING
+            elif mid_low.startswith("openai/"):
+                brand_badge = "🔌 OpenAI Responses 中轉站"
+                family_emoji = "🔌"
+                highlight = "自訂 API 中轉模型・支援圖片理解與 Function Calling"
+                color = ZNColor.SUCCESS
             elif "gpt-4o" in mid_low:
                 brand_badge = "🚀 OpenAI GPT-4o 頂級多模態"
                 family_emoji = "🚀"

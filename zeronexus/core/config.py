@@ -173,13 +173,18 @@ class AIProviderConfig:
     groq_keys: List[str] = field(default_factory=list)
     groq_model: str = "qwen/qwen3.8-27b"
 
+    # OpenAI Responses API / OpenAI-compatible relay
+    openai_keys: List[str] = field(default_factory=list)
+    openai_model: str = "gpt-4.1-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
     # 全域 AI 網關偏好與備援順序
     default_model: str = "gemini-3.1-flash-lite"
     enabled_providers: List[str] = field(default_factory=lambda: [
-        "gemini", "deepseek", "openrouter", "groq", "mistral", "cohere", "manus", "huggingface"
+        "gemini", "deepseek", "openrouter", "groq", "mistral", "cohere", "manus", "huggingface", "openai"
     ])
     fallback_providers: List[str] = field(default_factory=lambda: [
-        "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface"
+        "gemini", "groq", "deepseek", "mistral", "openrouter", "cohere", "manus", "huggingface", "openai"
     ])
 
     daily_limit_per_user: int = 80
@@ -282,6 +287,10 @@ class AIProviderConfig:
         self.groq_keys = parse_keys("GROQ_API_KEYS", "GROQ_API_KEY")
         self.groq_model = os.getenv("GROQ_MODEL", self.groq_model).strip() or self.groq_model
 
+        self.openai_keys = parse_keys("OPENAI_API_KEYS", "OPENAI_API_KEY")
+        self.openai_model = os.getenv("OPENAI_MODEL", self.openai_model).strip() or self.openai_model
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", self.openai_base_url).strip().rstrip("/") or self.openai_base_url
+
 
 @dataclass
 class ExternalAPIConfig:
@@ -373,7 +382,7 @@ class RateLimitConfig:
 class PlatformSettings:
     name: str = "ZeroNexus"
     codename: str = "ZN"
-    version: str = "3.1.0"
+    version: str = "3.1.2"
     owner_id: str = "1514971711739789352"
     default_prefix: str = "zn!"
     default_locale: str = "zh-TW"

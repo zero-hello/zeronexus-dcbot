@@ -1,5 +1,19 @@
 # ZeroNexus (ZN) 更新日誌 (Changelog)
 
+## [3.1.2] - 2026-10-03
+
+### 🤖 中轉模型動態顯示
+- 設定 OpenAI 中轉 API Key 後，自訂 `OPENAI_MODEL` 會自動加入模型切換選單與斜線指令補全；未設定金鑰時不顯示。
+- 選單、模型目錄與切換結果補上 Responses API、圖片理解及 Function Calling 描述。
+
+## [3.1.1] - 2026-10-03
+
+### 🤖 OpenAI Responses API 中轉站
+- 新增 OpenAI Responses API 供應商適配器，可使用自訂 `OPENAI_BASE_URL` 連接支援 `/responses` 的中轉站。
+- 支援 Responses API 原生 Function Calling 往返，沿用現有工具權限、參數 Schema 與動態工具投影。
+- 新增 OpenAI 模型路由與備援；以 `openai/<模型ID>` 指定模型。
+- 新增 `OPENAI_API_KEY(S)`、`OPENAI_BASE_URL` 與 `OPENAI_MODEL` 設定。
+
 ## [3.1.0] - 2026-10-01
 
 ### 🧠 AI 對話與模型選擇

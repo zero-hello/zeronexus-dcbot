@@ -616,6 +616,24 @@ class ModelRegistry:
         """Registers or updates a model in the registry."""
         self._models[metadata.model_id.lower()] = metadata
 
+    def register_configured_openai_model(self) -> Optional[ModelMetadata]:
+        """Expose the configured OpenAI-compatible relay model when credentials exist."""
+        from zeronexus.core.config import config
+
+        if not config.ai.openai_keys:
+            return None
+        model_id = f"openai/{config.ai.openai_model}"
+        metadata = ModelMetadata(
+            model_id=model_id,
+            display_name=f"OpenAI 中轉站 · {config.ai.openai_model}",
+            provider="openai",
+            vendor="openai",
+            capabilities={"text", "vision", "tools", "reasoning"},
+            description="自訂 OpenAI Responses API 中轉模型，支援圖片理解與 Function Calling。",
+        )
+        self.register(metadata)
+        return metadata
+
     def get(self, model_id: str) -> Optional[ModelMetadata]:
         """Looks up a model by its exact model ID."""
         if not model_id or not isinstance(model_id, str):
@@ -938,14 +956,15 @@ class ModelRegistry:
         if not query or not isinstance(query, str) or not query.strip():
             return ResolutionResult(success=False, status="NOT_FOUND", message="請輸入欲查詢或切換的模型名稱。")
         q = query.strip().lower()
+        self.register_configured_openai_model()
 
         # 預先清理 Emoji 與前後符號
         clean_no_emoji = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf\ufe0f]", "", q).strip()
 
         # 優先比對 Discord 下拉選單中已註冊之選項（支援帶 Emoji、包含說明文字等完整字串）
         try:
-            from zeronexus.ui.model_select_view import MODEL_SELECT_ENTRIES
-            for entry in MODEL_SELECT_ENTRIES:
+            from zeronexus.ui.model_select_view import get_model_select_entries
+            for entry in get_model_select_entries():
                 e_id = entry["id"].lower()
                 e_lbl = entry["label"].lower()
                 e_emoji_lbl = f"{entry.get('emoji', '')} {entry['label']}".strip().lower()
